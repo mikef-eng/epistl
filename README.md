@@ -11,7 +11,7 @@ Ship quantum-resistant E2EE chat using CRYSTALS-Kyber and CRYSTALS-Dilithium, wi
 | Layer | Choice |
 | --- | --- |
 | Monorepo | [moonrepo](https://moonrepo.dev) |
-| Frontend | Expo + React Native (TypeScript) + expo-sqlite |
+| Frontend | Expo + React Native (TypeScript) + expo-sqlite + NativeWind (Tailwind) |
 | Backend | Rust (Axum, tokio, Quinn) + Better Auth RS |
 | Message broker | NATS JetStream |
 | Primary DB | Postgres (auth and core app data) |
@@ -30,7 +30,18 @@ packages/   Shared libraries (reserved)
 
 ## Development harness
 
-Work is tracked through GitHub Issues and role handoffs (Planner → Coder → Tester → Reviewer). See [AGENTS.md](AGENTS.md) for conventions.
+Work is tracked through GitHub Issues and role handoffs (Planner → Coder → Tester → Reviewer). See [AGENTS.md](AGENTS.md) for conventions and role playbooks.
+
+## Claude Code
+
+Root [CLAUDE.md](CLAUDE.md) imports [AGENTS.md](AGENTS.md). Agent tooling lives under `.claude/`:
+
+- **Agents** — `planner`, `coder`, `tester`, `reviewer`, `crypto-reviewer`
+- **Commands** — `/plan-issue`, `/work-issue`, `/test-pr`, `/review-pr`, `/ship`
+- **Skills** — `open-task-issue`, `pqc-crypto-change`
+- **Plugins** — root enables `superpowers@claude-plugins-official`; `apps/mobile` enables `expo@claude-plugins-official`
+
+Postgres MCP and NATS channel plugins are deferred until those services are stood up.
 
 ## Local commands
 
