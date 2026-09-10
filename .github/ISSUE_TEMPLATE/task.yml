@@ -1,0 +1,42 @@
+name: Task
+description: Standard work item for the Epistl SDLC harness
+title: "[task]: "
+labels: ["planning"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What success looks like for this issue.
+      placeholder: User can send a message to a contact and see it appear in the conversation.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Concrete, testable bullets. Write these before implementation starts.
+      placeholder: |
+        - [ ] Criterion one
+        - [ ] Criterion two
+        - [ ] Invalid input shows an error
+    validations:
+      required: true
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope
+      description: What must not land in the PR for this issue.
+      placeholder: |
+        - Push notifications
+        - Group chats
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Optional context, links, or constraints.
+      placeholder: Related designs, prior art, or technical constraints.
+    validations:
+      required: false

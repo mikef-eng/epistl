@@ -1,0 +1,8 @@
+# Configures all projects within the workspace to create a project graph.
+projects:
+  - "apps/*"
+  - "packages/*"
+
+vcs:
+  defaultBranch: "main"
+  provider: "github"

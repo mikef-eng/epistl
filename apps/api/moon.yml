@@ -1,0 +1,18 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "api"
+language: "rust"
+type: "application"
+
+tasks:
+  check:
+    command: "cargo"
+    args: ["fmt", "--", "--check"]
+    options:
+      cache: false
+  lint:
+    command: "cargo"
+    args: ["clippy", "--", "-D", "warnings"]
+  test:
+    command: "cargo"
+    args: ["test"]

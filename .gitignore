@@ -1,0 +1,33 @@
+# moon
+.moon/cache
+.moon/docker
+
+# Rust
+/target
+**/*.rs.bk
+
+# Node / Expo
+node_modules/
+.expo/
+dist/
+web-build/
+*.jks
+*.p8
+*.p12
+*.mobileprovision
+*.orig.*
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Env
+.env
+.env.*
+!.env.example

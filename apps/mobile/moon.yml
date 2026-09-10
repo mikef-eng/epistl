@@ -1,0 +1,17 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "mobile"
+language: "typescript"
+type: "application"
+stack: "frontend"
+
+tasks:
+  lint:
+    command: "npm"
+    args: ["run", "lint"]
+  typecheck:
+    command: "npm"
+    args: ["run", "typecheck"]
+  test:
+    command: "npm"
+    args: ["test"]
