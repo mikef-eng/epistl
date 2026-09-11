@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Final quality, security, and scope review before merge. Use when an issue is labeled needs-review. Read-oriented; merge only when CI is green and criteria are met.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, Task
 model: inherit
 ---
 
