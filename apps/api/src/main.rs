@@ -43,7 +43,11 @@ async fn main() {
         }
     };
 
-    let app = api::app(AppState { auth, pool });
+    let app = api::app(AppState {
+        auth,
+        pool,
+        registry: api::registry::ConnectionRegistry::new(),
+    });
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
         .await
         .expect("failed to bind listener");

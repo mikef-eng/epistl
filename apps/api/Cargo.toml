@@ -4,9 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-axum = "0.8"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
 tower = { version = "0.5", features = ["util"] }
+base64 = "0.22"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 sqlx = { version = "0.9", default-features = false, features = [
   "postgres",
   "runtime-tokio",
@@ -29,3 +31,15 @@ chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+# Real WebSocket client for the `/ws` relay's integration tests --
+# `tower::ServiceExt::oneshot` can't drive a protocol upgrade, so those
+# tests bind a real `TcpListener` and connect over the wire.
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "net", "time"] }
+tokio-tungstenite = "0.24"
+# The row-count-based no-persistence test in tests/ws.rs needs exclusive
+# access to the shared test Postgres instance while its before/after
+# snapshot is open, so every test in that file runs serialized rather than
+# racing sibling tests' signups/contact-adds in the same process.
+serial_test = "3"
