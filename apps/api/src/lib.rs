@@ -7,6 +7,8 @@
 pub mod auth;
 pub mod contacts;
 pub mod db;
+pub mod registry;
+pub mod ws;
 
 use axum::routing::get;
 use axum::Router;
@@ -14,12 +16,14 @@ use axum::Router;
 pub use auth::{AppState, AuthenticatedUser};
 
 /// Build the full application router: `/health` plus the auth routes from
-/// [`auth::router`] and the contacts routes from [`contacts::router`].
+/// [`auth::router`], the contacts routes from [`contacts::router`], and the
+/// `/ws` relay from [`ws::router`].
 pub fn app(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .merge(auth::router(state.clone()))
-        .merge(contacts::router(state))
+        .merge(contacts::router(state.clone()))
+        .merge(ws::router(state))
 }
 
 async fn health() -> &'static str {

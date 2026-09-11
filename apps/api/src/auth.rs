@@ -619,6 +619,9 @@ pub struct AppState {
     /// Connection pool for tables this app owns outright (e.g. `contacts`)
     /// rather than tables mediated through `better-auth`'s SeaORM store.
     pub pool: PgPool,
+    /// In-memory registry of connected users' live `/ws` sockets. Never
+    /// backed by Postgres -- see `crate::registry`.
+    pub registry: crate::registry::ConnectionRegistry,
 }
 
 /// The axum router for `/signup`, `/login`, and (by composition with other
@@ -795,6 +798,34 @@ pub struct AuthenticatedUser {
     pub session: session::Model,
 }
 
+/// Validates a raw session token the same way [`AuthenticatedUser`]'s
+/// extractor does (active, unexpired session; backing user still exists),
+/// without requiring an `Authorization` header. Shared by the REST
+/// extractor below and the `/ws` relay's query-parameter auth (`ws.rs`),
+/// since a typical cross-platform WebSocket client can't set custom
+/// headers.
+pub async fn authenticate_token(state: &AppState, token: &str) -> Option<AuthenticatedUser> {
+    if token.is_empty() {
+        return None;
+    }
+
+    let session = state
+        .auth
+        .session_manager()
+        .get_session(token)
+        .await
+        .ok()??;
+
+    let user = state
+        .auth
+        .store()
+        .get_user_by_id(&session.user_id())
+        .await
+        .ok()??;
+
+    Some(AuthenticatedUser { user, session })
+}
+
 impl FromRequestParts<AppState> for AuthenticatedUser {
     type Rejection = Response;
 
@@ -803,23 +834,8 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
         let token = bearer_token(parts).ok_or_else(unauthorized)?;
-
-        let session = state
-            .auth
-            .session_manager()
-            .get_session(&token)
+        authenticate_token(state, &token)
             .await
-            .map_err(|_| unauthorized())?
-            .ok_or_else(unauthorized)?;
-
-        let user = state
-            .auth
-            .store()
-            .get_user_by_id(&session.user_id())
-            .await
-            .map_err(|_| unauthorized())?
-            .ok_or_else(unauthorized)?;
-
-        Ok(AuthenticatedUser { user, session })
+            .ok_or_else(unauthorized)
     }
 }
