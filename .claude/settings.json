@@ -1,5 +1,41 @@
 {
   "enabledPlugins": {
     "superpowers@claude-plugins-official": true
+  },
+  "permissions": {
+    "allow": [
+      "Bash(gh pr view *)",
+      "Bash(gh pr list *)",
+      "Bash(gh pr diff *)",
+      "Bash(gh pr checks *)",
+      "Bash(gh issue view *)",
+      "Bash(gh issue list *)",
+      "Bash(gh repo view *)",
+      "Bash(gh run view *)",
+      "Bash(gh run list *)",
+      "Bash(gh run watch *)",
+      "Bash(gh label list *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git branch *)"
+    ],
+    "ask": [
+      "Bash(gh pr merge *)",
+      "Bash(gh pr create *)",
+      "Bash(gh issue create *)",
+      "Bash(gh issue close *)",
+      "Bash(gh issue edit *)",
+      "Bash(git push *)",
+      "Bash(git commit *)"
+    ],
+    "deny": [
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Bash(gh repo delete *)",
+      "Bash(gh pr merge * --admin)",
+      "Bash(gh label delete *)"
+    ]
   }
 }
