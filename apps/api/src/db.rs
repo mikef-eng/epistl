@@ -1,8 +1,9 @@
 //! Database connection setup.
 //!
-//! Postgres is the app's only relational store, and it holds exactly three
-//! kinds of data: users, sessions (both driven by Better Auth RS), and
-//! contacts. No message content or PQC key material is ever stored here.
+//! Postgres is the app's only relational store. It holds users, sessions,
+//! accounts, and verifications (all driven by the `better-auth` crate --
+//! see `crate::auth`), plus contacts. No message content or PQC key
+//! material is ever stored here.
 
 use std::env;
 use std::fmt;

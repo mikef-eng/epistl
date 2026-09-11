@@ -6,6 +6,10 @@
 # Apply migrations with the bundled runner:
 #   DATABASE_URL=postgres://epistl:epistl@localhost:5432/epistl \
 #     cargo run --manifest-path apps/api/Cargo.toml --bin migrate
+#
+# The API also requires AUTH_SECRET (>= 32 bytes) for `better-auth` session
+# signing, e.g. for local dev only:
+#   AUTH_SECRET=dev-only-secret-do-not-use-in-prod-3234
 services:
   postgres:
     image: postgres:16
