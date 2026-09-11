@@ -1,7 +1,19 @@
 use axum::{routing::get, Router};
 
+mod db;
+
 #[tokio::main]
 async fn main() {
+    // Fail fast with a clear message if we can't reach Postgres; the app
+    // has nothing useful to do without it.
+    let _pool = match db::connect().await {
+        Ok(pool) => pool,
+        Err(err) => {
+            eprintln!("startup failed: {err}");
+            std::process::exit(1);
+        }
+    };
+
     let app = app();
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
         .await

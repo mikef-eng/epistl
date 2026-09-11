@@ -1,0 +1,27 @@
+# Local Postgres for API development.
+#
+# Start with `docker compose up -d`, then point the API at it via:
+#   DATABASE_URL=postgres://epistl:epistl@localhost:5432/epistl
+#
+# Apply migrations with the bundled runner:
+#   DATABASE_URL=postgres://epistl:epistl@localhost:5432/epistl \
+#     cargo run --manifest-path apps/api/Cargo.toml --bin migrate
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: epistl
+      POSTGRES_PASSWORD: epistl
+      POSTGRES_DB: epistl
+    ports:
+      - "5432:5432"
+    volumes:
+      - epistl-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U epistl -d epistl"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  epistl-postgres-data:

@@ -7,3 +7,13 @@ edition = "2021"
 axum = "0.8"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tower = { version = "0.5", features = ["util"] }
+sqlx = { version = "0.9", default-features = false, features = [
+  "postgres",
+  "runtime-tokio",
+  "tls-rustls",
+  "migrate",
+  "macros",
+  "uuid",
+] }
+better-auth-rs = "0.1.0"
+uuid = { version = "1", features = ["v4"] }
