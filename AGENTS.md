@@ -48,8 +48,9 @@ Flow: `planning` → `ready` → `in-progress` → (`blocked` \| `needs-review`)
 3. Create a branch named `issue-<number>-<short-slug>` (e.g. `issue-42-login-form`).
 4. Implement **only** that issue's scope. Prefer TDD (red → green → refactor) when tests are part of the acceptance criteria.
 5. If you notice extra work, open a new issue via the `open-task-issue` skill — do not expand this branch.
-6. Open a PR that references the issue with `Closes #<number>`.
-7. Keep the issue labeled `in-progress` until Tester finishes.
+6. If the change alters the stack, how to run something, an env var, or an architectural constraint, update the relevant section of `README.md` in the same PR — see "Docs freshness" below.
+7. Open a PR that references the issue with `Closes #<number>`.
+8. Keep the issue labeled `in-progress` until Tester finishes.
 
 ## Tester playbook
 
@@ -66,8 +67,29 @@ Flow: `planning` → `ready` → `in-progress` → (`blocked` \| `needs-review`)
 2. Re-read the issue acceptance criteria against the PR diff.
 3. Check scope: nothing beyond the issue landed; discoveries should already be separate issues.
 4. Check conventions against this file and the repo's existing patterns.
-5. If the diff touches `apps/api/src/crypto/**` or `apps/api/src/auth/**`, run the `crypto-reviewer` subagent (or the `pqc-crypto-change` skill) and do **not** approve without its sign-off.
-6. Merge only when CI is green and criteria are met. Prefer squash merge; delete the branch after merge.
+5. Check docs freshness: if the diff changes the stack, how to run something, an env var, or an architectural constraint, `README.md` must be updated in the same PR. Block merge if it isn't — see "Docs freshness" below.
+6. If the diff touches `apps/api/src/crypto/**` or `apps/api/src/auth/**`, run the `crypto-reviewer` subagent (or the `pqc-crypto-change` skill) and do **not** approve without its sign-off.
+7. Merge only when CI is green and criteria are met. Prefer squash merge; delete the branch after merge.
+
+## Docs freshness
+
+`README.md` must stay accurate as the system grows — it's the first thing a human or agent reads. A PR is **not** done if it changes any of the following without updating the matching README section:
+
+- The stack (new dependency, service, or library) → update the Stack table.
+- How to run or configure something (new env var, new local command, new setup step) → update Local commands / setup instructions.
+- An architectural constraint (data flow, storage boundaries, protocol choices) → update the relevant section and, if it's a durable decision, add or update a file in `docs/decisions/`.
+
+Coder updates the docs in the same PR; Reviewer blocks merge if they're stale relative to the diff.
+
+## Architecture decisions
+
+`docs/decisions/` holds short, durable architecture decisions that must not be re-derived or silently contradicted by a future Coder or Planner. Check it before making a conflicting choice. Current decisions:
+
+- [`docs/decisions/0001-message-content-never-in-postgres.md`](docs/decisions/0001-message-content-never-in-postgres.md)
+- [`docs/decisions/0002-scylla-backup-is-opt-in.md`](docs/decisions/0002-scylla-backup-is-opt-in.md)
+- [`docs/decisions/0003-opaque-message-envelope.md`](docs/decisions/0003-opaque-message-envelope.md)
+
+Add a new numbered file here for any future decision with real cost-of-change (data model, protocol, storage boundaries) — not for routine implementation choices.
 
 ## Issue template
 
@@ -92,7 +114,11 @@ Claude Code does not auto-read this file. Root [`CLAUDE.md`](CLAUDE.md) imports 
 | `.claude/commands/` | Slash commands: `/plan-issue`, `/work-issue`, `/test-pr`, `/review-pr`, `/ship` |
 | `.claude/skills/` | Skills: `open-task-issue`, `pqc-crypto-change` |
 | `.claude/rules/` | Path-scoped rules (e.g. crypto/auth) |
-| `.claude/settings.json` | Enables `superpowers@claude-plugins-official` |
+| `.claude/settings.json` | Enables `superpowers@claude-plugins-official`; sets the permissions policy (see below) |
+
+### Permissions policy
+
+`.claude/settings.json` allows read-only `git`/`gh` without prompting, asks for confirmation on mutating actions (`gh pr merge`, `gh pr create`, `gh issue create`/`close`, `git push`, `git commit`), and denies destructive ones outright (`git push --force`, `gh repo delete`, `gh pr merge --admin`). Update it there, not by improvising broader access mid-session.
 
 `apps/mobile/.claude/settings.json` enables `expo@claude-plugins-official` for Expo-specific skills.
 
