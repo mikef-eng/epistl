@@ -308,3 +308,43 @@ async fn protected_route_with_invalid_token_returns_401() {
 
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn protected_route_with_expired_token_returns_401() {
+    let pool = test_pool().await;
+    let email = unique_email("protected-route-expired");
+
+    let (_, signup_body) = post_json(
+        api::app(pool.clone()),
+        "/api/auth/signup",
+        json!({ "email": email, "password": "correct-horse-battery" }),
+    )
+    .await;
+    let token = signup_body["token"].as_str().unwrap().to_string();
+
+    // Backdate the session's expiry so the token is now expired, without
+    // going through a separate token-minting path.
+    sqlx::query("UPDATE sessions SET expires_at = now() - interval '1 hour' WHERE token = $1")
+        .bind(&token)
+        .execute(&pool)
+        .await
+        .expect("failed to expire session for test");
+
+    let response = protected_app(pool)
+        .oneshot(
+            Request::builder()
+                .uri("/protected/ping")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["error"], "unauthorized");
+}
