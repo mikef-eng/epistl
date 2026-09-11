@@ -16,11 +16,16 @@ async fn main() {
     };
 
     // Fail fast with a clear message if we can't reach Postgres; the app
-    // has nothing useful to do without it.
-    if let Err(err) = db::connect().await {
-        eprintln!("startup failed: {err}");
-        std::process::exit(1);
-    }
+    // has nothing useful to do without it. This pool backs tables the app
+    // owns outright (e.g. `contacts`) rather than tables mediated through
+    // `better-auth`'s own SeaORM connection below.
+    let pool = match db::connect().await {
+        Ok(pool) => pool,
+        Err(err) => {
+            eprintln!("startup failed: {err}");
+            std::process::exit(1);
+        }
+    };
 
     let secret = match std::env::var(AUTH_SECRET_VAR) {
         Ok(secret) => secret,
@@ -38,7 +43,7 @@ async fn main() {
         }
     };
 
-    let app = api::app(AppState { auth });
+    let app = api::app(AppState { auth, pool });
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
         .await
         .expect("failed to bind listener");

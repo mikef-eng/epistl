@@ -38,12 +38,7 @@ async fn test_pool() -> PgPool {
 }
 
 async fn test_app() -> Router {
-    let database_url = std::env::var("DATABASE_URL")
-        .expect("DATABASE_URL must be set to run this integration test");
-    let auth = api::auth::build_auth(&database_url, TEST_SECRET)
-        .await
-        .expect("failed to build BetterAuth for test");
-    api::app(AppState { auth })
+    api::app(test_state().await)
 }
 
 fn unique_email(label: &str) -> String {
@@ -271,7 +266,12 @@ async fn test_state() -> AppState {
     let auth = api::auth::build_auth(&database_url, TEST_SECRET)
         .await
         .expect("failed to build BetterAuth for test");
-    AppState { auth }
+    let pool = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .expect("failed to connect to Postgres");
+    AppState { auth, pool }
 }
 
 #[tokio::test]

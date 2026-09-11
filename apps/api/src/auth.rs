@@ -45,6 +45,7 @@ use better_auth::seaorm::{
     SeaOrmUserModel, SeaOrmVerificationModel,
 };
 use better_auth::{AuthConfig, AuthError, AuthResult, AuthSchema, BetterAuth};
+use sqlx::PgPool;
 
 // ---------------------------------------------------------------------------
 // Entities -- these map onto the tables from
@@ -615,6 +616,9 @@ pub async fn build_auth(
 #[derive(Clone)]
 pub struct AppState {
     pub auth: Arc<BetterAuth<AppAuthSchema>>,
+    /// Connection pool for tables this app owns outright (e.g. `contacts`)
+    /// rather than tables mediated through `better-auth`'s SeaORM store.
+    pub pool: PgPool,
 }
 
 /// The axum router for `/signup`, `/login`, and (by composition with other
