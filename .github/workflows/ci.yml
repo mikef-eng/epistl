@@ -30,6 +30,9 @@ jobs:
           --health-retries 5
     env:
       DATABASE_URL: postgres://epistl:epistl@localhost:5432/epistl
+      # Not a real secret -- only used against the ephemeral CI Postgres
+      # service. `better-auth` requires at least 32 bytes.
+      AUTH_SECRET: ci-only-secret-do-not-use-in-prod-32+
     steps:
       - uses: actions/checkout@v4
 
