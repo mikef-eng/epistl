@@ -1,14 +1,26 @@
 import "./global.css";
+import { NavigationContainer } from "@react-navigation/native";
+import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
-import { Text, View } from "react-native";
+
+import type { RootStackParamList } from "./src/navigation/types";
+import AddContactScreen from "./src/screens/AddContactScreen";
+import ChatScreen from "./src/screens/ChatScreen";
+import ContactsScreen from "./src/screens/ContactsScreen";
+import LoginScreen from "./src/screens/LoginScreen";
+
+const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export default function App() {
   return (
-    <View className="flex-1 items-center justify-center bg-white">
-      <Text className="text-xl font-bold text-blue-500">
-        Welcome to Epistl
-      </Text>
+    <NavigationContainer>
+      <Stack.Navigator initialRouteName="Login">
+        <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="Contacts" component={ContactsScreen} />
+        <Stack.Screen name="AddContact" component={AddContactScreen} />
+        <Stack.Screen name="Chat" component={ChatScreen} />
+      </Stack.Navigator>
       <StatusBar style="auto" />
-    </View>
+    </NavigationContainer>
   );
 }
