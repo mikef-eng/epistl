@@ -15,5 +15,17 @@ sqlx = { version = "0.9", default-features = false, features = [
   "macros",
   "uuid",
 ] }
-better-auth-rs = "0.1.0"
-uuid = { version = "1", features = ["v4"] }
+# `better-auth-rs` (pinned in issue #1) is a squatted/placeholder crate name
+# on crates.io -- see issue #17. The real, actively-maintained project is
+# published as `better-auth`. Pinned to the 1.0.0-alpha.2 pre-release (not
+# the 0.10.0 stable line) because only the alpha ships the `seaorm2` feature
+# -- stable 0.10.0's only database adapter is `sqlx-postgres` against a
+# framework-owned schema, whereas `seaorm2` lets the app own its entities
+# and adapt Better Auth to the `users`/`sessions` tables issue #1 already
+# migrated (see apps/api/migrations/0004_reconcile_better_auth_schema.sql
+# for the additive reconciliation this still required).
+better-auth = { version = "1.0.0-alpha.2", features = ["axum", "seaorm2"] }
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
