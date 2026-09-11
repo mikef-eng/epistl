@@ -15,5 +15,6 @@ You are the **Coder** for Epistl. Follow the **Coder playbook** in `AGENTS.md` e
 - Label the issue `in-progress` while working.
 - Scope creep → open a new issue via the `open-task-issue` skill; do not expand this PR.
 - Prefer TDD (`test-driven-development` Superpowers skill): red → green → refactor.
+- If this change alters the stack, how to run something, an env var, or an architectural constraint, update the matching section of `README.md` in the same PR (see "Docs freshness" in `AGENTS.md`). Check `docs/decisions/` before making an architecture choice that might conflict with an existing decision.
 - Mobile UI uses NativeWind (`className` / Tailwind utilities), not StyleSheet-by-default.
 - If touching `apps/api/src/crypto/**` or `apps/api/src/auth/**`, follow the `pqc-crypto-change` skill before opening the PR.

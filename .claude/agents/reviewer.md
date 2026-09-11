@@ -12,6 +12,7 @@ You are the **Reviewer** for Epistl. Follow the **Reviewer playbook** in `AGENTS
 - Confirm CI green and issue labeled `needs-review`.
 - Diff vs acceptance criteria; reject scope creep.
 - Check conventions against `AGENTS.md` and existing repo patterns.
+- Check docs freshness: if the diff changes the stack, how to run something, an env var, or an architectural constraint, `README.md` must be updated in the same PR. Block merge if it isn't.
 - If the PR touches `apps/api/src/crypto/**` or `apps/api/src/auth/**`, delegate to the `crypto-reviewer` subagent (or run `pqc-crypto-change`). Do **not** approve without its sign-off.
 - Prefer squash merge; delete the branch after merge.
 - Do not implement features or expand scope in this role.

@@ -85,3 +85,40 @@ jobs:
 
       - name: Test
         run: npm test
+
+  crypto-review-notice:
+    name: crypto-review-notice
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for crypto/auth path changes
+        id: changed
+        run: |
+          if git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" \
+              | grep -E '^apps/api/src/(crypto|auth)/'; then
+            echo "hit=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "hit=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Remind reviewers about crypto-reviewer sign-off
+        if: steps.changed.outputs.hit == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          MARKER="<!-- crypto-review-notice -->"
+          if gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate --jq '.[].body' \
+              | grep -qF "$MARKER"; then
+            echo "Notice already posted, skipping."
+            exit 0
+          fi
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$MARKER
+          This PR touches \`apps/api/src/crypto/**\` or \`apps/api/src/auth/**\`. Per [AGENTS.md](../blob/main/AGENTS.md), the Reviewer must not merge without \`crypto-reviewer\` sign-off (run the \`pqc-crypto-change\` checklist first)."
