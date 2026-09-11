@@ -1,0 +1,245 @@
+import * as session from '../session';
+import { ApiError, signup, login, listContacts, addContact, removeContact } from '../client';
+
+jest.mock('../session', () => ({
+  saveToken: jest.fn(),
+  getToken: jest.fn(),
+  clearToken: jest.fn(),
+}));
+
+const mockSession = session as jest.Mocked<typeof session>;
+
+function jsonResponse(status: number, body: unknown): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => body,
+  } as unknown as Response;
+}
+
+describe('client', () => {
+  const fetchMock = jest.fn();
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (globalThis as unknown as { fetch: jest.Mock }).fetch = fetchMock;
+  });
+
+  describe('signup', () => {
+    it('POSTs to /signup with the email/password body and default base URL', async () => {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(201, { token: 'tok-1', user: { id: 'u1' } }),
+      );
+
+      await signup('a@example.com', 'hunter2');
+
+      expect(fetchMock).toHaveBeenCalledWith('http://localhost:3000/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'a@example.com', password: 'hunter2' }),
+      });
+    });
+
+    it('persists the returned token via the session module and resolves the parsed body', async () => {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(201, { token: 'tok-1', user: { id: 'u1' } }),
+      );
+
+      const result = await signup('a@example.com', 'hunter2');
+
+      expect(mockSession.saveToken).toHaveBeenCalledWith('tok-1');
+      expect(result).toEqual({ token: 'tok-1', user: { id: 'u1' } });
+    });
+
+    it('throws an ApiError with the "email already registered" code on 409', async () => {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(409, { error: 'email already registered' }),
+      );
+
+      await expect(signup('a@example.com', 'hunter2')).rejects.toMatchObject({
+        code: 'email already registered',
+        status: 409,
+      });
+      expect(mockSession.saveToken).not.toHaveBeenCalled();
+    });
+
+    it('throws an ApiError with the "invalid input" code on 400', async () => {
+      fetchMock.mockResolvedValue(jsonResponse(400, { error: 'invalid input' }));
+
+      await expect(signup('', '')).rejects.toBeInstanceOf(ApiError);
+      await expect(signup('', '')).rejects.toMatchObject({
+        code: 'invalid input',
+        status: 400,
+      });
+    });
+  });
+
+  describe('login', () => {
+    it('POSTs to /login with the email/password body', async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse(200, { token: 'tok-2', user: {} }));
+
+      await login('a@example.com', 'hunter2');
+
+      expect(fetchMock).toHaveBeenCalledWith('http://localhost:3000/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'a@example.com', password: 'hunter2' }),
+      });
+    });
+
+    it('persists the returned token via the session module', async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse(200, { token: 'tok-2', user: {} }));
+
+      await login('a@example.com', 'hunter2');
+
+      expect(mockSession.saveToken).toHaveBeenCalledWith('tok-2');
+    });
+
+    it('throws an ApiError with the "invalid credentials" code on 401', async () => {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(401, { error: 'invalid credentials' }),
+      );
+
+      await expect(login('a@example.com', 'wrong')).rejects.toMatchObject({
+        code: 'invalid credentials',
+        status: 401,
+      });
+      expect(mockSession.saveToken).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('listContacts', () => {
+    it('throws an ApiError with code "no_session" when no token is stored', async () => {
+      mockSession.getToken.mockResolvedValueOnce(null);
+
+      await expect(listContacts()).rejects.toMatchObject({ code: 'no_session' });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('GETs /api/contacts with the Authorization header', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-3');
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(200, {
+          contacts: [{ user_id: 'u2', email: 'b@example.com', added_at: '2026-01-01T00:00:00Z' }],
+        }),
+      );
+
+      const result = await listContacts();
+
+      expect(fetchMock).toHaveBeenCalledWith('http://localhost:3000/api/contacts', {
+        method: 'GET',
+        headers: { Authorization: 'Bearer tok-3' },
+      });
+      expect(result).toEqual({
+        contacts: [{ user_id: 'u2', email: 'b@example.com', added_at: '2026-01-01T00:00:00Z' }],
+      });
+    });
+
+    it('throws an ApiError with code "unauthorized" on 401', async () => {
+      mockSession.getToken.mockResolvedValueOnce('stale-token');
+      fetchMock.mockResolvedValueOnce(jsonResponse(401, { error: 'unauthorized' }));
+
+      await expect(listContacts()).rejects.toMatchObject({
+        code: 'unauthorized',
+        status: 401,
+      });
+    });
+  });
+
+  describe('addContact', () => {
+    it('POSTs to /api/contacts with the email body and Authorization header', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-4');
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(201, {
+          user_id: 'u5',
+          email: 'c@example.com',
+          added_at: '2026-01-01T00:00:00Z',
+        }),
+      );
+
+      const result = await addContact('c@example.com');
+
+      expect(fetchMock).toHaveBeenCalledWith('http://localhost:3000/api/contacts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer tok-4',
+        },
+        body: JSON.stringify({ email: 'c@example.com' }),
+      });
+      expect(result).toEqual({
+        user_id: 'u5',
+        email: 'c@example.com',
+        added_at: '2026-01-01T00:00:00Z',
+      });
+    });
+
+    it('throws an ApiError with code "no_session" when no token is stored', async () => {
+      mockSession.getToken.mockResolvedValueOnce(null);
+
+      await expect(addContact('c@example.com')).rejects.toMatchObject({ code: 'no_session' });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('throws an ApiError with code "cannot_add_self" on 400', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-4');
+      fetchMock.mockResolvedValueOnce(jsonResponse(400, { error: 'cannot_add_self' }));
+
+      await expect(addContact('me@example.com')).rejects.toMatchObject({
+        code: 'cannot_add_self',
+        status: 400,
+      });
+    });
+
+    it('throws an ApiError with code "user_not_found" on 404', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-4');
+      fetchMock.mockResolvedValueOnce(jsonResponse(404, { error: 'user_not_found' }));
+
+      await expect(addContact('nobody@example.com')).rejects.toMatchObject({
+        code: 'user_not_found',
+        status: 404,
+      });
+    });
+
+    it('throws an ApiError with code "already_added" on 409', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-4');
+      fetchMock.mockResolvedValueOnce(jsonResponse(409, { error: 'already_added' }));
+
+      await expect(addContact('c@example.com')).rejects.toMatchObject({
+        code: 'already_added',
+        status: 409,
+      });
+    });
+  });
+
+  describe('removeContact', () => {
+    it('DELETEs /api/contacts/{userId} with the Authorization header', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-5');
+      fetchMock.mockResolvedValueOnce({ ok: true, status: 204, json: async () => null });
+
+      await removeContact('u9');
+
+      expect(fetchMock).toHaveBeenCalledWith('http://localhost:3000/api/contacts/u9', {
+        method: 'DELETE',
+        headers: { Authorization: 'Bearer tok-5' },
+      });
+    });
+
+    it('throws an ApiError with code "no_session" when no token is stored', async () => {
+      mockSession.getToken.mockResolvedValueOnce(null);
+
+      await expect(removeContact('u9')).rejects.toMatchObject({ code: 'no_session' });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('throws an ApiError with code "not_found" on 404', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-5');
+      fetchMock.mockResolvedValueOnce(jsonResponse(404, { error: 'not_found' }));
+
+      await expect(removeContact('u9')).rejects.toMatchObject({
+        code: 'not_found',
+        status: 404,
+      });
+    });
+  });
+});
