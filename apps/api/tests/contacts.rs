@@ -360,3 +360,89 @@ async fn delete_contact_without_token_returns_401() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(body, json!({ "error": "unauthorized" }));
 }
+
+/// Acceptance criterion: `GET /api/contacts` lists only the caller's own
+/// contacts -- adding a contact under one user must not leak into another
+/// user's list, even for the same target contact.
+#[tokio::test]
+async fn list_contacts_does_not_leak_other_users_contacts() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (owner_a_token, _owner_a_id, _owner_a_email) =
+        signup_user(&pool, state.clone(), "isolation-owner-a").await;
+    let (owner_b_token, _owner_b_id, _owner_b_email) =
+        signup_user(&pool, state.clone(), "isolation-owner-b").await;
+    let (_contact_token, _contact_id, contact_email) =
+        signup_user(&pool, state.clone(), "isolation-contact").await;
+
+    let (add_status, _) = request(
+        api::app(state.clone()),
+        "POST",
+        "/api/contacts",
+        Some(&owner_a_token),
+        Some(json!({ "email": contact_email })),
+    )
+    .await;
+    assert_eq!(add_status, StatusCode::CREATED);
+
+    let (status, body) = request(
+        api::app(state),
+        "GET",
+        "/api/contacts",
+        Some(&owner_b_token),
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({ "contacts": [] }));
+}
+
+/// Acceptance criterion: `GET /api/contacts` orders results by `added_at`
+/// ascending.
+#[tokio::test]
+async fn list_contacts_orders_by_added_at_ascending() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (owner_token, _owner_id, _owner_email) =
+        signup_user(&pool, state.clone(), "order-owner").await;
+    let (_first_token, first_id, first_email) =
+        signup_user(&pool, state.clone(), "order-first").await;
+    let (_second_token, second_id, second_email) =
+        signup_user(&pool, state.clone(), "order-second").await;
+
+    let (first_add_status, _) = request(
+        api::app(state.clone()),
+        "POST",
+        "/api/contacts",
+        Some(&owner_token),
+        Some(json!({ "email": first_email })),
+    )
+    .await;
+    assert_eq!(first_add_status, StatusCode::CREATED);
+
+    let (second_add_status, _) = request(
+        api::app(state.clone()),
+        "POST",
+        "/api/contacts",
+        Some(&owner_token),
+        Some(json!({ "email": second_email })),
+    )
+    .await;
+    assert_eq!(second_add_status, StatusCode::CREATED);
+
+    let (status, body) = request(
+        api::app(state),
+        "GET",
+        "/api/contacts",
+        Some(&owner_token),
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    let contacts = body["contacts"].as_array().unwrap();
+    assert_eq!(contacts.len(), 2);
+    assert_eq!(contacts[0]["user_id"], first_id.to_string());
+    assert_eq!(contacts[1]["user_id"], second_id.to_string());
+}
