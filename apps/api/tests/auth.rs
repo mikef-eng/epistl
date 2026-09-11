@@ -271,7 +271,11 @@ async fn test_state() -> AppState {
         .connect(&database_url)
         .await
         .expect("failed to connect to Postgres");
-    AppState { auth, pool }
+    AppState {
+        auth,
+        pool,
+        registry: api::registry::ConnectionRegistry::new(),
+    }
 }
 
 #[tokio::test]
