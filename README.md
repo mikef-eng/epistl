@@ -12,12 +12,13 @@ Ship quantum-resistant E2EE chat using CRYSTALS-Kyber and CRYSTALS-Dilithium, wi
 | --- | --- |
 | Monorepo | [moonrepo](https://moonrepo.dev) |
 | Frontend | Expo + React Native (TypeScript) + expo-sqlite + NativeWind (Tailwind) |
-| Backend | Rust (Axum, tokio, Quinn) + Better Auth RS |
-| Message broker | NATS JetStream |
-| Primary DB | Postgres (auth and core app data) |
-| Cold storage | ScyllaDB (chat history) |
+| Backend | Rust (Axum, tokio) + [`better-auth`](https://crates.io/crates/better-auth) (crate name is `better-auth`, **not** `better-auth-rs` — see `apps/api/Cargo.toml` for why) |
+| Message broker | NATS JetStream (planned; not yet added — see [issue tracker](https://github.com/mikef-eng/epistl/issues) for the Quinn/QUIC and NATS stub issues) |
+| Primary DB | Postgres (auth and core app data only — see [`docs/decisions/0001-message-content-never-in-postgres.md`](docs/decisions/0001-message-content-never-in-postgres.md)) |
+| Cold storage | ScyllaDB (chat history backup; opt-in, not yet built — see [`docs/decisions/0002-scylla-backup-is-opt-in.md`](docs/decisions/0002-scylla-backup-is-opt-in.md)) |
+| Transport | Quinn/QUIC (planned; API currently serves plain HTTP/WebSocket) |
 
-Infra services (NATS, Postgres, Scylla) are documented here for orientation; they are not stood up in the harness phase.
+Postgres is stood up and required for local development (see "Running the stack locally" below). NATS and ScyllaDB are documented here for orientation only — they are not yet stood up.
 
 ## Repository layout
 
@@ -43,6 +44,47 @@ Root [CLAUDE.md](CLAUDE.md) imports [AGENTS.md](AGENTS.md). Agent tooling lives 
 
 Postgres MCP and NATS channel plugins are deferred until those services are stood up.
 
+## Running the stack locally
+
+1. **Start Postgres** (from repo root):
+
+   ```bash
+   docker compose up -d
+   ```
+
+   This runs `postgres:16` on `localhost:5432` (user/password/db all `epistl`), with a named volume so data survives restarts.
+
+2. **Set the API's required env vars.** The API refuses to start without both:
+
+   | Var | Purpose | Example (local dev only) |
+   | --- | --- | --- |
+   | `DATABASE_URL` | Postgres connection string | `postgres://epistl:epistl@localhost:5432/epistl` |
+   | `AUTH_SECRET` | `better-auth` session-signing key, must be ≥ 32 bytes | `dev-only-secret-do-not-use-in-prod-3234` |
+
+3. **Run migrations:**
+
+   ```bash
+   DATABASE_URL=postgres://epistl:epistl@localhost:5432/epistl \
+     cargo run --manifest-path apps/api/Cargo.toml --bin migrate
+   ```
+
+4. **Run the API server** (listens on `0.0.0.0:3000`):
+
+   ```bash
+   DATABASE_URL=postgres://epistl:epistl@localhost:5432/epistl \
+   AUTH_SECRET=dev-only-secret-do-not-use-in-prod-3234 \
+     cargo run --manifest-path apps/api/Cargo.toml --bin api
+   ```
+
+5. **Run the mobile app** (from `apps/mobile`):
+
+   ```bash
+   npm install
+   npm start   # or: npm run ios / npm run android / npm run web
+   ```
+
+   The client reads its API base URL from `EXPO_PUBLIC_API_URL`, defaulting to `http://localhost:3000` — fine for the iOS simulator or web on the same machine, but an Android emulator or physical device needs your machine's LAN IP instead, e.g. `EXPO_PUBLIC_API_URL=http://192.168.1.23:3000 npm start`.
+
 ## Local commands
 
 ```bash
@@ -51,7 +93,7 @@ npm run lint
 npm run typecheck
 npm test
 
-# API (from repo root)
+# API (from repo root — requires Postgres running, see above)
 cargo test --manifest-path apps/api/Cargo.toml
 cargo clippy --manifest-path apps/api/Cargo.toml -- -D warnings
 cargo fmt --manifest-path apps/api/Cargo.toml -- --check
