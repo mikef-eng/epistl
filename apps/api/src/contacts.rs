@@ -7,12 +7,19 @@
 //!
 //! One-directional by design (issue #3's "out of scope"): adding a contact
 //! never adds the caller to the other user's list.
+//!
+//! `GET /api/contacts` additionally `LEFT JOIN`s `user_keys` (issue #35) so
+//! callers can fetch a contact's PQXDH public key bundle in the same
+//! request; a contact who hasn't uploaded keys yet still appears, with all
+//! four key fields `null`.
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get};
 use axum::{Json, Router};
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -27,11 +34,40 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(sqlx::FromRow)]
+struct ContactRow {
+    user_id: Uuid,
+    email: String,
+    added_at: DateTime<Utc>,
+    x25519_public_key: Option<Vec<u8>>,
+    kyber_public_key: Option<Vec<u8>>,
+    dilithium_public_key: Option<Vec<u8>>,
+    prekey_signature: Option<Vec<u8>>,
+}
+
+#[derive(Serialize)]
 struct ContactView {
     user_id: Uuid,
     email: String,
     added_at: DateTime<Utc>,
+    x25519_public_key_b64: Option<String>,
+    kyber_public_key_b64: Option<String>,
+    dilithium_public_key_b64: Option<String>,
+    prekey_signature_b64: Option<String>,
+}
+
+impl From<ContactRow> for ContactView {
+    fn from(row: ContactRow) -> Self {
+        ContactView {
+            user_id: row.user_id,
+            email: row.email,
+            added_at: row.added_at,
+            x25519_public_key_b64: row.x25519_public_key.map(|bytes| BASE64.encode(bytes)),
+            kyber_public_key_b64: row.kyber_public_key.map(|bytes| BASE64.encode(bytes)),
+            dilithium_public_key_b64: row.dilithium_public_key.map(|bytes| BASE64.encode(bytes)),
+            prekey_signature_b64: row.prekey_signature.map(|bytes| BASE64.encode(bytes)),
+        }
+    }
 }
 
 fn internal_error() -> Response {
@@ -43,11 +79,19 @@ fn internal_error() -> Response {
 }
 
 async fn list_contacts(user: AuthenticatedUser, State(state): State<AppState>) -> Response {
-    let contacts = sqlx::query_as::<_, ContactView>(
+    let contacts = sqlx::query_as::<_, ContactRow>(
         r#"
-        SELECT c.contact_user_id AS user_id, u.email AS email, c.created_at AS added_at
+        SELECT
+            c.contact_user_id AS user_id,
+            u.email AS email,
+            c.created_at AS added_at,
+            k.x25519_public_key AS x25519_public_key,
+            k.kyber_public_key AS kyber_public_key,
+            k.dilithium_public_key AS dilithium_public_key,
+            k.prekey_signature AS prekey_signature
         FROM contacts c
         JOIN users u ON u.id = c.contact_user_id
+        LEFT JOIN user_keys k ON k.user_id = c.contact_user_id
         WHERE c.owner_user_id = $1
         ORDER BY c.created_at ASC
         "#,
@@ -57,7 +101,10 @@ async fn list_contacts(user: AuthenticatedUser, State(state): State<AppState>) -
     .await;
 
     match contacts {
-        Ok(contacts) => (StatusCode::OK, Json(json!({ "contacts": contacts }))).into_response(),
+        Ok(contacts) => {
+            let contacts: Vec<ContactView> = contacts.into_iter().map(ContactView::from).collect();
+            (StatusCode::OK, Json(json!({ "contacts": contacts }))).into_response()
+        }
         Err(_) => internal_error(),
     }
 }
