@@ -1,5 +1,5 @@
 import * as session from '../session';
-import { ApiError, signup, login, listContacts, addContact, removeContact } from '../client';
+import { ApiError, signup, login, listContacts, addContact, registerKeys, removeContact } from '../client';
 
 jest.mock('../session', () => ({
   saveToken: jest.fn(),
@@ -208,6 +208,63 @@ describe('client', () => {
       await expect(addContact('c@example.com')).rejects.toMatchObject({
         code: 'already_added',
         status: 409,
+      });
+    });
+  });
+
+  describe('registerKeys', () => {
+    it('throws an ApiError with code "no_session" when no token is stored', async () => {
+      mockSession.getToken.mockResolvedValueOnce(null);
+
+      await expect(registerKeys('x25519', 'kyber', 'dilithium', 'sig')).rejects.toMatchObject({
+        code: 'no_session',
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('POSTs to /api/keys with all four base64 fields and the Authorization header', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-6');
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(200, { user_id: 'u1', updated_at: '2026-01-01T00:00:00Z' }),
+      );
+
+      await registerKeys('x25519-b64', 'kyber-b64', 'dilithium-b64', 'sig-b64');
+
+      expect(fetchMock).toHaveBeenCalledWith('http://localhost:3000/api/keys', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer tok-6',
+        },
+        body: JSON.stringify({
+          x25519_public_key_b64: 'x25519-b64',
+          kyber_public_key_b64: 'kyber-b64',
+          dilithium_public_key_b64: 'dilithium-b64',
+          prekey_signature_b64: 'sig-b64',
+        }),
+      });
+    });
+
+    it('resolves without a value on success', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-6');
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(200, { user_id: 'u1', updated_at: '2026-01-01T00:00:00Z' }),
+      );
+
+      await expect(
+        registerKeys('x25519-b64', 'kyber-b64', 'dilithium-b64', 'sig-b64'),
+      ).resolves.toBeUndefined();
+    });
+
+    it('throws an ApiError with code "invalid_x25519_key" on 400', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-6');
+      fetchMock.mockResolvedValueOnce(jsonResponse(400, { error: 'invalid_x25519_key' }));
+
+      await expect(
+        registerKeys('bad', 'kyber-b64', 'dilithium-b64', 'sig-b64'),
+      ).rejects.toMatchObject({
+        code: 'invalid_x25519_key',
+        status: 400,
       });
     });
   });
