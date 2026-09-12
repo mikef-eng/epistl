@@ -35,6 +35,12 @@ jobs:
       AUTH_SECRET: ci-only-secret-do-not-use-in-prod-32+
     steps:
       - uses: actions/checkout@v4
+        with:
+          # moon needs full history to resolve a merge base with `main`
+          # for its changed-files/task-graph detection; a shallow clone
+          # makes `moon run` fail outright (see moonrepo.dev/docs/guides/ci).
+          fetch-depth: 0
+          filter: blob:none
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -68,6 +74,12 @@ jobs:
         working-directory: apps/mobile
     steps:
       - uses: actions/checkout@v4
+        with:
+          # moon needs full history to resolve a merge base with `main`
+          # for its changed-files/task-graph detection; a shallow clone
+          # makes `moon run` fail outright (see moonrepo.dev/docs/guides/ci).
+          fetch-depth: 0
+          filter: blob:none
 
       - name: Setup Node
         uses: actions/setup-node@v4
