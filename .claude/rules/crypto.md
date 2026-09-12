@@ -2,6 +2,7 @@
 paths:
   - apps/api/src/crypto/**
   - apps/api/src/auth/**
+  - apps/mobile/src/crypto/**
 ---
 
 # Crypto / auth path rules
