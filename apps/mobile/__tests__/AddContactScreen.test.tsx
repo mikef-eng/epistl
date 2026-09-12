@@ -103,4 +103,17 @@ describe('AddContactScreen', () => {
     });
     expect(navigation.navigate).not.toHaveBeenCalled();
   });
+
+  it('shows a generic message for a real network failure (rejection that is not an ApiError) and does not navigate away', async () => {
+    mockedAddContact.mockRejectedValueOnce(new TypeError('Network request failed'));
+    const { navigation, user } = await renderAddContactScreen();
+
+    await user.type(screen.getByPlaceholderText('Email'), 'a@example.com');
+    await user.press(screen.getByRole('button', { name: 'Add' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Something went wrong')).toBeTruthy();
+    });
+    expect(navigation.navigate).not.toHaveBeenCalled();
+  });
 });
