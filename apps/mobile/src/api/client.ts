@@ -4,11 +4,14 @@
  * carrying the backend's `error` code string and the HTTP status.
  *
  * The base URL is read from `EXPO_PUBLIC_API_URL` in exactly one place
- * (`API_BASE_URL` below), defaulting to `http://localhost:3000`.
+ * (`API_BASE_URL` below), defaulting to `http://localhost:3000`. It is
+ * exported so other transports that talk to the same backend (e.g. `./ws.ts`
+ * for the chat WebSocket relay) can derive their URL from it instead of
+ * introducing a second, independent env var.
  */
 import { getToken, saveToken } from './session';
 
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000';
+export const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000';
 
 /** Thrown by every function in this module on a non-2xx response, and by
  * the contacts functions locally when no session token is stored. */
