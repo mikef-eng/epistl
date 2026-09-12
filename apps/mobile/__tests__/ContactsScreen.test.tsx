@@ -41,7 +41,7 @@ async function renderContactsScreen() {
 
 describe('ContactsScreen', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    jest.resetAllMocks();
   });
 
   it('shows a loading indicator while the initial fetch is in flight', async () => {
