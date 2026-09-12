@@ -8,5 +8,5 @@ export type RootStackParamList = {
   Login: undefined;
   Contacts: undefined;
   AddContact: undefined;
-  Chat: undefined;
+  Chat: { userId: string; email: string };
 };
