@@ -21,6 +21,9 @@ use uuid::Uuid;
 const TEST_SECRET: &str = "test-only-secret-do-not-use-in-prod-32+";
 
 async fn test_pool() -> PgPool {
+    // Loads DATABASE_URL/AUTH_SECRET from a repo-root .env if present and
+    // not already set (e.g. by CI). Safe to call redundantly per-test.
+    dotenvy::dotenv().ok();
     let database_url = std::env::var("DATABASE_URL")
         .expect("DATABASE_URL must be set to run this integration test");
     let pool = PgPoolOptions::new()
@@ -261,6 +264,7 @@ fn protected_app(state: AppState) -> Router {
 }
 
 async fn test_state() -> AppState {
+    dotenvy::dotenv().ok();
     let database_url = std::env::var("DATABASE_URL")
         .expect("DATABASE_URL must be set to run this integration test");
     let auth = api::auth::build_auth(&database_url, TEST_SECRET)

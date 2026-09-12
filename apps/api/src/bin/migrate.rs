@@ -1,12 +1,13 @@
 //! Standalone migration runner.
 //!
 //! Applies the SQL migrations in `apps/api/migrations` to the database at
-//! `DATABASE_URL`. Used in CI (before `cargo test`) and can be run locally
-//! against the `docker-compose.yml` Postgres instance:
+//! `DATABASE_URL`. Used in CI (which sets `DATABASE_URL` directly as a job
+//! env var) and locally against the `docker-compose.yml` Postgres instance,
+//! where `DATABASE_URL` is picked up automatically from a repo-root `.env`
+//! (see `.env.example`) via `dotenvy` -- just run:
 //!
 //! ```sh
-//! DATABASE_URL=postgres://epistl:epistl@localhost:5432/epistl \
-//!   cargo run --manifest-path apps/api/Cargo.toml --bin migrate
+//! moon run api:migrate
 //! ```
 //!
 //! Re-running against an already-migrated database is a no-op: sqlx tracks
@@ -18,6 +19,10 @@ use sqlx::postgres::PgPoolOptions;
 
 #[tokio::main]
 async fn main() {
+    // See apps/api/src/main.rs for why this is safe to call unconditionally
+    // (never overrides an already-set var; no-op if no .env is found).
+    dotenvy::dotenv().ok();
+
     let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
         eprintln!("DATABASE_URL must be set to run migrations");
         std::process::exit(1);
