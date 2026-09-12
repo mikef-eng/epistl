@@ -52,11 +52,7 @@ Postgres MCP and NATS channel plugins are deferred until those services are stoo
    cp .env.example .env
    ```
 
-   `.env` is gitignored — see `.env.example` for what each var is for and which process consumes it. The defaults work as-is against the local docker-compose Postgres below; you only need to edit it if you want different values. Load it into your shell before the steps that need it:
-
-   ```bash
-   set -o allexport; source .env; set +o allexport
-   ```
+   `.env` is gitignored — see `.env.example` for what each var is for and which process consumes it. The defaults work as-is against the local docker-compose Postgres below; you only need to edit it if you want different values. Nothing else to do here: `docker compose` reads `.env` from this directory natively, and the API loads it itself via [`dotenvy`](https://docs.rs/dotenvy) on startup (walking up from wherever it's run from, so this works whether you invoke it from the repo root or from `apps/api`) — no manual `export`/`source` step needed.
 
 2. **Start Postgres** (from repo root):
 
@@ -72,7 +68,7 @@ Postgres MCP and NATS channel plugins are deferred until those services are stoo
    moon run api:migrate
    ```
 
-4. **Run the API server** (listens on `0.0.0.0:3000`; refuses to start unless `DATABASE_URL` and `AUTH_SECRET` — both in your `.env` — are set):
+4. **Run the API server** (listens on `0.0.0.0:3000`; refuses to start unless `DATABASE_URL` and `AUTH_SECRET` — both in your `.env` — resolve to a value):
 
    ```bash
    moon run api:dev
@@ -85,7 +81,7 @@ Postgres MCP and NATS channel plugins are deferred until those services are stoo
    moon run mobile:start   # equivalent to: npm start (from apps/mobile)
    ```
 
-   The client reads its API base URL from `EXPO_PUBLIC_API_URL`, defaulting to `http://localhost:3000` — fine for the iOS simulator or web on the same machine, but an Android emulator or physical device needs your machine's LAN IP instead, e.g. `EXPO_PUBLIC_API_URL=http://192.168.1.23:3000 moon run mobile:start`.
+   The client reads its API base URL from `EXPO_PUBLIC_API_URL`, defaulting to `http://localhost:3000` — fine for the iOS simulator or web on the same machine, but an Android emulator or physical device needs your machine's LAN IP instead. Expo's CLI auto-loads `apps/mobile/.env` (see `apps/mobile/.env.example`) the same way `docker compose` and the API auto-load the root `.env` — copy it and set `EXPO_PUBLIC_API_URL` there rather than exporting it inline each time.
 
 `api:dev` and `mobile:start` are long-running dev servers (moon's `persistent` task option) — each occupies its terminal until you stop it, same as running `cargo run`/`npm start` directly. `moon run` is otherwise a thin wrapper: `moon.yml` in each app just declares the same commands moon runs, so you can always fall back to invoking `cargo`/`npm` directly from that app's directory if you'd rather not use moon.
 
