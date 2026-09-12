@@ -4,7 +4,7 @@ Epistl is a cutting-edge chat platform. The long-term vision is a social hybrid 
 
 ## MVP goal
 
-Ship quantum-resistant E2EE chat using CRYSTALS-Kyber and CRYSTALS-Dilithium, with a basic chat interface that includes a contacts list and the ability to add and manage contacts.
+Ship post-quantum E2EE chat using CRYSTALS-Kyber and CRYSTALS-Dilithium (standardized by NIST as ML-KEM and ML-DSA), with a basic chat interface that includes a contacts list and the ability to add and manage contacts.
 
 ## Stack
 
