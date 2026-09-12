@@ -123,4 +123,41 @@ describe('ensureLocalIdentity', () => {
       ml_dsa65.verify(second.prekeySignature, message, second.dilithiumPublicKey)
     ).toBe(true);
   });
+
+  it('returns the same identity to concurrent callers and only persists one identity worth of keys', async () => {
+    const [a, b] = await Promise.all([ensureLocalIdentity(), ensureLocalIdentity()]);
+
+    expect(a.kyberPublicKey).toEqual(b.kyberPublicKey);
+    expect(a.kyberSecretKey).toEqual(b.kyberSecretKey);
+    expect(a.dilithiumPublicKey).toEqual(b.dilithiumPublicKey);
+    expect(a.dilithiumSecretKey).toEqual(b.dilithiumSecretKey);
+    expect(a.x25519PublicKey).toEqual(b.x25519PublicKey);
+    expect(a.x25519SecretKey).toEqual(b.x25519SecretKey);
+
+    expect(mockSecureStore.setItemAsync).toHaveBeenCalledTimes(6);
+  });
+
+  it('does not let the in-flight cache leak into a later, independent call', async () => {
+    const first = await ensureLocalIdentity();
+    mockSecureStore.setItemAsync.mockClear();
+    mockSecureStore.getItemAsync.mockClear();
+
+    const second = await ensureLocalIdentity();
+
+    expect(mockSecureStore.setItemAsync).not.toHaveBeenCalled();
+    expect(second.kyberPublicKey).toEqual(first.kyberPublicKey);
+  });
+
+  it('clears the in-flight cache on failure so a later call retries instead of failing forever', async () => {
+    mockSecureStore.setItemAsync.mockImplementationOnce(async () => {
+      throw new Error('boom');
+    });
+
+    await expect(ensureLocalIdentity()).rejects.toThrow('boom');
+
+    const identity = await ensureLocalIdentity();
+
+    expect(identity.kyberPublicKey.length).toBe(1184);
+    expect(mockSecureStore.setItemAsync).toHaveBeenCalled();
+  });
 });

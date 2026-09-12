@@ -141,13 +141,18 @@ async function persistKeys(keys: IdentityKeys): Promise<void> {
 }
 
 /**
- * Returns the existing on-device identity if one is already stored,
- * otherwise generates one and persists it. `prekeySignature` is always
- * recomputed from the (stored or freshly generated) keys rather than itself
- * persisted, so it can never drift out of sync with whichever keys are
- * currently stored.
+ * In-flight promise for an `ensureLocalIdentity()` call that has not yet
+ * settled. Guards against concurrent invocations (e.g. two screens both
+ * calling it during app startup) independently seeing no stored keys, each
+ * generating their own identity, and interleaving their `persistKeys()`
+ * writes into a mixed/inconsistent on-device identity. Cleared once the
+ * call settles, whether it succeeds or fails, so a later independent call
+ * always re-checks storage and a failed call can be retried rather than
+ * permanently stuck.
  */
-export async function ensureLocalIdentity(): Promise<Identity> {
+let inFlight: Promise<Identity> | null = null;
+
+async function ensureLocalIdentityUncached(): Promise<Identity> {
   const storedKeys = await loadStoredKeys();
 
   if (storedKeys !== null) {
@@ -160,4 +165,25 @@ export async function ensureLocalIdentity(): Promise<Identity> {
   const identity = generateIdentity();
   await persistKeys(identity);
   return identity;
+}
+
+/**
+ * Returns the existing on-device identity if one is already stored,
+ * otherwise generates one and persists it. `prekeySignature` is always
+ * recomputed from the (stored or freshly generated) keys rather than itself
+ * persisted, so it can never drift out of sync with whichever keys are
+ * currently stored.
+ *
+ * Safe to call concurrently: all calls that overlap with an in-flight call
+ * resolve to that same call's result rather than each independently
+ * checking storage and potentially generating their own identity.
+ */
+export function ensureLocalIdentity(): Promise<Identity> {
+  if (inFlight === null) {
+    inFlight = ensureLocalIdentityUncached().finally(() => {
+      inFlight = null;
+    });
+  }
+
+  return inFlight;
 }
