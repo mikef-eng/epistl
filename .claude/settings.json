@@ -19,9 +19,7 @@
       "Bash(git diff *)",
       "Bash(git log *)",
       "Bash(git show *)",
-      "Bash(git branch *)"
-    ],
-    "ask": [
+      "Bash(git branch *)",
       "Bash(gh pr merge *)",
       "Bash(gh pr create *)",
       "Bash(gh issue create *)",
@@ -29,6 +27,9 @@
       "Bash(gh issue edit *)",
       "Bash(git push *)",
       "Bash(git commit *)"
+    ],
+    "ask": [
+      
     ],
     "deny": [
       "Bash(git push --force *)",

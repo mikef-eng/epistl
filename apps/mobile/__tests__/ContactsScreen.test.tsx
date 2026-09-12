@@ -22,6 +22,15 @@ jest.mock('../src/api/client', () => {
 
 const mockedListContacts = listContacts as jest.Mock;
 
+// CI runs each test file in its own worker process, and this file's first
+// render pays the one-time cost of registering RN/Reanimated native-module
+// mocks in that worker. That cold start intermittently exceeds Jest's
+// default 5000ms per-test timeout under CI load (observed in issue #26)
+// even though the underlying behavior is correct and passes reliably
+// locally. Give this file's tests more headroom rather than chase a
+// non-existent app bug.
+jest.setTimeout(15000);
+
 function makeDeferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
