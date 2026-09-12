@@ -118,7 +118,7 @@ jobs:
         id: changed
         run: |
           if git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" \
-              | grep -E '^apps/api/src/(crypto|auth)/'; then
+              | grep -E '^(apps/api/src/(crypto|auth)/|apps/mobile/src/crypto/)'; then
             echo "hit=true" >> "$GITHUB_OUTPUT"
           else
             echo "hit=false" >> "$GITHUB_OUTPUT"
@@ -138,4 +138,4 @@ jobs:
             exit 0
           fi
           gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$MARKER
-          This PR touches \`apps/api/src/crypto/**\` or \`apps/api/src/auth/**\`. Per [AGENTS.md](../blob/main/AGENTS.md), the Reviewer must not merge without \`crypto-reviewer\` sign-off (run the \`pqc-crypto-change\` checklist first)."
+          This PR touches \`apps/api/src/crypto/**\`, \`apps/api/src/auth/**\`, or \`apps/mobile/src/crypto/**\`. Per [AGENTS.md](../blob/main/AGENTS.md), the Reviewer must not merge without \`crypto-reviewer\` sign-off (run the \`pqc-crypto-change\` checklist first)."
