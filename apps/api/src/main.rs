@@ -7,6 +7,14 @@ const AUTH_SECRET_VAR: &str = "AUTH_SECRET";
 
 #[tokio::main]
 async fn main() {
+    // Loads .env (walking up from the cwd, so this finds the repo-root
+    // .env regardless of whether this runs via `cargo run` from apps/api
+    // or `moon run api:dev` from the repo root) into the process
+    // environment. Never overrides a var that's already set, so CI's own
+    // job-level env: values always win over a stray .env if one exists.
+    // Silently a no-op if no .env file is found (e.g. in CI).
+    dotenvy::dotenv().ok();
+
     let database_url = match env_database_url() {
         Ok(url) => url,
         Err(err) => {

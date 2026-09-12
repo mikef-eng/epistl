@@ -9,6 +9,9 @@ use sqlx::Row;
 use uuid::Uuid;
 
 async fn connect() -> sqlx::PgPool {
+    // Loads DATABASE_URL from a repo-root .env if present and not already
+    // set (e.g. by CI). Safe to call redundantly per-test.
+    dotenvy::dotenv().ok();
     let database_url = std::env::var("DATABASE_URL")
         .expect("DATABASE_URL must be set to run this integration test");
     let pool = PgPoolOptions::new()
