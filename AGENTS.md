@@ -90,6 +90,7 @@ Coder updates the docs in the same PR; Reviewer blocks merge if they're stale re
 - [`docs/decisions/0003-opaque-message-envelope.md`](docs/decisions/0003-opaque-message-envelope.md)
 - [`docs/decisions/0004-public-keys-allowed-in-postgres.md`](docs/decisions/0004-public-keys-allowed-in-postgres.md)
 - [`docs/decisions/0005-pqxdh-handshake-classical-ratchet.md`](docs/decisions/0005-pqxdh-handshake-classical-ratchet.md)
+- [`docs/decisions/0006-pqxdh-session-key-derivation.md`](docs/decisions/0006-pqxdh-session-key-derivation.md)
 
 Add a new numbered file here for any future decision with real cost-of-change (data model, protocol, storage boundaries) — not for routine implementation choices.
 
