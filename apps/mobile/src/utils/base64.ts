@@ -114,6 +114,47 @@ export function utf8ToBase64(text: string): string {
   return result;
 }
 
+/** Encodes raw bytes as base64, with no UTF-8 interpretation. */
+export function bytesToBase64(bytes: Uint8Array): string {
+  let result = '';
+
+  for (let i = 0; i < bytes.length; i += 3) {
+    const b0 = bytes[i];
+    const b1 = bytes[i + 1];
+    const b2 = bytes[i + 2];
+
+    result += BASE64_CHARS[b0 >> 2];
+    result += BASE64_CHARS[((b0 & 0x03) << 4) | (b1 === undefined ? 0 : b1 >> 4)];
+    result += b1 === undefined ? '=' : BASE64_CHARS[((b1 & 0x0f) << 2) | (b2 === undefined ? 0 : b2 >> 6)];
+    result += b2 === undefined ? '=' : BASE64_CHARS[b2 & 0x3f];
+  }
+
+  return result;
+}
+
+/** Decodes a base64 string into raw bytes, with no UTF-8 interpretation. */
+export function base64ToBytes(base64: string): Uint8Array {
+  const cleaned = base64.replace(/=+$/, '');
+  const bytes: number[] = [];
+  let buffer = 0;
+  let bitsCollected = 0;
+
+  for (const char of cleaned) {
+    const value = BASE64_CHARS.indexOf(char);
+    if (value === -1) {
+      continue;
+    }
+    buffer = (buffer << 6) | value;
+    bitsCollected += 6;
+    if (bitsCollected >= 8) {
+      bitsCollected -= 8;
+      bytes.push((buffer >> bitsCollected) & 0xff);
+    }
+  }
+
+  return new Uint8Array(bytes);
+}
+
 /** Decodes a base64 string, interpreting the resulting bytes as UTF-8. */
 export function base64ToUtf8(base64: string): string {
   const cleaned = base64.replace(/=+$/, '');
