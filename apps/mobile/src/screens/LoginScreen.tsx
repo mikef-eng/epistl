@@ -2,8 +2,16 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
 
-import { ApiError, login, signup } from '../api/client';
+import { ApiError, login, signup, type AuthUser } from '../api/client';
+import { ensureKeysRegistered } from '../crypto/keyRegistration';
 import type { RootStackParamList } from '../navigation/types';
+
+/** Extracts the authenticated user's id from an `AuthResponse.user`, whose
+ * shape is otherwise opaque to this app (it passes through better-auth's
+ * user object as-is). */
+function userIdOf(user: AuthUser): string | null {
+  return typeof user.id === 'string' ? user.id : null;
+}
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Login'>;
 
@@ -31,10 +39,14 @@ export default function LoginScreen({ navigation }: Props) {
     setError(null);
     setSubmitting(true);
     try {
-      if (mode === 'login') {
-        await login(email, password);
-      } else {
-        await signup(email, password);
+      const data = mode === 'login' ? await login(email, password) : await signup(email, password);
+      const userId = userIdOf(data.user);
+      if (userId !== null) {
+        // `ensureKeysRegistered` already swallows its own errors (network,
+        // etc.) so a failed upload never blocks login/signup from
+        // completing; this `catch` is defense-in-depth in case that
+        // contract is ever violated.
+        await ensureKeysRegistered(userId).catch(() => undefined);
       }
       navigation.replace('Contacts');
     } catch (err) {

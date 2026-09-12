@@ -43,6 +43,10 @@ export interface Contact {
   user_id: string;
   email: string;
   added_at: string;
+  x25519_public_key_b64: string | null;
+  kyber_public_key_b64: string | null;
+  dilithium_public_key_b64: string | null;
+  prekey_signature_b64: string | null;
 }
 
 export interface ContactsResponse {
@@ -146,6 +150,33 @@ export async function addContact(email: string): Promise<Contact> {
   }
 
   return (await response.json()) as Contact;
+}
+
+export async function registerKeys(
+  x25519PublicKeyB64: string,
+  kyberPublicKeyB64: string,
+  dilithiumPublicKeyB64: string,
+  prekeySignatureB64: string
+): Promise<void> {
+  const token = await requireToken();
+
+  const response = await fetch(`${API_BASE_URL}/api/keys`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      x25519_public_key_b64: x25519PublicKeyB64,
+      kyber_public_key_b64: kyberPublicKeyB64,
+      dilithium_public_key_b64: dilithiumPublicKeyB64,
+      prekey_signature_b64: prekeySignatureB64,
+    }),
+  });
+
+  if (!response.ok) {
+    await throwApiError(response);
+  }
 }
 
 export async function removeContact(userId: string): Promise<void> {
