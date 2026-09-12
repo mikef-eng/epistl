@@ -35,6 +35,12 @@ jobs:
       AUTH_SECRET: ci-only-secret-do-not-use-in-prod-32+
     steps:
       - uses: actions/checkout@v4
+        with:
+          # moon needs full history to resolve a merge base with `main`
+          # for its changed-files/task-graph detection; a shallow clone
+          # makes `moon run` fail outright (see moonrepo.dev/docs/guides/ci).
+          fetch-depth: 0
+          filter: blob:none
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -46,17 +52,19 @@ jobs:
         with:
           workspaces: apps/api -> ../../target
 
+      - name: Install moon
+        uses: moonrepo/setup-toolchain@v0
+
       - name: Format
-        run: cargo fmt --manifest-path apps/api/Cargo.toml -- --check
+        run: moon run api:check
 
       - name: Clippy
-        run: cargo clippy --manifest-path apps/api/Cargo.toml -- -D warnings
+        run: moon run api:lint
 
-      - name: Run migrations
-        run: cargo run --manifest-path apps/api/Cargo.toml --bin migrate
-
+      # api:test depends on api:migrate (see apps/api/moon.yml), so
+      # migrations run automatically as part of this task graph.
       - name: Test
-        run: cargo test --manifest-path apps/api/Cargo.toml
+        run: moon run api:test
 
   mobile:
     name: mobile
@@ -66,6 +74,12 @@ jobs:
         working-directory: apps/mobile
     steps:
       - uses: actions/checkout@v4
+        with:
+          # moon needs full history to resolve a merge base with `main`
+          # for its changed-files/task-graph detection; a shallow clone
+          # makes `moon run` fail outright (see moonrepo.dev/docs/guides/ci).
+          fetch-depth: 0
+          filter: blob:none
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -77,14 +91,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install moon
+        uses: moonrepo/setup-toolchain@v0
+
       - name: Lint
-        run: npm run lint
+        run: moon run mobile:lint
 
       - name: Typecheck
-        run: npm run typecheck
+        run: moon run mobile:typecheck
 
       - name: Test
-        run: npm test
+        run: moon run mobile:test
 
   crypto-review-notice:
     name: crypto-review-notice
