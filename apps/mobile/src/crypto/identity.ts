@@ -7,9 +7,10 @@
  * (the "prekey signature"). Private keys never leave `expo-secure-store`.
  *
  * This module only generates and stores key material — it does not perform
- * any ECDH, KEM encapsulation, AEAD, or handshake logic (see issue #38), and
- * it is not yet wired into any screen or uploaded to the server (see issue
- * #37).
+ * any ECDH, KEM encapsulation, AEAD, or handshake logic (see issue #38).
+ * `../crypto/keyRegistration.ts` (issue #37) calls `ensureLocalIdentity()`
+ * after login/signup and uploads the resulting public key bundle to the
+ * server.
  */
 import * as SecureStore from 'expo-secure-store';
 import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';

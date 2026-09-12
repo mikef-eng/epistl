@@ -11,6 +11,20 @@ function messageFor(err: unknown): string {
   return err instanceof ApiError ? err.message : 'Something went wrong';
 }
 
+/** A contact is only usable for chat once its full PQXDH key bundle
+ * (issue #35) is present on the server. Each field is checked
+ * independently rather than relying on the "all four or none" invariant
+ * the server currently guarantees, so this stays correct even if that
+ * invariant ever changes. */
+function hasFullKeyBundle(contact: Contact): boolean {
+  return (
+    contact.x25519_public_key_b64 !== null &&
+    contact.kyber_public_key_b64 !== null &&
+    contact.dilithium_public_key_b64 !== null &&
+    contact.prekey_signature_b64 !== null
+  );
+}
+
 export default function ContactsScreen({ navigation }: Props) {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
@@ -116,15 +130,29 @@ export default function ContactsScreen({ navigation }: Props) {
               <Text className="text-center text-gray-500">No contacts yet</Text>
             </View>
           }
-          renderItem={({ item }) => (
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => handleOpenChat(item)}
-              className="border-b border-gray-100 px-4 py-4"
-            >
-              <Text className="text-base">{item.email}</Text>
-            </Pressable>
-          )}
+          renderItem={({ item }) => {
+            const keysReady = hasFullKeyBundle(item);
+            return (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ disabled: !keysReady }}
+                disabled={!keysReady}
+                onPress={() => {
+                  if (keysReady) {
+                    handleOpenChat(item);
+                  }
+                }}
+                className={`border-b border-gray-100 px-4 py-4 ${keysReady ? '' : 'opacity-50'}`}
+              >
+                <Text className="text-base">{item.email}</Text>
+                {keysReady ? null : (
+                  <Text className="text-sm text-gray-400">
+                    Waiting for {item.email} to finish setup
+                  </Text>
+                )}
+              </Pressable>
+            );
+          }}
         />
       )}
     </View>

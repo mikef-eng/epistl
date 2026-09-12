@@ -48,6 +48,32 @@ async function renderContactsScreen() {
   return { navigation, user };
 }
 
+function fullyKeyedContact(overrides: {
+  user_id: string;
+  email: string;
+  added_at?: string;
+}) {
+  return {
+    added_at: '2024-01-01T00:00:00Z',
+    x25519_public_key_b64: 'x25519-b64',
+    kyber_public_key_b64: 'kyber-b64',
+    dilithium_public_key_b64: 'dilithium-b64',
+    prekey_signature_b64: 'sig-b64',
+    ...overrides,
+  };
+}
+
+function unkeyedContact(overrides: { user_id: string; email: string; added_at?: string }) {
+  return {
+    added_at: '2024-01-01T00:00:00Z',
+    x25519_public_key_b64: null,
+    kyber_public_key_b64: null,
+    dilithium_public_key_b64: null,
+    prekey_signature_b64: null,
+    ...overrides,
+  };
+}
+
 describe('ContactsScreen', () => {
   beforeEach(() => {
     jest.resetAllMocks();
@@ -70,8 +96,8 @@ describe('ContactsScreen', () => {
   it('renders each contact email once loaded', async () => {
     mockedListContacts.mockResolvedValueOnce({
       contacts: [
-        { user_id: 'u1', email: 'alice@example.com', added_at: '2024-01-01T00:00:00Z' },
-        { user_id: 'u2', email: 'bob@example.com', added_at: '2024-01-02T00:00:00Z' },
+        fullyKeyedContact({ user_id: 'u1', email: 'alice@example.com' }),
+        fullyKeyedContact({ user_id: 'u2', email: 'bob@example.com', added_at: '2024-01-02T00:00:00Z' }),
       ],
     });
 
@@ -104,7 +130,7 @@ describe('ContactsScreen', () => {
     expect(mockedListContacts).toHaveBeenCalledTimes(1);
 
     mockedListContacts.mockResolvedValueOnce({
-      contacts: [{ user_id: 'u1', email: 'alice@example.com', added_at: '2024-01-01T00:00:00Z' }],
+      contacts: [fullyKeyedContact({ user_id: 'u1', email: 'alice@example.com' })],
     });
     await user.press(screen.getByRole('button', { name: 'Retry' }));
 
@@ -127,9 +153,9 @@ describe('ContactsScreen', () => {
     expect(navigation.navigate).toHaveBeenCalledWith('AddContact');
   });
 
-  it('navigates to Chat with the contact userId and email when a row is tapped', async () => {
+  it('navigates to Chat with the contact userId and email when a fully-keyed row is tapped', async () => {
     mockedListContacts.mockResolvedValueOnce({
-      contacts: [{ user_id: 'u1', email: 'alice@example.com', added_at: '2024-01-01T00:00:00Z' }],
+      contacts: [fullyKeyedContact({ user_id: 'u1', email: 'alice@example.com' })],
     });
     const { navigation, user } = await renderContactsScreen();
 
@@ -143,5 +169,45 @@ describe('ContactsScreen', () => {
       userId: 'u1',
       email: 'alice@example.com',
     });
+  });
+
+  it('renders a contact missing any key field as disabled and does not navigate on tap', async () => {
+    mockedListContacts.mockResolvedValueOnce({
+      contacts: [unkeyedContact({ user_id: 'u1', email: 'carol@example.com' })],
+    });
+    const { navigation, user } = await renderContactsScreen();
+
+    await waitFor(() => {
+      expect(screen.getByText('carol@example.com')).toBeTruthy();
+    });
+
+    expect(screen.getByText('Waiting for carol@example.com to finish setup')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /carol@example.com/ })).toBeDisabled();
+
+    await user.press(screen.getByText('carol@example.com'));
+
+    expect(navigation.navigate).not.toHaveBeenCalled();
+  });
+
+  it('renders a contact with only one null key field as disabled', async () => {
+    mockedListContacts.mockResolvedValueOnce({
+      contacts: [
+        {
+          ...fullyKeyedContact({ user_id: 'u1', email: 'dave@example.com' }),
+          prekey_signature_b64: null,
+        },
+      ],
+    });
+    const { navigation, user } = await renderContactsScreen();
+
+    await waitFor(() => {
+      expect(screen.getByText('dave@example.com')).toBeTruthy();
+    });
+
+    expect(screen.getByText('Waiting for dave@example.com to finish setup')).toBeTruthy();
+
+    await user.press(screen.getByText('dave@example.com'));
+
+    expect(navigation.navigate).not.toHaveBeenCalled();
   });
 });

@@ -2,6 +2,7 @@ import { render, screen, userEvent, waitFor } from '@testing-library/react-nativ
 
 import LoginScreen from '../src/screens/LoginScreen';
 import { login, signup } from '../src/api/client';
+import { ensureKeysRegistered } from '../src/crypto/keyRegistration';
 
 jest.mock('../src/api/client', () => {
   class ApiError extends Error {
@@ -21,8 +22,13 @@ jest.mock('../src/api/client', () => {
   };
 });
 
+jest.mock('../src/crypto/keyRegistration', () => ({
+  ensureKeysRegistered: jest.fn(),
+}));
+
 const mockedLogin = login as jest.Mock;
 const mockedSignup = signup as jest.Mock;
+const mockedEnsureKeysRegistered = ensureKeysRegistered as jest.Mock;
 
 async function renderLoginScreen() {
   const navigation = { replace: jest.fn() };
@@ -96,6 +102,61 @@ describe('LoginScreen', () => {
 
     await waitFor(() => {
       expect(mockedSignup).toHaveBeenCalledWith('a@example.com', 'hunter2');
+      expect(navigation.replace).toHaveBeenCalledWith('Contacts');
+    });
+  });
+
+  it('calls ensureKeysRegistered with the authenticated user id after a successful login', async () => {
+    mockedLogin.mockResolvedValueOnce({ token: 'tok-1', user: { id: 'user-123' } });
+    const { user } = await renderLoginScreen();
+
+    await user.type(screen.getByPlaceholderText('Email'), 'a@example.com');
+    await user.type(screen.getByPlaceholderText('Password'), 'hunter2');
+    await user.press(screen.getByRole('button', { name: 'Log in' }));
+
+    await waitFor(() => {
+      expect(mockedEnsureKeysRegistered).toHaveBeenCalledWith('user-123');
+    });
+  });
+
+  it('calls ensureKeysRegistered with the authenticated user id after a successful signup', async () => {
+    mockedSignup.mockResolvedValueOnce({ token: 'tok-2', user: { id: 'user-456' } });
+    const { user } = await renderLoginScreen();
+
+    await user.press(screen.getByText(/sign up/i));
+    await user.type(screen.getByPlaceholderText('Email'), 'a@example.com');
+    await user.type(screen.getByPlaceholderText('Password'), 'hunter2');
+    await user.press(screen.getByRole('button', { name: 'Sign up' }));
+
+    await waitFor(() => {
+      expect(mockedEnsureKeysRegistered).toHaveBeenCalledWith('user-456');
+    });
+  });
+
+  it('does not call ensureKeysRegistered when the user object has no id', async () => {
+    mockedLogin.mockResolvedValueOnce({ token: 'tok-1', user: {} });
+    const { navigation, user } = await renderLoginScreen();
+
+    await user.type(screen.getByPlaceholderText('Email'), 'a@example.com');
+    await user.type(screen.getByPlaceholderText('Password'), 'hunter2');
+    await user.press(screen.getByRole('button', { name: 'Log in' }));
+
+    await waitFor(() => {
+      expect(navigation.replace).toHaveBeenCalledWith('Contacts');
+    });
+    expect(mockedEnsureKeysRegistered).not.toHaveBeenCalled();
+  });
+
+  it('still navigates to Contacts when ensureKeysRegistered rejects', async () => {
+    mockedLogin.mockResolvedValueOnce({ token: 'tok-1', user: { id: 'user-123' } });
+    mockedEnsureKeysRegistered.mockRejectedValueOnce(new Error('network error'));
+    const { navigation, user } = await renderLoginScreen();
+
+    await user.type(screen.getByPlaceholderText('Email'), 'a@example.com');
+    await user.type(screen.getByPlaceholderText('Password'), 'hunter2');
+    await user.press(screen.getByRole('button', { name: 'Log in' }));
+
+    await waitFor(() => {
       expect(navigation.replace).toHaveBeenCalledWith('Contacts');
     });
   });
