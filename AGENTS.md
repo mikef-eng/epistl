@@ -118,7 +118,7 @@ Claude Code does not auto-read this file. Root [`CLAUDE.md`](CLAUDE.md) imports 
 
 ### Permissions policy
 
-`.claude/settings.json` allows read-only `git`/`gh` without prompting, asks for confirmation on mutating actions (`gh pr merge`, `gh pr create`, `gh issue create`/`close`, `git push`, `git commit`), and denies destructive ones outright (`git push --force`, `gh repo delete`, `gh pr merge --admin`). Update it there, not by improvising broader access mid-session.
+`.claude/settings.json` allows read-only `git`/`gh` and the mutating actions that drive the Coder/Tester/Reviewer flow (`gh pr merge`, `gh pr create`, `gh issue create`/`close`/`edit`, `git push`, `git commit`) without prompting, and denies destructive ones outright (`git push --force`, `gh repo delete`, `gh pr merge --admin`). These roles run as unattended background subagents that cannot answer an interactive confirmation prompt, so an `ask` rule on a routine SDLC action just gets silently bypassed anyway (and flagged after the fact) rather than actually getting reviewed — the real gate for these actions is branch protection (PR + green CI required on `main`) plus the Tester/Reviewer playbooks above, not a confirmation prompt. Only the genuinely irreversible operations are denied outright. Update permissions in `.claude/settings.json`, not by improvising broader access mid-session; note that Claude Code itself refuses to let an agent edit its own `.claude/settings*.json` (a "Self-Modification" guardrail), so this file can only be changed by a human directly.
 
 `apps/mobile/.claude/settings.json` enables `expo@claude-plugins-official` for Expo-specific skills.
 
