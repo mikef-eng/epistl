@@ -46,34 +46,36 @@ Postgres MCP and NATS channel plugins are deferred until those services are stoo
 
 ## Running the stack locally
 
-1. **Start Postgres** (from repo root):
+1. **Set up your env file** (from repo root, one-time):
+
+   ```bash
+   cp .env.example .env
+   ```
+
+   `.env` is gitignored — see `.env.example` for what each var is for and which process consumes it. The defaults work as-is against the local docker-compose Postgres below; you only need to edit it if you want different values. Load it into your shell before the steps that need it:
+
+   ```bash
+   set -o allexport; source .env; set +o allexport
+   ```
+
+2. **Start Postgres** (from repo root):
 
    ```bash
    docker compose up -d
    ```
 
-   This runs `postgres:16` on `localhost:5432` (user/password/db all `epistl`), with a named volume so data survives restarts.
+   This runs `postgres:16` on `localhost:5432`, configured from your `.env` (defaults: user/password/db all `epistl`), with a named volume so data survives restarts.
 
-2. **Set the API's required env vars.** The API refuses to start without both:
-
-   | Var | Purpose | Example (local dev only) |
-   | --- | --- | --- |
-   | `DATABASE_URL` | Postgres connection string | `postgres://epistl:epistl@localhost:5432/epistl` |
-   | `AUTH_SECRET` | `better-auth` session-signing key, must be ≥ 32 bytes | `dev-only-secret-do-not-use-in-prod-3234` |
-
-3. **Run migrations** (from repo root, via [moon](https://moonrepo.dev) — install with `curl -fsSL https://moonrepo.dev/install/moon.sh | bash`, or see the [moon install docs](https://moonrepo.dev/docs/install) for other platforms):
+3. **Run migrations** (via [moon](https://moonrepo.dev) — install with `curl -fsSL https://moonrepo.dev/install/moon.sh | bash`, or see the [moon install docs](https://moonrepo.dev/docs/install) for other platforms):
 
    ```bash
-   DATABASE_URL=postgres://epistl:epistl@localhost:5432/epistl \
-     moon run api:migrate
+   moon run api:migrate
    ```
 
-4. **Run the API server** (listens on `0.0.0.0:3000`):
+4. **Run the API server** (listens on `0.0.0.0:3000`; refuses to start unless `DATABASE_URL` and `AUTH_SECRET` — both in your `.env` — are set):
 
    ```bash
-   DATABASE_URL=postgres://epistl:epistl@localhost:5432/epistl \
-   AUTH_SECRET=dev-only-secret-do-not-use-in-prod-3234 \
-     moon run api:dev
+   moon run api:dev
    ```
 
 5. **Run the mobile app:**
