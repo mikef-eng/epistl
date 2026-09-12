@@ -46,17 +46,19 @@ jobs:
         with:
           workspaces: apps/api -> ../../target
 
+      - name: Install moon
+        uses: moonrepo/setup-toolchain@v0
+
       - name: Format
-        run: cargo fmt --manifest-path apps/api/Cargo.toml -- --check
+        run: moon run api:check
 
       - name: Clippy
-        run: cargo clippy --manifest-path apps/api/Cargo.toml -- -D warnings
+        run: moon run api:lint
 
-      - name: Run migrations
-        run: cargo run --manifest-path apps/api/Cargo.toml --bin migrate
-
+      # api:test depends on api:migrate (see apps/api/moon.yml), so
+      # migrations run automatically as part of this task graph.
       - name: Test
-        run: cargo test --manifest-path apps/api/Cargo.toml
+        run: moon run api:test
 
   mobile:
     name: mobile
@@ -77,14 +79,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install moon
+        uses: moonrepo/setup-toolchain@v0
+
       - name: Lint
-        run: npm run lint
+        run: moon run mobile:lint
 
       - name: Typecheck
-        run: npm run typecheck
+        run: moon run mobile:typecheck
 
       - name: Test
-        run: npm test
+        run: moon run mobile:test
 
   crypto-review-notice:
     name: crypto-review-notice

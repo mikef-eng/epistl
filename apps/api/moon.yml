@@ -2,7 +2,7 @@ $schema: "https://moonrepo.dev/schemas/project.json"
 
 id: "api"
 language: "rust"
-type: "application"
+layer: "application"
 
 tasks:
   check:
@@ -13,6 +13,22 @@ tasks:
   lint:
     command: "cargo"
     args: ["clippy", "--", "-D", "warnings"]
+  migrate:
+    command: "cargo"
+    args: ["run", "--bin", "migrate"]
+    options:
+      cache: false
   test:
     command: "cargo"
     args: ["test"]
+    deps:
+      - "migrate"
+    options:
+      cache: false
+  dev:
+    command: "cargo"
+    args: ["run", "--bin", "api"]
+    options:
+      persistent: true
+      cache: false
+      runInCI: false

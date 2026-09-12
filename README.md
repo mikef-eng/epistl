@@ -61,11 +61,11 @@ Postgres MCP and NATS channel plugins are deferred until those services are stoo
    | `DATABASE_URL` | Postgres connection string | `postgres://epistl:epistl@localhost:5432/epistl` |
    | `AUTH_SECRET` | `better-auth` session-signing key, must be ≥ 32 bytes | `dev-only-secret-do-not-use-in-prod-3234` |
 
-3. **Run migrations:**
+3. **Run migrations** (from repo root, via [moon](https://moonrepo.dev) — install with `curl -fsSL https://moonrepo.dev/install/moon.sh | bash`, or see the [moon install docs](https://moonrepo.dev/docs/install) for other platforms):
 
    ```bash
    DATABASE_URL=postgres://epistl:epistl@localhost:5432/epistl \
-     cargo run --manifest-path apps/api/Cargo.toml --bin migrate
+     moon run api:migrate
    ```
 
 4. **Run the API server** (listens on `0.0.0.0:3000`):
@@ -73,28 +73,35 @@ Postgres MCP and NATS channel plugins are deferred until those services are stoo
    ```bash
    DATABASE_URL=postgres://epistl:epistl@localhost:5432/epistl \
    AUTH_SECRET=dev-only-secret-do-not-use-in-prod-3234 \
-     cargo run --manifest-path apps/api/Cargo.toml --bin api
+     moon run api:dev
    ```
 
-5. **Run the mobile app** (from `apps/mobile`):
+5. **Run the mobile app:**
 
    ```bash
-   npm install
-   npm start   # or: npm run ios / npm run android / npm run web
+   cd apps/mobile && npm install && cd ../..
+   moon run mobile:start   # equivalent to: npm start (from apps/mobile)
    ```
 
-   The client reads its API base URL from `EXPO_PUBLIC_API_URL`, defaulting to `http://localhost:3000` — fine for the iOS simulator or web on the same machine, but an Android emulator or physical device needs your machine's LAN IP instead, e.g. `EXPO_PUBLIC_API_URL=http://192.168.1.23:3000 npm start`.
+   The client reads its API base URL from `EXPO_PUBLIC_API_URL`, defaulting to `http://localhost:3000` — fine for the iOS simulator or web on the same machine, but an Android emulator or physical device needs your machine's LAN IP instead, e.g. `EXPO_PUBLIC_API_URL=http://192.168.1.23:3000 moon run mobile:start`.
+
+`api:dev` and `mobile:start` are long-running dev servers (moon's `persistent` task option) — each occupies its terminal until you stop it, same as running `cargo run`/`npm start` directly. `moon run` is otherwise a thin wrapper: `moon.yml` in each app just declares the same commands moon runs, so you can always fall back to invoking `cargo`/`npm` directly from that app's directory if you'd rather not use moon.
 
 ## Local commands
 
-```bash
-# Mobile (from apps/mobile)
-npm run lint
-npm run typecheck
-npm test
+All check/lint/test tasks are defined once in each app's `moon.yml` (`apps/api/moon.yml`, `apps/mobile/moon.yml`) and run through [moon](https://moonrepo.dev) — from repo root, no need to `cd` into an app first:
 
-# API (from repo root — requires Postgres running, see above)
-cargo test --manifest-path apps/api/Cargo.toml
-cargo clippy --manifest-path apps/api/Cargo.toml -- -D warnings
-cargo fmt --manifest-path apps/api/Cargo.toml -- --check
+```bash
+# Mobile
+moon run mobile:lint
+moon run mobile:typecheck
+moon run mobile:test
+
+# API (requires Postgres running, see above — api:test depends on
+# api:migrate, so migrations run automatically first)
+moon run api:check    # cargo fmt --check
+moon run api:lint     # cargo clippy -D warnings
+moon run api:test
 ```
+
+CI (`.github/workflows/ci.yml`) runs these same `moon run` tasks, so a green local run is a reliable predictor of a green CI run.
