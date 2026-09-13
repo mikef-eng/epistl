@@ -19,13 +19,23 @@
 //! `contact_requests` (issue #79, first of the mutual-contacts batch --
 //! see `docs/superpowers/specs/2026-09-13-mutual-contacts-design.md`)
 //! implements the pending-request half of that design: creating and
-//! listing requests. Accept/decline and mutual removal land in later
-//! issues in the same batch.
+//! listing requests. Issue #80 adds accept/decline. Mutual removal lands
+//! in a later issue in the same batch.
+//!
+//! Accept (issue #80) atomically inserts both directed `contacts` rows
+//! and deletes the resolved `contact_requests` row in one transaction --
+//! `status` only ever holds `'pending'` or `'declined'` (see
+//! `migrations/0006_create_contact_requests_table.sql`), never
+//! `'accepted'`, since the `contacts` table itself is the record of an
+//! accepted relationship. Decline sets `status = 'declined'` and leaves
+//! the row in place as an audit trail (and to keep the pending-uniqueness
+//! index from blocking a fresh request, since it's scoped to
+//! `WHERE status = 'pending'`).
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
@@ -43,6 +53,14 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/contacts/requests",
             get(list_contact_requests).post(create_contact_request),
+        )
+        .route(
+            "/api/contacts/requests/{id}/accept",
+            post(accept_contact_request),
+        )
+        .route(
+            "/api/contacts/requests/{id}/decline",
+            post(decline_contact_request),
         )
         .with_state(state)
 }
@@ -389,4 +407,177 @@ async fn list_contact_requests(user: AuthenticatedUser, State(state): State<AppS
         Json(json!({ "incoming": incoming, "outgoing": outgoing })),
     )
         .into_response()
+}
+
+fn not_recipient_error() -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        Json(json!({ "error": "not_recipient" })),
+    )
+        .into_response()
+}
+
+fn request_not_found_error() -> Response {
+    (
+        StatusCode::NOT_FOUND,
+        Json(json!({ "error": "request_not_found" })),
+    )
+        .into_response()
+}
+
+/// Outcome of [`load_pending_request_as_recipient`]'s checks. Kept as a
+/// small enum (rather than returning `Response` directly in the `Err` case)
+/// so the `Result` stays cheap to move around -- see
+/// `clippy::result_large_err`.
+enum LoadPendingRequestError {
+    NotFound,
+    NotRecipient,
+    Internal,
+}
+
+impl LoadPendingRequestError {
+    fn into_response(self) -> Response {
+        match self {
+            LoadPendingRequestError::NotFound => request_not_found_error(),
+            LoadPendingRequestError::NotRecipient => not_recipient_error(),
+            LoadPendingRequestError::Internal => internal_error(),
+        }
+    }
+}
+
+/// Loads the request's `(requester_user_id, recipient_user_id, status)` and
+/// applies the recipient/pending checks shared by accept and decline. `Ok`
+/// carries the row once both checks pass; `Err` carries the outcome to
+/// return immediately.
+///
+/// Order matters for what a caller can learn: a missing id can't be
+/// attributed to a recipient at all, so it's `404` regardless of who's
+/// asking. An existing id whose caller isn't the recipient is `403`,
+/// regardless of status. Only once the caller is confirmed as the
+/// recipient does a non-`pending` status become a (deliberately
+/// indistinguishable-from-missing) `404`.
+async fn load_pending_request_as_recipient(
+    executor: impl sqlx::PgExecutor<'_>,
+    request_id: Uuid,
+    caller_id: Uuid,
+) -> Result<(Uuid, Uuid), LoadPendingRequestError> {
+    let row = sqlx::query_as::<_, (Uuid, Uuid, String)>(
+        "SELECT requester_user_id, recipient_user_id, status FROM contact_requests WHERE id = $1",
+    )
+    .bind(request_id)
+    .fetch_optional(executor)
+    .await;
+
+    let (requester_id, recipient_id, status) = match row {
+        Ok(Some(row)) => row,
+        Ok(None) => return Err(LoadPendingRequestError::NotFound),
+        Err(_) => return Err(LoadPendingRequestError::Internal),
+    };
+
+    if recipient_id != caller_id {
+        return Err(LoadPendingRequestError::NotRecipient);
+    }
+    if status != "pending" {
+        return Err(LoadPendingRequestError::NotFound);
+    }
+
+    Ok((requester_id, recipient_id))
+}
+
+async fn accept_contact_request(
+    user: AuthenticatedUser,
+    State(state): State<AppState>,
+    Path(request_id): Path<Uuid>,
+) -> Response {
+    let mut tx = match state.pool.begin().await {
+        Ok(tx) => tx,
+        Err(_) => return internal_error(),
+    };
+
+    let (requester_id, recipient_id) =
+        match load_pending_request_as_recipient(&mut *tx, request_id, user.user.id).await {
+            Ok(ids) => ids,
+            Err(err) => return err.into_response(),
+        };
+
+    let inserted = sqlx::query(
+        r#"
+        INSERT INTO contacts (owner_user_id, contact_user_id)
+        VALUES ($1, $2), ($2, $1)
+        ON CONFLICT (owner_user_id, contact_user_id) DO NOTHING
+        "#,
+    )
+    .bind(requester_id)
+    .bind(recipient_id)
+    .execute(&mut *tx)
+    .await;
+
+    if inserted.is_err() {
+        return internal_error();
+    }
+
+    let deleted = sqlx::query("DELETE FROM contact_requests WHERE id = $1 AND status = 'pending'")
+        .bind(request_id)
+        .execute(&mut *tx)
+        .await;
+
+    let deleted = match deleted {
+        Ok(result) => result,
+        Err(_) => return internal_error(),
+    };
+
+    if deleted.rows_affected() == 0 {
+        // Raced with another resolution (e.g. a concurrent accept/decline)
+        // between the load above and this delete -- same
+        // indistinguishable-from-missing 404 as decline, and dropping `tx`
+        // here rolls back the `contacts` rows inserted above.
+        return request_not_found_error();
+    }
+
+    match tx.commit().await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(_) => internal_error(),
+    }
+}
+
+async fn decline_contact_request(
+    user: AuthenticatedUser,
+    State(state): State<AppState>,
+    Path(request_id): Path<Uuid>,
+) -> Response {
+    let mut tx = match state.pool.begin().await {
+        Ok(tx) => tx,
+        Err(_) => return internal_error(),
+    };
+
+    if let Err(err) = load_pending_request_as_recipient(&mut *tx, request_id, user.user.id).await {
+        return err.into_response();
+    }
+
+    let updated = sqlx::query(
+        r#"
+        UPDATE contact_requests
+        SET status = 'declined', responded_at = now()
+        WHERE id = $1 AND status = 'pending'
+        "#,
+    )
+    .bind(request_id)
+    .execute(&mut *tx)
+    .await;
+
+    let updated = match updated {
+        Ok(result) => result,
+        Err(_) => return internal_error(),
+    };
+
+    if updated.rows_affected() == 0 {
+        // Raced with another resolution between the load above and this
+        // update -- same indistinguishable-from-missing 404.
+        return request_not_found_error();
+    }
+
+    match tx.commit().await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(_) => internal_error(),
+    }
 }
