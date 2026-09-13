@@ -171,7 +171,7 @@ export default function ChatScreen({ route }: Props) {
       return;
     }
 
-    if (frame.type === 'error' && frame.code === 'recipient_offline') {
+    if (frame.type === 'error' && frame.code === 'queue_unavailable') {
       const failedKey = lastSentKeyRef.current;
       if (!failedKey) {
         return;
@@ -382,7 +382,7 @@ export default function ChatScreen({ route }: Props) {
             </View>
             {item.deliveryFailed ? (
               <Text className="mt-1 text-xs text-red-500">
-                Not delivered: contact is offline
+                Not delivered: message could not be queued
               </Text>
             ) : null}
           </View>
