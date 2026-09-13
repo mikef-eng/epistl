@@ -8,20 +8,34 @@ import {
   type UniffiRustFutureContinuationCallback,
   type UniffiForeignFutureDroppedCallback,
   type UniffiForeignFutureDroppedCallbackStruct,
+  type UniffiVTableCallbackInterfaceQuicRelayClientQuicConnectionListener,
 } from './quic_relay_client-ffi';
 import {
+  type FfiConverter,
   type UniffiByteArray,
+  type UniffiGcObject,
+  type UniffiHandle,
+  type UniffiObjectFactory,
+  type UniffiReferenceHolder,
+  type UniffiRustCallStatus,
   AbstractFfiConverterByteArray,
   Cursor,
   FfiConverterArrayBuffer,
+  FfiConverterCallback,
+  FfiConverterObject,
   FfiConverterUInt16,
   FfiConverterUInt8,
   RustBuffer,
+  UniffiAbstractObject,
   UniffiError,
   UniffiInternalError,
+  UniffiResult,
   UniffiRustCaller,
+  destructorGuardSymbol,
+  pointerLiteralSymbol,
   uniffiCreateFfiConverterString,
   uniffiRustCallAsync,
+  uniffiTraitInterfaceCall,
   uniffiTypeNameSymbol,
   variantOrdinalSymbol,
 } from '@ubjs/core';
@@ -167,6 +181,7 @@ const FfiConverterString = uniffiCreateFfiConverterString(stringConverter);
 export enum QuicClientError_Tags {
   ConnectionFailed = 'ConnectionFailed',
   StreamIoFailed = 'StreamIoFailed',
+  AuthFailed = 'AuthFailed',
 }
 /**
  * Typed failure modes for [`quic_ping`]. Deliberately *not* a single
@@ -259,6 +274,51 @@ export const QuicClientError = (() => {
     }
   }
 
+  type AuthFailed__interface = {
+    tag: QuicClientError_Tags.AuthFailed;
+    inner: Readonly<{ message: string }>;
+  };
+  /**
+   * [`QuicConnection::connect`]-only (issue #75): the server closed the
+   * connection with QUIC application error code
+   * [`CLOSE_CODE_UNAUTHORIZED`] within [`AUTH_RESULT_GRACE`] of the auth
+   * frame being written, i.e. it rejected the token. Distinguished from
+   * [`QuicClientError::ConnectionFailed`] so a caller (the mobile
+   * driver, the next issue in this batch) can tell "bad token" apart
+   * from "network problem" -- see [`AUTH_RESULT_GRACE`]'s doc comment
+   * for why this can't be a fully reliable synchronous signal, and
+   * [`QuicConnectionListener::on_closed`] for the fallback when a
+   * rejection arrives later than that.
+   */
+  class AuthFailed_ extends UniffiError implements AuthFailed__interface {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = 'QuicClientError';
+    readonly tag = QuicClientError_Tags.AuthFailed;
+    readonly inner: Readonly<{ message: string }>;
+    constructor(inner: { message: string }) {
+      super('QuicClientError', 'AuthFailed');
+
+      this.inner = Object.freeze(inner);
+    }
+    static new(inner: { message: string }): AuthFailed_ {
+      return new AuthFailed_(inner);
+    }
+
+    static instanceOf(obj: any): obj is AuthFailed_ {
+      return obj.tag === QuicClientError_Tags.AuthFailed;
+    }
+    static hasInner(obj: any): obj is AuthFailed_ {
+      return AuthFailed_.instanceOf(obj);
+    }
+
+    static getInner(obj: AuthFailed_): Readonly<{ message: string }> {
+      return obj.inner;
+    }
+  }
+
   function instanceOf(obj: any): obj is QuicClientError {
     return obj[uniffiTypeNameSymbol] === 'QuicClientError';
   }
@@ -267,6 +327,7 @@ export const QuicClientError = (() => {
     instanceOf,
     ConnectionFailed: ConnectionFailed_,
     StreamIoFailed: StreamIoFailed_,
+    AuthFailed: AuthFailed_,
   });
 })();
 /**
@@ -277,7 +338,7 @@ export const QuicClientError = (() => {
  * round-trip itself failed."
  */
 export type QuicClientError = InstanceType<
-  (typeof QuicClientError)['ConnectionFailed' | 'StreamIoFailed']
+  (typeof QuicClientError)['ConnectionFailed' | 'StreamIoFailed' | 'AuthFailed']
 >;
 
 // FfiConverter for enum QuicClientError
@@ -294,6 +355,10 @@ const FfiConverterTypeQuicClientError = (() => {
           return new QuicClientError.StreamIoFailed({
             message: FfiConverterString.readFromCursor(c),
           });
+        case 3:
+          return new QuicClientError.AuthFailed({
+            message: FfiConverterString.readFromCursor(c),
+          });
         default:
           throw new UniffiInternalError.UnexpectedEnumCase();
       }
@@ -308,6 +373,12 @@ const FfiConverterTypeQuicClientError = (() => {
         }
         case QuicClientError_Tags.StreamIoFailed: {
           c.writeI32(2);
+          const inner = value.inner;
+          FfiConverterString.writeIntoCursor(inner.message, c);
+          return;
+        }
+        case QuicClientError_Tags.AuthFailed: {
+          c.writeI32(3);
           const inner = value.inner;
           FfiConverterString.writeIntoCursor(inner.message, c);
           return;
@@ -331,6 +402,12 @@ const FfiConverterTypeQuicClientError = (() => {
           size += FfiConverterString.allocationSize(inner.message);
           return size;
         }
+        case QuicClientError_Tags.AuthFailed: {
+          const inner = value.inner;
+          let size = 4;
+          size += FfiConverterString.allocationSize(inner.message);
+          return size;
+        }
         default:
           throw new UniffiInternalError.UnexpectedEnumCase();
       }
@@ -338,6 +415,372 @@ const FfiConverterTypeQuicClientError = (() => {
   }
   return new FFIConverter();
 })();
+
+/**
+ * A persistent QUIC connection to `apps/api`'s real listener (issue #73):
+ * opened once via [`QuicConnection::connect`], then
+ * [`QuicConnection::send`] and the [`QuicConnectionListener`] callback
+ * carry frames for the life of the connection, until
+ * [`QuicConnection::close`] or the peer closes it.
+ */
+export interface QuicConnectionLike {
+  /**
+   * Closes the connection. Harmless to call more than once, or after the
+   * peer already closed the connection (Quinn no-ops a close on an
+   * already-closed connection). Aborts this connection's background
+   * reader task first, so `listener.on_closed` is not called for a close
+   * the caller itself initiated -- the caller already knows.
+   */
+  close(): void;
+  /**
+   * Writes `frame` plus a trailing newline to the control stream.
+   */
+  send(
+    frame: string,
+    asyncOpts_?: { signal: AbortSignal }
+  ) /*throws*/ : Promise<void>;
+}
+/**
+ * @deprecated Use `QuicConnectionLike` instead.
+ */
+export type QuicConnectionInterface = QuicConnectionLike;
+
+/**
+ * A persistent QUIC connection to `apps/api`'s real listener (issue #73):
+ * opened once via [`QuicConnection::connect`], then
+ * [`QuicConnection::send`] and the [`QuicConnectionListener`] callback
+ * carry frames for the life of the connection, until
+ * [`QuicConnection::close`] or the peer closes it.
+ */
+export class QuicConnection
+  extends UniffiAbstractObject
+  implements QuicConnectionLike
+{
+  readonly [uniffiTypeNameSymbol] = 'QuicConnection';
+  readonly [destructorGuardSymbol]: UniffiGcObject;
+  readonly [pointerLiteralSymbol]: UniffiHandle;
+  // No primary constructor declared for this class.
+  private constructor(pointer: UniffiHandle) {
+    super();
+    this[pointerLiteralSymbol] = pointer;
+    this[destructorGuardSymbol] =
+      uniffiTypeQuicConnectionObjectFactory.bless(pointer);
+  }
+
+  /**
+   * Opens a QUIC connection to `host:port`, opens the one control
+   * stream, and writes `{"type":"auth","token":"<token>"}` plus a
+   * trailing newline as its first frame -- see this module's doc
+   * comment for the full wire protocol. Reuses the exact same dev-cert
+   * trust posture as [`quic_ping`] (`build_dev_client_config`, not
+   * reimplemented).
+   *
+   * `listener`'s `on_frame`/`on_closed` are called for every frame
+   * subsequently received on the control stream, for the lifetime of
+   * the connection -- see [`QuicConnectionListener`].
+   *
+   * Returns `Err(QuicClientError::AuthFailed)` if the server closes the
+   * connection with application error code `4001` within
+   * [`AUTH_RESULT_GRACE`] of the auth frame being written; see that
+   * constant's doc comment for why a rejection that arrives later than
+   * that is instead reported via `listener.on_closed` rather than from
+   * here.
+   */
+  static async connect(
+    host: string,
+    port: number,
+    token: string,
+    listener: QuicConnectionListener,
+    asyncOpts_?: { signal: AbortSignal }
+  ): Promise<QuicConnectionLike> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_quic_relay_client_fn_constructor_quicconnection_connect(
+            FfiConverterString.lower(host, nativeModule().rustbuffer_alloc),
+            FfiConverterUInt16.lower(port, nativeModule().rustbuffer_alloc),
+            FfiConverterString.lower(token, nativeModule().rustbuffer_alloc),
+            FfiConverterTypeQuicConnectionListener.lower(
+              listener,
+              nativeModule().rustbuffer_alloc
+            )
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_quic_relay_client_rust_future_poll_u64,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_quic_relay_client_rust_future_cancel_u64,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_quic_relay_client_rust_future_complete_u64,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_quic_relay_client_rust_future_free_u64,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterTypeQuicConnection.lift.bind(
+          FfiConverterTypeQuicConnection
+        ),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeQuicClientError.lift.bind(
+          FfiConverterTypeQuicClientError
+        )
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
+  /**
+   * Closes the connection. Harmless to call more than once, or after the
+   * peer already closed the connection (Quinn no-ops a close on an
+   * already-closed connection). Aborts this connection's background
+   * reader task first, so `listener.on_closed` is not called for a close
+   * the caller itself initiated -- the caller already knows.
+   */
+  close(): void {
+    uniffiCaller.rustCall(
+      /*caller:*/ (callStatus) => {
+        nativeModule().ubrn_uniffi_quic_relay_client_fn_method_quicconnection_close(
+          uniffiTypeQuicConnectionObjectFactory.clonePointer(this),
+          callStatus
+        );
+      },
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString)
+    );
+  }
+
+  /**
+   * Writes `frame` plus a trailing newline to the control stream.
+   */
+  async send(
+    frame: string,
+    asyncOpts_?: { signal: AbortSignal }
+  ): Promise<void> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_quic_relay_client_fn_method_quicconnection_send(
+            uniffiTypeQuicConnectionObjectFactory.clonePointer(this),
+            FfiConverterString.lower(frame, nativeModule().rustbuffer_alloc)
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_quic_relay_client_rust_future_poll_void,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_quic_relay_client_rust_future_cancel_void,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_quic_relay_client_rust_future_complete_void,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_quic_relay_client_rust_future_free_void,
+        /*liftFunc:*/ (_v) => {},
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeQuicClientError.lift.bind(
+          FfiConverterTypeQuicClientError
+        )
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
+  uniffiDestroy(): void {
+    const ptr = (this as any)[destructorGuardSymbol];
+    if (ptr !== undefined) {
+      const pointer = uniffiTypeQuicConnectionObjectFactory.pointer(this);
+      uniffiTypeQuicConnectionObjectFactory.freePointer(pointer);
+      uniffiTypeQuicConnectionObjectFactory.unbless(ptr);
+      delete (this as any)[destructorGuardSymbol];
+    }
+  }
+
+  static instanceOf(obj_: any): obj_ is QuicConnection {
+    return uniffiTypeQuicConnectionObjectFactory.isConcreteType(obj_);
+  }
+}
+
+const uniffiTypeQuicConnectionObjectFactory: UniffiObjectFactory<QuicConnectionLike> =
+  (() => {
+    return {
+      create(pointer: UniffiHandle): QuicConnectionLike {
+        const instance = Object.create(QuicConnection.prototype);
+        instance[pointerLiteralSymbol] = pointer;
+        instance[destructorGuardSymbol] = this.bless(pointer);
+        instance[uniffiTypeNameSymbol] = 'QuicConnection';
+        return instance;
+      },
+
+      bless(p: UniffiHandle): UniffiGcObject {
+        return uniffiCaller.rustCall(
+          /*caller:*/ (status) =>
+            nativeModule().ubrn_uniffi_internal_fn_method_quicconnection_ffi__bless_pointer(
+              p,
+              status
+            ),
+          /*liftString:*/ FfiConverterString.lift
+        );
+      },
+
+      unbless(ptr_: UniffiGcObject) {
+        ptr_.markDestroyed();
+      },
+
+      pointer(obj_: QuicConnectionLike): UniffiHandle {
+        if ((obj_ as any)[destructorGuardSymbol] === undefined) {
+          throw new UniffiInternalError.UnexpectedNullPointer();
+        }
+        return (obj_ as any)[pointerLiteralSymbol];
+      },
+
+      clonePointer(obj_: QuicConnectionLike): UniffiHandle {
+        const pointer = this.pointer(obj_);
+        return uniffiCaller.rustCall(
+          /*caller:*/ (callStatus) =>
+            nativeModule().ubrn_uniffi_quic_relay_client_fn_clone_quicconnection(
+              pointer,
+              callStatus
+            ),
+          /*liftString:*/ FfiConverterString.lift
+        );
+      },
+
+      freePointer(pointer: UniffiHandle): void {
+        uniffiCaller.rustCall(
+          /*caller:*/ (callStatus) =>
+            nativeModule().ubrn_uniffi_quic_relay_client_fn_free_quicconnection(
+              pointer,
+              callStatus
+            ),
+          /*liftString:*/ FfiConverterString.lift
+        );
+      },
+
+      isConcreteType(obj_: any): obj_ is QuicConnectionLike {
+        return (
+          obj_[destructorGuardSymbol] &&
+          obj_[uniffiTypeNameSymbol] === 'QuicConnection'
+        );
+      },
+    };
+  })();
+const FfiConverterTypeQuicConnection = new FfiConverterObject(
+  uniffiTypeQuicConnectionObjectFactory
+);
+
+/**
+ * Pushed to the JS side as frames/close notifications arrive on a
+ * [`QuicConnection`]'s control stream, asynchronously and independently of
+ * any specific `connect`/`send` call -- implemented on the JS side by the
+ * generated TurboModule glue (the mobile driver, the next issue in this
+ * batch), and passed in to [`QuicConnection::connect`].
+ *
+ * A UniFFI callback interface: when the *foreign* (JS) side implements
+ * this trait, calls to `on_frame`/`on_closed` cross the FFI boundary via
+ * UniFFI's generated callback machinery. When this crate's own tests
+ * implement it directly in Rust (see `tests/connection.rs`), these are
+ * just ordinary trait method calls -- no FFI involved.
+ */
+export interface QuicConnectionListener {
+  /**
+   * Called once per newline-delimited JSON frame received on the
+   * control stream (the trailing newline is stripped, the frame's text
+   * is otherwise unparsed/unvalidated -- same division of
+   * responsibility as `apps/api/src/quic.rs`, which also treats framing
+   * and payload parsing as separate concerns).
+   */
+  onFrame(frame: string): void;
+  /**
+   * Called exactly once, when the control stream ends for any reason --
+   * the server closed the connection (including an auth rejection that
+   * arrived after [`AUTH_RESULT_GRACE`] had already elapsed), a network
+   * failure, or [`QuicConnection::close`] was called locally. No further
+   * `on_frame` calls follow. `reason` is a human-readable description,
+   * not a machine code, but it includes the QUIC application error code
+   * when the peer closed with one (e.g. `4001`/`4002`) so a caller that
+   * cares can still find it via substring match.
+   */
+  onClosed(reason: string): void;
+}
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+const uniffiCallbackInterfaceQuicConnectionListener: {
+  vtable: any;
+  register: () => void;
+} = {
+  // Create the VTable using a series of closures.
+  // ts automatically converts these into C callback functions.
+  vtable: {
+    on_frame: (uniffiHandle: bigint, frame: Uint8Array) => {
+      const uniffiMakeCall = (): void => {
+        const jsCallback =
+          FfiConverterTypeQuicConnectionListener.lift(uniffiHandle);
+        return jsCallback.onFrame(FfiConverterString.lift(frame));
+      };
+      const uniffiResult = UniffiResult.ready<void>();
+      const uniffiHandleSuccess = (obj: any) => {};
+      const uniffiHandleError = (code: number, errBuf: UniffiByteArray) => {
+        UniffiResult.writeError(uniffiResult, code, errBuf);
+      };
+      uniffiTraitInterfaceCall(
+        /*makeCall:*/ uniffiMakeCall,
+        /*handleSuccess:*/ uniffiHandleSuccess,
+        /*handleError:*/ uniffiHandleError,
+        /*lowerString:*/ FfiConverterString.lower.bind(FfiConverterString),
+        /*alloc:*/ nativeModule().rustbuffer_alloc
+      );
+      return uniffiResult;
+    },
+    on_closed: (uniffiHandle: bigint, reason: Uint8Array) => {
+      const uniffiMakeCall = (): void => {
+        const jsCallback =
+          FfiConverterTypeQuicConnectionListener.lift(uniffiHandle);
+        return jsCallback.onClosed(FfiConverterString.lift(reason));
+      };
+      const uniffiResult = UniffiResult.ready<void>();
+      const uniffiHandleSuccess = (obj: any) => {};
+      const uniffiHandleError = (code: number, errBuf: UniffiByteArray) => {
+        UniffiResult.writeError(uniffiResult, code, errBuf);
+      };
+      uniffiTraitInterfaceCall(
+        /*makeCall:*/ uniffiMakeCall,
+        /*handleSuccess:*/ uniffiHandleSuccess,
+        /*handleError:*/ uniffiHandleError,
+        /*lowerString:*/ FfiConverterString.lower.bind(FfiConverterString),
+        /*alloc:*/ nativeModule().rustbuffer_alloc
+      );
+      return uniffiResult;
+    },
+    uniffi_free: (uniffiHandle: UniffiHandle): void => {
+      // this will throw a stale handle error if the handle isn't found.
+      FfiConverterTypeQuicConnectionListener.drop(uniffiHandle);
+    },
+    uniffi_clone: (uniffiHandle: UniffiHandle): UniffiHandle => {
+      return FfiConverterTypeQuicConnectionListener.clone(uniffiHandle);
+    },
+  },
+  register: () => {
+    nativeModule().ubrn_uniffi_quic_relay_client_fn_init_callback_vtable_quicconnectionlistener(
+      uniffiCallbackInterfaceQuicConnectionListener.vtable
+    );
+  },
+};
+
+// FfiConverter protocol for callback interfaces
+const FfiConverterTypeQuicConnectionListener =
+  new FfiConverterCallback<QuicConnectionListener>();
 
 /**
  * This should be called before anything else.
@@ -369,11 +812,38 @@ function uniffiEnsureInitialized() {
       'uniffi_quic_relay_client_checksum_func_quic_ping'
     );
   }
+  if (
+    nativeModule().ubrn_uniffi_quic_relay_client_checksum_constructor_quicconnection_connect() !==
+    57062
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      'uniffi_quic_relay_client_checksum_constructor_quicconnection_connect'
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_quic_relay_client_checksum_method_quicconnection_close() !==
+    26393
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      'uniffi_quic_relay_client_checksum_method_quicconnection_close'
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_quic_relay_client_checksum_method_quicconnection_send() !==
+    18319
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      'uniffi_quic_relay_client_checksum_method_quicconnection_send'
+    );
+  }
+
+  uniffiCallbackInterfaceQuicConnectionListener.register();
 }
 
 export default Object.freeze({
   initialize: uniffiEnsureInitialized,
   converters: {
     FfiConverterTypeQuicClientError,
+    FfiConverterTypeQuicConnection,
   },
 });
