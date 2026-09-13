@@ -1,5 +1,6 @@
 use api::auth::{self, AppState};
 use api::db;
+use api::nats;
 
 /// Environment variable read for the Better Auth signing secret. Must be at
 /// least 32 bytes; `better-auth` itself enforces this at build time.
@@ -35,6 +36,18 @@ async fn main() {
         }
     };
 
+    // Fail fast the same way as the Postgres pool above: the offline-
+    // delivery queue built out in later issues in this batch depends on a
+    // reachable NATS server, so there's nothing useful the app can do
+    // without one.
+    let nats_client = match nats::connect().await {
+        Ok(client) => client,
+        Err(err) => {
+            eprintln!("startup failed: {err}");
+            std::process::exit(1);
+        }
+    };
+
     let secret = match std::env::var(AUTH_SECRET_VAR) {
         Ok(secret) => secret,
         Err(_) => {
@@ -55,6 +68,7 @@ async fn main() {
         auth,
         pool,
         registry: api::registry::ConnectionRegistry::new(),
+        nats: nats_client,
     });
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
         .await

@@ -13,12 +13,12 @@ Ship post-quantum E2EE chat using CRYSTALS-Kyber and CRYSTALS-Dilithium (standar
 | Monorepo | [moonrepo](https://moonrepo.dev) |
 | Frontend | Expo + React Native (TypeScript) + expo-sqlite + NativeWind (Tailwind) + [`@noble/post-quantum`](https://www.npmjs.com/package/@noble/post-quantum) (pinned Kyber/ML-KEM and Dilithium/ML-DSA implementation) + [`@noble/curves`](https://www.npmjs.com/package/@noble/curves) (pinned X25519 implementation, same `paulmillr`-maintained suite) + [`@noble/ciphers`](https://www.npmjs.com/package/@noble/ciphers) (pinned XChaCha20-Poly1305 AEAD, same `paulmillr`-maintained suite, used by `apps/mobile/src/crypto/envelope.ts`'s message encryption) |
 | Backend | Rust (Axum, tokio) + [`better-auth`](https://crates.io/crates/better-auth) (crate name is `better-auth`, **not** `better-auth-rs` — see `apps/api/Cargo.toml` for why) |
-| Message broker | NATS JetStream (planned; not yet added — see [issue tracker](https://github.com/mikef-eng/epistl/issues) for the Quinn/QUIC and NATS stub issues) |
+| Message broker | NATS JetStream, via [`async-nats`](https://crates.io/crates/async-nats) (the official `nats-io`-maintained Rust client, pinned in `apps/api/Cargo.toml`) — local dev now requires the `nats` docker-compose service; only core-NATS connectivity is wired so far (no stream/consumer config yet — see [issue tracker](https://github.com/mikef-eng/epistl/issues) for the rest of the offline-delivery batch) |
 | Primary DB | Postgres (auth and core app data only — see [`docs/decisions/0001-message-content-never-in-postgres.md`](docs/decisions/0001-message-content-never-in-postgres.md)) |
 | Cold storage | ScyllaDB (chat history backup; opt-in, not yet built — see [`docs/decisions/0002-scylla-backup-is-opt-in.md`](docs/decisions/0002-scylla-backup-is-opt-in.md)) |
 | Transport | Quinn/QUIC (planned; API currently serves plain HTTP/WebSocket) |
 
-Postgres is stood up and required for local development (see "Running the stack locally" below). NATS and ScyllaDB are documented here for orientation only — they are not yet stood up.
+Postgres and NATS are stood up and required for local development (see "Running the stack locally" below). ScyllaDB is documented here for orientation only — it is not yet stood up.
 
 ## Repository layout
 
@@ -54,13 +54,13 @@ Postgres MCP and NATS channel plugins are deferred until those services are stoo
 
    `.env` is gitignored — see `.env.example` for what each var is for and which process consumes it. The defaults work as-is against the local docker-compose Postgres below; you only need to edit it if you want different values. Nothing else to do here: `docker compose` reads `.env` from this directory natively, and the API loads it itself via [`dotenvy`](https://docs.rs/dotenvy) on startup (walking up from wherever it's run from, so this works whether you invoke it from the repo root or from `apps/api`) — no manual `export`/`source` step needed.
 
-2. **Start Postgres** (from repo root):
+2. **Start Postgres and NATS** (from repo root):
 
    ```bash
    docker compose up -d
    ```
 
-   This runs `postgres:16` on `localhost:5432`, configured from your `.env` (defaults: user/password/db all `epistl`), with a named volume so data survives restarts.
+   This runs `postgres:16` on `localhost:5432` (configured from your `.env`; defaults: user/password/db all `epistl`) and `nats:2-alpine` on `localhost:4222` (JetStream-enabled, monitoring on `8222`), each with a named volume so data survives restarts. (The `nats` service uses the `-alpine` tag rather than the bare `nats:2` tag purely so its healthcheck has a shell + `wget` to run against `8222`'s `/healthz` — it's still the same official `nats-io` image otherwise.)
 
 3. **Run migrations** (via [moon](https://moonrepo.dev) — install with `curl -fsSL https://moonrepo.dev/install/moon.sh | bash`, or see the [moon install docs](https://moonrepo.dev/docs/install) for other platforms):
 
@@ -68,7 +68,7 @@ Postgres MCP and NATS channel plugins are deferred until those services are stoo
    moon run api:migrate
    ```
 
-4. **Run the API server** (listens on `0.0.0.0:3000`; refuses to start unless `DATABASE_URL` and `AUTH_SECRET` — both in your `.env` — resolve to a value):
+4. **Run the API server** (listens on `0.0.0.0:3000`; refuses to start unless `DATABASE_URL`, `AUTH_SECRET`, and `NATS_URL` — all in your `.env` — resolve to a value):
 
    ```bash
    moon run api:dev
