@@ -46,7 +46,7 @@ Flow: `planning` → `ready` → `in-progress` → (`blocked` \| `needs-review`)
 1. Read **only** the assigned issue — do not load the whole backlog into context.
 2. Confirm the issue is labeled `ready` (or switch it to `in-progress` if you are starting work).
 3. Create a branch named `issue-<number>-<short-slug>` (e.g. `issue-42-login-form`).
-4. Implement **only** that issue's scope. Prefer TDD (red → green → refactor) when tests are part of the acceptance criteria.
+4. Implement **only** that issue's scope. Prefer TDD (red → green → refactor) when tests are part of the acceptance criteria. Run local checks via moon (`moon run api:check`/`api:lint`/`api:test`, `moon run mobile:lint`/`mobile:typecheck`/`mobile:test`), not raw `cargo`/`npm` — see the Tester playbook below for why.
 5. If you notice extra work, open a new issue via the `open-task-issue` skill — do not expand this branch.
 6. If the change alters the stack, how to run something, an env var, or an architectural constraint, update the relevant section of `README.md` in the same PR — see "Docs freshness" below.
 7. Open a PR that references the issue with `Closes #<number>`.
@@ -55,7 +55,7 @@ Flow: `planning` → `ready` → `in-progress` → (`blocked` \| `needs-review`)
 ## Tester playbook
 
 1. Confirm CI is green (lint, build, test) for the PR.
-2. Run the local suite if needed: mobile `npm run lint && npm run typecheck && npm test` from `apps/mobile`; API `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test` for `apps/api`.
+2. Run the local suite if needed, via moon (matching CI exactly — see README's "Local commands" section): `moon run mobile:lint`, `moon run mobile:typecheck`, `moon run mobile:test` for `apps/mobile`; `moon run api:check`, `moon run api:lint`, `moon run api:test` for `apps/api`. Do not substitute raw `cargo`/`npm` invocations — moon's task definitions are the actual source of truth CI runs against, and a raw command can silently diverge from it.
 3. Verify **each** acceptance criterion on the linked issue line by line — not just "does it run."
 4. Add tests for acceptance criteria when none exist and they are reasonably testable in this PR.
 5. On failure: comment on the PR with specifics and set the issue label to `blocked`.
