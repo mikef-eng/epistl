@@ -81,6 +81,40 @@ jobs:
       - name: Test
         run: moon run api:test
 
+  quic-relay-client:
+    name: quic-relay-client
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # moon needs full history to resolve a merge base with `main`
+          # for its changed-files/task-graph detection; a shallow clone
+          # makes `moon run` fail outright (see moonrepo.dev/docs/guides/ci).
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/quic-relay-client -> ../../target
+
+      - name: Install moon
+        uses: moonrepo/setup-toolchain@v0
+
+      - name: Format
+        run: moon run quic-relay-client:check
+
+      - name: Clippy
+        run: moon run quic-relay-client:lint
+
+      - name: Test
+        run: moon run quic-relay-client:test
+
   mobile:
     name: mobile
     runs-on: ubuntu-latest

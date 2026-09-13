@@ -1,0 +1,37 @@
+[package]
+name = "quic-relay-client"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = """
+Spike crate (issue #67): a single UniFFI-annotated async `quic_ping` function
+that proves Quinn (Rust QUIC) can be exposed to React Native as a real
+TurboModule via `uniffi-bindgen-react-native`. Not product code -- see
+docs/superpowers/specs/2026-09-13-quic-quinn-transport-design.md.
+"""
+
+[lib]
+# "lib" -- normal Rust usage (this crate's own tests, `cargo test`).
+# "cdylib" -- Android's JNI loads this as a shared library.
+# "staticlib" -- iOS links this into an xcframework as a static library.
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[dependencies]
+uniffi = "=0.31"
+# Quinn's default features already include `runtime-tokio` and
+# `rustls-ring`, which is what this crate's own TLS setup (below) matches.
+quinn = "0.11"
+# `default-features = false` because rustls's default crypto provider is
+# `aws_lc_rs`; this crate instead matches Quinn's default `ring` provider
+# (see `crypto::install_default_provider` in src/lib.rs) so there is only
+# one crypto backend in the dependency tree, not two.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time"] }
+thiserror = "2"
+
+[dev-dependencies]
+# Only the crate's own tests spin up a throwaway Quinn server (mirroring
+# `apps/api/examples/quic_echo_server.rs`) to exercise `quic_ping` end to
+# end; the published client code never needs a certificate generator.
+rcgen = "0.14"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "macros"] }

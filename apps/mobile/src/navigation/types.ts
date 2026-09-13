@@ -9,4 +9,10 @@ export type RootStackParamList = {
   Contacts: undefined;
   AddContact: undefined;
   Chat: { userId: string; email: string };
+  /**
+   * Dev-only (issue #67 spike, `__DEV__`-gated in App.tsx/LoginScreen.tsx):
+   * proves `packages/quic-relay-client`'s generated TurboModule is callable
+   * from RN. Never part of the real, authenticated app flow.
+   */
+  QuicSpike: undefined;
 };
