@@ -1,9 +1,14 @@
-//! Real (non-throwaway) Quinn-based QUIC listener, opt-in via the
-//! `QUIC_LISTEN_ADDR` environment variable -- see [`LISTEN_ADDR_VAR`]. When
-//! unset, [`maybe_spawn`] does nothing and the process's behavior is
-//! unchanged: `/ws` ([`crate::ws`]) remains the only, always-on live-relay
-//! transport. This listener never becomes required, and never replaces
-//! `/ws` -- both run side by side when this is enabled.
+//! Real (non-throwaway) Quinn-based QUIC listener. **On by default** (issue
+//! #114): unless overridden or explicitly disabled via the
+//! `QUIC_LISTEN_ADDR` environment variable -- see [`LISTEN_ADDR_VAR`] and
+//! [`DEFAULT_LISTEN_ADDR`] -- [`maybe_spawn`] binds and starts this listener
+//! alongside `/ws` ([`crate::ws`]) on every process start. An operator can
+//! still point it at a different bind address by setting the env var to one,
+//! or disable it entirely by setting it to [`DISABLE_VALUE`]. This listener
+//! never replaces `/ws` -- both run side by side, and `/ws` remains fully
+//! functional in every configuration; QUIC is the default, always-attempted-
+//! first transport on the client side (see `apps/mobile/src/transport/
+//! store.ts`), with `/ws` as its fallback, not a replacement.
 //!
 //! Like `/ws`, this module owns only its own transport-specific glue
 //! (accepting QUIC connections/streams, framing bytes as newline-delimited
@@ -72,10 +77,22 @@ use uuid::Uuid;
 use crate::auth::{self, AppState};
 use crate::registry::Frame;
 
-/// Environment variable that opts this listener in: unset (the default)
-/// means it never starts. When set, its value is the address (e.g.
-/// `0.0.0.0:4433`) it binds to.
+/// Environment variable controlling this listener's bind address. Unset
+/// (the default, as of issue #114) means it binds to
+/// [`DEFAULT_LISTEN_ADDR`]. When set to a socket address (e.g.
+/// `0.0.0.0:4433`), that overrides the default. When set to
+/// [`DISABLE_VALUE`] (case-insensitively), the listener does not start at
+/// all -- the only supported way to opt back out.
 pub const LISTEN_ADDR_VAR: &str = "QUIC_LISTEN_ADDR";
+
+/// [`LISTEN_ADDR_VAR`]'s default bind address when unset -- what makes QUIC
+/// a true default transport (issue #114) rather than opt-in (issue #73's
+/// original behavior).
+pub const DEFAULT_LISTEN_ADDR: &str = "0.0.0.0:4433";
+
+/// The [`LISTEN_ADDR_VAR`] value that explicitly disables this listener.
+/// Matched case-insensitively so `off`/`Off`/`OFF` all work.
+pub const DISABLE_VALUE: &str = "off";
 
 /// Close code sent when the connecting client's first frame isn't a valid
 /// `auth` frame with a token that authenticates. Numerically mirrors
@@ -85,8 +102,9 @@ const CLOSE_UNAUTHORIZED: u16 = 4001;
 /// has replaced. Numerically mirrors `crate::ws::CLOSE_REPLACED`.
 const CLOSE_REPLACED: u16 = 4002;
 
-/// Errors that can occur while starting the QUIC listener. Only surfaced
-/// when `QUIC_LISTEN_ADDR` is actually set -- see [`maybe_spawn`].
+/// Errors that can occur while starting the QUIC listener. Surfaced on
+/// every process start unless `QUIC_LISTEN_ADDR` is explicitly set to
+/// [`DISABLE_VALUE`] -- see [`maybe_spawn`].
 #[derive(Debug)]
 pub enum QuicListenError {
     /// `QUIC_LISTEN_ADDR`'s value could not be parsed as a socket address.
@@ -143,23 +161,38 @@ impl std::error::Error for QuicListenError {
     }
 }
 
-/// Reads [`LISTEN_ADDR_VAR`] and, if set, binds and spawns the QUIC
-/// listener in the background, returning once the endpoint is bound (so a
-/// misconfigured address fails startup fast, the same "fail fast" contract
-/// `main.rs` already applies to Postgres/NATS). If the variable is unset,
-/// returns `Ok(())` immediately without binding anything -- the process's
-/// existing HTTP + WS behavior is completely unchanged.
+/// Resolves [`LISTEN_ADDR_VAR`] to the address this listener should bind,
+/// or `None` if it's explicitly disabled via [`DISABLE_VALUE`]. Unset
+/// resolves to [`DEFAULT_LISTEN_ADDR`] -- see this module's doc comment.
+fn resolve_listen_addr() -> Result<Option<SocketAddr>, QuicListenError> {
+    let value = match std::env::var(LISTEN_ADDR_VAR) {
+        Ok(value) => value,
+        Err(_) => DEFAULT_LISTEN_ADDR.to_string(),
+    };
+
+    if value.eq_ignore_ascii_case(DISABLE_VALUE) {
+        return Ok(None);
+    }
+
+    value
+        .parse()
+        .map(Some)
+        .map_err(|source| QuicListenError::InvalidAddr { value, source })
+}
+
+/// Binds and spawns the QUIC listener in the background, returning once the
+/// endpoint is bound (so a misconfigured address fails startup fast, the
+/// same "fail fast" contract `main.rs` already applies to Postgres/NATS).
+/// On by default (issue #114): binds [`DEFAULT_LISTEN_ADDR`] when
+/// [`LISTEN_ADDR_VAR`] is unset, an overridden address when it's set to
+/// one, or does nothing at all when it's set to [`DISABLE_VALUE`].
 pub async fn maybe_spawn(state: AppState) -> Result<(), QuicListenError> {
-    let Ok(value) = std::env::var(LISTEN_ADDR_VAR) else {
+    let Some(addr) = resolve_listen_addr()? else {
         return Ok(());
     };
 
-    let addr: SocketAddr = value
-        .parse()
-        .map_err(|source| QuicListenError::InvalidAddr { value, source })?;
-
     let endpoint = bind_endpoint(addr)?;
-    println!("QUIC listener (issue #73): listening on {addr}");
+    println!("QUIC listener (issue #114): listening on {addr}");
 
     tokio::spawn(accept_loop(endpoint, state));
     Ok(())
@@ -353,4 +386,70 @@ async fn authenticate_first_frame(
 
     let authed = auth::authenticate_token(state, token).await?;
     Some(authed.user.id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serial_test::serial;
+
+    /// Unsets [`LISTEN_ADDR_VAR`] for the duration of `f`, restoring
+    /// whatever value (if any) was present beforehand. `#[serial]` on every
+    /// test in this module guards against concurrent env var mutation --
+    /// `std::env::var`/`set_var`/`remove_var` are process-global.
+    fn with_env_var<T>(value: Option<&str>, f: impl FnOnce() -> T) -> T {
+        let previous = std::env::var(LISTEN_ADDR_VAR).ok();
+        match value {
+            Some(value) => std::env::set_var(LISTEN_ADDR_VAR, value),
+            None => std::env::remove_var(LISTEN_ADDR_VAR),
+        }
+        let result = f();
+        match previous {
+            Some(previous) => std::env::set_var(LISTEN_ADDR_VAR, previous),
+            None => std::env::remove_var(LISTEN_ADDR_VAR),
+        }
+        result
+    }
+
+    /// Acceptance criterion (issue #114): an unset `QUIC_LISTEN_ADDR`
+    /// resolves to [`DEFAULT_LISTEN_ADDR`], not "disabled" -- the listener
+    /// is on by default.
+    #[test]
+    #[serial]
+    fn resolves_to_the_default_address_when_unset() {
+        let resolved = with_env_var(None, resolve_listen_addr);
+        assert_eq!(
+            resolved.unwrap(),
+            Some(DEFAULT_LISTEN_ADDR.parse().unwrap())
+        );
+    }
+
+    /// An operator can still override the bind address via the env var.
+    #[test]
+    #[serial]
+    fn resolves_to_an_overridden_address_when_set() {
+        let resolved = with_env_var(Some("127.0.0.1:9999"), resolve_listen_addr);
+        assert_eq!(resolved.unwrap(), Some("127.0.0.1:9999".parse().unwrap()));
+    }
+
+    /// An operator can explicitly disable the listener.
+    #[test]
+    #[serial]
+    fn resolves_to_disabled_when_set_to_the_disable_value() {
+        let resolved = with_env_var(Some("off"), resolve_listen_addr);
+        assert_eq!(resolved.unwrap(), None);
+
+        // Case-insensitive.
+        let resolved = with_env_var(Some("OFF"), resolve_listen_addr);
+        assert_eq!(resolved.unwrap(), None);
+    }
+
+    /// An unparseable override still fails loudly rather than silently
+    /// falling back to the default or disabling the listener.
+    #[test]
+    #[serial]
+    fn resolving_an_invalid_override_fails() {
+        let resolved = with_env_var(Some("not-a-socket-addr"), resolve_listen_addr);
+        assert!(matches!(resolved, Err(QuicListenError::InvalidAddr { .. })));
+    }
 }
