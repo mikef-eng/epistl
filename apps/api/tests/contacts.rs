@@ -51,10 +51,16 @@ async fn test_state() -> AppState {
         .connect(&database_url)
         .await
         .expect("failed to connect to Postgres");
+    let nats_url =
+        std::env::var("NATS_URL").expect("NATS_URL must be set to run this integration test");
+    let nats = async_nats::connect(&nats_url)
+        .await
+        .expect("failed to connect to NATS");
     AppState {
         auth,
         pool,
         registry: api::registry::ConnectionRegistry::new(),
+        nats,
     }
 }
 

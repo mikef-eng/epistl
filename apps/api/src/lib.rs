@@ -8,6 +8,7 @@ pub mod auth;
 pub mod contacts;
 pub mod db;
 pub mod keys;
+pub mod nats;
 pub mod registry;
 pub mod ws;
 

@@ -1,9 +1,9 @@
-# Local Postgres for API development.
+# Local Postgres + NATS for API development.
 #
 # Setup and full run instructions live in README.md ("Running the stack
-# locally") and .env.example — this file only wires the container itself.
-# `docker compose` automatically reads a .env file in this directory for
-# the ${VAR} substitutions below.
+# locally") and .env.example — this file only wires the containers
+# themselves. `docker compose` automatically reads a .env file in this
+# directory for the ${VAR} substitutions below.
 services:
   postgres:
     image: postgres:16
@@ -21,5 +21,26 @@ services:
       timeout: 5s
       retries: 5
 
+  nats:
+    # `nats:2` (the default, non-suffixed tag) is a scratch/distroless
+    # image containing only the `nats-server` binary -- no shell, no
+    # `wget` -- so it can't run a `CMD-SHELL` healthcheck against its own
+    # monitoring endpoint. `nats:2-alpine` is the same official image
+    # published from the same `nats-io/nats-server` source, built on
+    # Alpine instead, specifically so tooling like this healthcheck has a
+    # shell + `wget` to work with.
+    image: nats:2-alpine
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    ports:
+      - "4222:4222"
+    volumes:
+      - epistl-nats-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8222/healthz || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
 volumes:
   epistl-postgres-data:
+  epistl-nats-data:
