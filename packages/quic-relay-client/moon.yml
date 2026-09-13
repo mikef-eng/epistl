@@ -1,0 +1,20 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+id: "quic-relay-client"
+language: "rust"
+layer: "library"
+
+tasks:
+  check:
+    command: "cargo"
+    args: ["fmt", "--", "--check"]
+    options:
+      cache: false
+  lint:
+    command: "cargo"
+    args: ["clippy", "--all-targets", "--", "-D", "warnings"]
+  test:
+    command: "cargo"
+    args: ["test"]
+    options:
+      cache: false

@@ -51,3 +51,10 @@ tokio-tungstenite = "0.24"
 # snapshot is open, so every test in that file runs serialized rather than
 # racing sibling tests' signups/contact-adds in the same process.
 serial_test = "3"
+# Only used by the throwaway `examples/quic_echo_server.rs` spike (issue
+# #67) -- not a real dependency of the API binary. Versions match
+# `packages/quic-relay-client`'s so both sides of the spike's QUIC
+# handshake negotiate the same rustls/ring crypto stack.
+quinn = "0.11"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rcgen = "0.14"

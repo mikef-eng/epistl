@@ -1,0 +1,135 @@
+{
+  "name": "quic-relay-client",
+  "version": "0.1.0",
+  "description": "Spike (issue #67): Quinn QUIC client as an RN TurboModule via uniffi-bindgen-react-native",
+  "main": "./lib/module/index.js",
+  "types": "./lib/typescript/src/index.d.ts",
+  "exports": {
+    ".": {
+      "quic-relay-client-source": "./src/index.tsx",
+      "types": "./lib/typescript/src/index.d.ts",
+      "default": "./lib/module/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "lib",
+    "android",
+    "ios",
+    "cpp",
+    "*.podspec",
+    "react-native.config.js",
+    "!ios/build",
+    "!android/build",
+    "!android/gradle",
+    "!android/gradlew",
+    "!android/gradlew.bat",
+    "!android/local.properties",
+    "!**/__tests__",
+    "!**/__fixtures__",
+    "!**/__mocks__",
+    "!**/.*"
+  ],
+  "scripts": {
+    "clean": "del-cli android/build lib",
+    "prepare": "bob build",
+    "typecheck": "tsc",
+    "lint": "eslint \"**/*.{js,ts,tsx}\"",
+    "ubrn:ios": "ubrn build ios --and-generate",
+    "ubrn:android": "ubrn build android --and-generate",
+    "ubrn:clean": "rm -rfv cpp/ android/CMakeLists.txt android/src/main/java android/*.cpp ios/ src/Native* src/index.*ts* src/generated/"
+  },
+  "keywords": [
+    "react-native",
+    "ios",
+    "android"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mikef-eng/epistl.git"
+  },
+  "author": "Epistl <0xchillyo@gmail.com> (https://github.com/mikef-eng/epistl)",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/mikef-eng/epistl/issues"
+  },
+  "homepage": "https://github.com/mikef-eng/epistl#readme",
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/"
+  },
+  "devDependencies": {
+    "@eslint/compat": "^2.1.0",
+    "@eslint/eslintrc": "^3.3.6",
+    "@eslint/js": "^9.39.5",
+    "@react-native-community/cli": "20.1.0",
+    "@react-native/babel-preset": "0.86.2",
+    "@react-native/eslint-config": "0.86.2",
+    "@types/react": "^19.2.0",
+    "del-cli": "^7.0.0",
+    "eslint": "^9.39.5",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-ft-flow": "^3.0.11",
+    "eslint-plugin-prettier": "^5.5.6",
+    "prettier": "^3.9.6",
+    "react": "19.2.3",
+    "react-native": "0.86.2",
+    "react-native-builder-bob": "^0.43.1",
+    "turbo": "^2.10.8",
+    "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "uniffi-bindgen-react-native": "0.31.0-5",
+    "@ubjs/core": "0.31.0-5"
+  },
+  "peerDependencies": {
+    "react": "*",
+    "react-native": "*"
+  },
+  "react-native-builder-bob": {
+    "source": "src",
+    "output": "lib",
+    "targets": [
+      [
+        "module",
+        {
+          "esm": true
+        }
+      ],
+      [
+        "typescript",
+        {
+          "project": "tsconfig.build.json"
+        }
+      ]
+    ]
+  },
+  "codegenConfig": {
+    "name": "QuicRelayClientSpec",
+    "type": "modules",
+    "jsSrcsDir": "src",
+    "outputDir": {
+      "ios": "ios/generated",
+      "android": "android/generated"
+    },
+    "android": {
+      "javaPackageName": "com.quicrelayclient"
+    },
+    "includesGeneratedCode": true
+  },
+  "prettier": {
+    "quoteProps": "consistent",
+    "singleQuote": true,
+    "tabWidth": 2,
+    "trailingComma": "es5",
+    "useTabs": false
+  },
+  "create-react-native-library": {
+    "type": "turbo-module",
+    "languages": "cpp",
+    "tools": [
+      "eslint"
+    ],
+    "version": "0.63.1"
+  }
+}

@@ -1,0 +1,9 @@
+---
+# `uniffi-bindgen-react-native` config for the issue #67 spike.
+#
+# Points at `packages/quic-relay-client` (the crate with the single
+# UniFFI-annotated `quic_ping` async function) rather than checking out a
+# remote repo, since the Rust crate lives in this same monorepo.
+rust:
+  directory: ../../../../packages/quic-relay-client
+  manifestPath: Cargo.toml
