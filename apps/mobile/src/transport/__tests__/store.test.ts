@@ -355,5 +355,74 @@ describe('transportStore', () => {
       FakeWebSocket.instances[0].onopen?.();
       expect(transportStore.state.activeTransport).toBe('ws');
     });
+
+    it('a live QUIC connection dropping after winning the race schedules a reconnect, same as a live WS drop today', async () => {
+      const { resolve } = deferredQuicConnect();
+      const getToken = jest.fn().mockResolvedValue('token-1');
+      const statuses = trackStatuses();
+      transportStore.actions.connect(getToken);
+      await flush();
+
+      const quicConn = fakeQuicConnection();
+      resolve(quicConn);
+      await flush();
+      expect(transportStore.state.activeTransport).toBe('quic');
+      const [, listeners] = mockConnectQuic.mock.calls[0];
+
+      // The winning QUIC connection drops mid-session (not an auth failure).
+      listeners.onClosed({ authFailed: false, reason: 'connection lost' });
+
+      expect(transportStore.state.activeTransport).toBeNull();
+      expect(statuses.at(-1)).toBe('reconnecting');
+
+      // A fresh race starts for the reconnect attempt, same as a dropped WS
+      // connection would trigger.
+      await jest.advanceTimersByTimeAsync(1300);
+      expect(mockConnectQuic.mock.calls.length).toBeGreaterThan(1);
+    });
+
+    it('a live QUIC connection dropping with an auth failure is terminal, mirroring WS\'s 4001 close', async () => {
+      const { resolve } = deferredQuicConnect();
+      const getToken = jest.fn().mockResolvedValue('token-1');
+      const statuses = trackStatuses();
+      transportStore.actions.connect(getToken);
+      await flush();
+
+      const quicConn = fakeQuicConnection();
+      resolve(quicConn);
+      await flush();
+      const [, listeners] = mockConnectQuic.mock.calls[0];
+
+      listeners.onClosed({ authFailed: true, reason: 'invalid token' });
+
+      expect(transportStore.state.activeTransport).toBeNull();
+      expect(statuses.at(-1)).toBe('disconnected');
+
+      await jest.advanceTimersByTimeAsync(60000);
+      expect(mockConnectQuic.mock.calls.length).toBe(1);
+    });
+
+    it('close() closes the live QUIC connection (not the discarded WS socket) when QUIC is activeTransport', async () => {
+      const { resolve } = deferredQuicConnect();
+      const getToken = jest.fn().mockResolvedValue('token-1');
+      transportStore.actions.connect(getToken);
+      await flush();
+
+      const quicConn = fakeQuicConnection();
+      resolve(quicConn);
+      await flush();
+      expect(transportStore.state.activeTransport).toBe('quic');
+      // The losing WS attempt was already closed once, by the race itself.
+      expect(FakeWebSocket.instances[0].close).toHaveBeenCalledTimes(1);
+
+      transportStore.actions.close();
+
+      expect(quicConn.close).toHaveBeenCalledTimes(1);
+      // close() must not blindly re-close/touch the already-discarded WS
+      // socket a second time.
+      expect(FakeWebSocket.instances[0].close).toHaveBeenCalledTimes(1);
+      expect(transportStore.state.status).toBe('disconnected');
+      expect(transportStore.state.activeTransport).toBeNull();
+    });
   });
 });
