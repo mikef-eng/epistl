@@ -1,10 +1,10 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useStore } from '@tanstack/react-store';
 import { useEffect, useRef, useState } from 'react';
 import { FlatList, Pressable, Text, TextInput, View } from 'react-native';
 
 import { type Contact, listContacts } from '../api/client';
 import { getToken, getUserId } from '../api/session';
-import { createReconnectingChatSocket, type ConnectionStatus, type IncomingFrame } from '../api/ws';
 import { ensureLocalIdentity, type Identity } from '../crypto/identity';
 import {
   decodeHandshakeEnvelope,
@@ -25,6 +25,7 @@ import {
 } from '../crypto/session';
 import type { RootStackParamList } from '../navigation/types';
 import { getMessages, saveMessage, type MessageDirection } from '../storage/messages';
+import { transportStore, type IncomingFrame } from '../transport/store';
 import { base64ToBytes, base64ToUtf8, bytesToBase64, bytesToUtf8, utf8ToBytes } from '../utils/base64';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Chat'>;
@@ -84,12 +85,21 @@ export default function ChatScreen({ route }: Props) {
 
   const [messages, setMessages] = useState<ChatListItem[]>([]);
   const [draft, setDraft] = useState('');
-  const [status, setStatus] = useState<ConnectionStatus>('connecting');
   const [sendError, setSendError] = useState<string | null>(null);
 
-  const socketHandleRef = useRef<ReturnType<typeof createReconnectingChatSocket> | null>(null);
+  const status = useStore(transportStore, (s) => s.status);
+  const lastFrame = useStore(transportStore, (s) => s.lastFrame);
+
   const lastSentKeyRef = useRef<string | null>(null);
   const listRef = useRef<FlatList<ChatListItem> | null>(null);
+  // Frames already routed through `handleFrame` below, keyed by object
+  // identity. `transportStore` is a module-wide singleton whose `lastFrame`
+  // can carry over from a previous mount of this same screen (e.g.
+  // navigating away from and back to the same contact); without this guard
+  // that stale frame would be reprocessed (and its message re-appended) on
+  // remount. Seeded with whatever `lastFrame` already holds at mount time
+  // so only frames that arrive *after* mount are treated as new.
+  const processedFrameRef = useRef<IncomingFrame | null>(transportStore.state.lastFrame);
 
   // Crypto context needed to send/receive, loaded once on mount below.
   const identityRef = useRef<Identity | null>(null);
@@ -183,12 +193,12 @@ export default function ChatScreen({ route }: Props) {
   }
 
   // Loads crypto context (self identity + contact key bundle) and message
-  // history, then opens the (auto-reconnecting) WebSocket connection, all
-  // on mount. Reconnect-with-backoff lives in `createReconnectingChatSocket`
-  // (issue #55, superseding issue #10's "no reconnect logic" scope note).
+  // history, then opens the connection through `transportStore`, all on
+  // mount. Reconnect-with-backoff lives in the store's `connect` action
+  // (`../transport/store.ts`, issue #74, superseding issue #55's
+  // `createReconnectingChatSocket`).
   useEffect(() => {
     let cancelled = false;
-    let handle: ReturnType<typeof createReconnectingChatSocket> | null = null;
 
     async function setup() {
       const token = await getToken();
@@ -196,7 +206,7 @@ export default function ChatScreen({ route }: Props) {
         return;
       }
       if (!token) {
-        setStatus('disconnected');
+        transportStore.actions.close();
         return;
       }
 
@@ -228,31 +238,31 @@ export default function ChatScreen({ route }: Props) {
         }))
       );
 
-      handle = createReconnectingChatSocket(getToken, {
-        onMessage: handleFrame,
-        onStatusChange: (next) => {
-          if (!cancelled) {
-            setStatus(next);
-          }
-        },
-      });
-      socketHandleRef.current = handle;
+      transportStore.actions.connect(getToken);
     }
 
     setup();
 
     return () => {
       cancelled = true;
-      handle?.close();
-      socketHandleRef.current = null;
+      transportStore.actions.close();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contactUserId]);
+
+  // Routes each newly-arrived frame through `handleFrame`, exactly as the
+  // old `onMessage` callback did — see `processedFrameRef`'s comment above
+  // for why a plain `[lastFrame]` dependency alone isn't enough.
+  useEffect(() => {
+    if (lastFrame && lastFrame !== processedFrameRef.current) {
+      processedFrameRef.current = lastFrame;
+      handleFrame(lastFrame);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastFrame]);
 
   async function handleSend() {
     const text = draft.trim();
-    const handle = socketHandleRef.current;
-    if (!text || !handle || status !== 'connected') {
+    if (!text || status !== 'connected') {
       return;
     }
 
@@ -317,7 +327,7 @@ export default function ChatScreen({ route }: Props) {
     const createdAt = new Date().toISOString();
     const key = nextLocalKey();
 
-    handle.send(JSON.stringify({ type: 'send', to: contactUserId, body_b64: bodyB64 }));
+    transportStore.actions.send({ type: 'send', to: contactUserId, body_b64: bodyB64 });
 
     // The optimistic, locally-appended copy renders the real plaintext
     // immediately — no round trip needed to see your own sent message.
