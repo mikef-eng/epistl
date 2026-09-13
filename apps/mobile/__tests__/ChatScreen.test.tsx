@@ -8,17 +8,38 @@ import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';
 import { concatBytes } from '@noble/hashes/utils.js';
 
 import { getToken } from '../src/api/session';
-import { createReconnectingChatSocket, type ConnectionStatus, type IncomingFrame } from '../src/api/ws';
 import { ensureLocalIdentity, PREKEY_SIGNATURE_CONTEXT } from '../src/crypto/identity';
 import { encodeHandshakeEnvelope, encodeRatchetEnvelope } from '../src/crypto/envelope';
 import { deriveNextSendingMessageKey, initiateSession } from '../src/crypto/session';
 import ChatScreen from '../src/screens/ChatScreen';
 import { getMessages, saveMessage } from '../src/storage/messages';
+import { transportStore, type ConnectionStatus, type IncomingFrame } from '../src/transport/store';
 import { base64ToBytes, bytesToBase64, utf8ToBytes } from '../src/utils/base64';
 
-jest.mock('../src/api/ws', () => ({
-  createReconnectingChatSocket: jest.fn(),
-}));
+// `transportStore` is mocked wholesale here, backed by a real
+// `@tanstack/react-store` `Store` instance (so `ChatScreen`'s real
+// `useStore(transportStore, ...)` subscriptions work unmodified) but with
+// test-controllable `connect`/`send`/`close` actions in place of the real
+// ones -- the mocked-module equivalent of "the socket delivers a frame" /
+// "the connection status changes", without needing a real WebSocket or the
+// real reconnect-with-backoff timers. That logic (retry scheduling, jitter,
+// the 4001 terminal case, etc.) is unit-tested directly against the real
+// store implementation in `src/transport/__tests__/store.test.ts`; this
+// file only checks that `ChatScreen` wires the four statuses to the banner
+// correctly and that message handling is unaffected by reconnects.
+jest.mock('../src/transport/store', () => {
+  const { Store } = jest.requireActual('@tanstack/react-store');
+  return {
+    transportStore: new Store(
+      { status: 'connecting', activeTransport: null, lastFrame: null },
+      () => ({
+        connect: jest.fn(),
+        send: jest.fn(),
+        close: jest.fn(),
+      })
+    ),
+  };
+});
 
 jest.mock('../src/api/session', () => ({
   getToken: jest.fn(),
@@ -49,7 +70,7 @@ jest.mock('expo-secure-store', () => {
 });
 
 const mockSecureStore = SecureStore as unknown as { __store: Map<string, string> };
-const mockedCreateReconnectingChatSocket = createReconnectingChatSocket as jest.Mock;
+const mockedConnect = transportStore.actions.connect as jest.Mock;
 const mockedGetToken = getToken as jest.Mock;
 // `getUserId` is mocked via the same `../src/api/session` factory above.
 const { getUserId: mockedGetUserId } = jest.requireMock('../src/api/session');
@@ -66,17 +87,11 @@ jest.setTimeout(20000);
 const ALICE_USER_ID = 'alice-user-id';
 const CONTACT_USER_ID = 'contact-1';
 
-/** Test double standing in for the `{ close, send }` handle
- * `createReconnectingChatSocket` (mocked wholesale below) returns to
- * `ChatScreen`, plus `receive`/`setStatus` helpers that invoke the
- * `onMessage`/`onStatusChange` handlers `ChatScreen` passed in — the
- * mocked-module equivalent of "the socket delivers a frame" / "the
- * connection status changes", without needing a real WebSocket. The
- * reconnect-with-backoff logic itself (retry scheduling, jitter, the 4001
- * terminal case, etc.) is unit-tested directly against the real
- * implementation in `src/api/__tests__/ws.test.ts`; this file only checks
- * that `ChatScreen` wires the four statuses to the banner correctly and
- * that message handling is unaffected by reconnects. */
+/** Test double for driving the mocked `transportStore`'s reactive state
+ * directly, standing in for what a real WebSocket delivering frames/status
+ * changes would do to it. See the `jest.mock('../src/transport/store', ...)`
+ * call above for why this is safe to do without going through the real
+ * `connect`/reconnect machinery. */
 interface ChatSocketHarness {
   send: jest.Mock;
   close: jest.Mock;
@@ -85,30 +100,26 @@ interface ChatSocketHarness {
 }
 
 function createChatSocketHarness(): ChatSocketHarness {
-  const send = jest.fn();
-  const close = jest.fn();
-  let handlers: {
-    onMessage: (frame: IncomingFrame) => void;
-    onStatusChange: (status: ConnectionStatus) => void;
-  } | null = null;
-
-  mockedCreateReconnectingChatSocket.mockImplementation(
-    (_getToken: unknown, h: NonNullable<typeof handlers>) => {
-      handlers = h;
-      // Mirrors the real `createReconnectingChatSocket`'s initial
-      // connect succeeding immediately, so tests that don't care about
-      // connection-status transitions can send/receive right away; tests
-      // that do care call `setStatus(...)` explicitly to override this.
-      h.onStatusChange('connected');
-      return { send, close };
-    }
-  );
+  // Mirrors the real store's `connect` action succeeding immediately, so
+  // tests that don't care about connection-status transitions can
+  // send/receive right away; tests that do care call `setStatus(...)`
+  // explicitly to override this.
+  transportStore.setState(() => ({
+    status: 'connected',
+    activeTransport: 'ws',
+    lastFrame: null,
+  }));
 
   return {
-    send,
-    close,
-    receive: (frame) => handlers?.onMessage(frame),
-    setStatus: (status) => handlers?.onStatusChange(status),
+    send: transportStore.actions.send as jest.Mock,
+    close: transportStore.actions.close as jest.Mock,
+    receive: (frame) => transportStore.setState((s) => ({ ...s, lastFrame: frame })),
+    setStatus: (status) =>
+      transportStore.setState((s) => ({
+        ...s,
+        status,
+        activeTransport: status === 'connected' ? 'ws' : null,
+      })),
   };
 }
 
@@ -148,9 +159,7 @@ async function renderChatScreen(socket: ChatSocketHarness = createChatSocketHarn
   const view = await render(<ChatScreen navigation={navigation as never} route={ROUTE as never} />);
   const user = userEvent.setup();
   await waitFor(() => expect(mockedGetMessages).toHaveBeenCalledWith(CONTACT_USER_ID));
-  await waitFor(() =>
-    expect(mockedCreateReconnectingChatSocket).toHaveBeenCalledWith(mockedGetToken, expect.any(Object))
-  );
+  await waitFor(() => expect(mockedConnect).toHaveBeenCalledWith(mockedGetToken));
   return { navigation, user, socket, unmount: view.unmount };
 }
 
@@ -205,7 +214,7 @@ describe('ChatScreen', () => {
     });
 
     expect(socket.send).toHaveBeenCalledTimes(1);
-    const sentFrame = JSON.parse(socket.send.mock.calls[0][0] as string);
+    const sentFrame = socket.send.mock.calls[0][0] as { type: string; to: string; body_b64: string };
     expect(sentFrame).toEqual({
       type: 'send',
       to: CONTACT_USER_ID,
@@ -307,7 +316,7 @@ describe('ChatScreen', () => {
     await user.type(screen.getByPlaceholderText('Message'), 'hi bob, good to hear from you');
     await user.press(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(screen.getByText('hi bob, good to hear from you')).toBeTruthy());
-    const secondSentFrame = JSON.parse(socket.send.mock.calls[0][0] as string);
+    const secondSentFrame = socket.send.mock.calls[0][0] as { body_b64: string };
     const secondEnvelopeBytes = base64ToBytes(secondSentFrame.body_b64);
     expect(secondEnvelopeBytes[0]).toBe(0x03);
 
@@ -454,9 +463,10 @@ describe('ChatScreen', () => {
     });
 
     // ...then a new underlying socket reconnects successfully. From
-    // `ChatScreen`'s perspective this is just another status update:
-    // `createReconnectingChatSocket` owns swapping out the underlying
-    // WebSocket instance (see `src/api/__tests__/ws.test.ts` for that).
+    // `ChatScreen`'s perspective this is just another status update: the
+    // transport store's `connect` action owns swapping out the underlying
+    // WebSocket instance (see `src/transport/__tests__/store.test.ts` for
+    // that).
     await act(async () => {
       socket.setStatus('connected');
     });
