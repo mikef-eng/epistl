@@ -73,12 +73,25 @@ async fn main() {
         }
     };
 
-    let app = api::app(AppState {
+    let state = AppState {
         auth,
         pool,
         registry: api::registry::ConnectionRegistry::new(),
         nats: nats_client,
-    });
+    };
+
+    // Opt-in only: starts a real QUIC listener alongside HTTP/WS when
+    // `QUIC_LISTEN_ADDR` is set (issue #73); a no-op otherwise, leaving the
+    // process's HTTP + WS behavior completely unchanged. Failing fast on a
+    // misconfigured address mirrors the Postgres/NATS checks above -- if an
+    // operator opted in, a listener that silently never started would be
+    // worse than a loud startup failure.
+    if let Err(err) = api::quic::maybe_spawn(state.clone()).await {
+        eprintln!("startup failed: {err}");
+        std::process::exit(1);
+    }
+
+    let app = api::app(state);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
         .await
         .expect("failed to bind listener");

@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 axum = { version = "0.8", features = ["ws"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "io-util"] }
 tower = { version = "0.5", features = ["util"] }
 base64 = "0.22"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
@@ -39,6 +39,16 @@ dotenvy = "0.15.7"
 # at implementation time (`cargo add async-nats --dry-run` from this
 # directory); no alternative crate was considered.
 async-nats = "0.50.0"
+# Real (opt-in, `QUIC_LISTEN_ADDR`-gated) QUIC listener -- `apps/api/src/quic.rs`,
+# issue #73. Moved here from `[dev-dependencies]` (where these three crates
+# previously sat, only serving the throwaway `examples/quic_echo_server.rs`
+# spike from issue #67) since the real listener needs them at runtime in the
+# actual binary. Versions unchanged -- still match `packages/quic-relay-client`'s
+# so both sides of a real QUIC handshake negotiate the same rustls/ring crypto
+# stack.
+quinn = "0.11"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rcgen = "0.14"
 
 [dev-dependencies]
 # Real WebSocket client for the `/ws` relay's integration tests --
@@ -51,10 +61,11 @@ tokio-tungstenite = "0.24"
 # snapshot is open, so every test in that file runs serialized rather than
 # racing sibling tests' signups/contact-adds in the same process.
 serial_test = "3"
-# Only used by the throwaway `examples/quic_echo_server.rs` spike (issue
-# #67) -- not a real dependency of the API binary. Versions match
-# `packages/quic-relay-client`'s so both sides of the spike's QUIC
-# handshake negotiate the same rustls/ring crypto stack.
-quinn = "0.11"
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
-rcgen = "0.14"
+# Real QUIC client for `apps/api/tests/quic.rs`'s integration tests (issue
+# #73) -- a Quinn client connecting to the real listener the same way
+# `packages/quic-relay-client`'s spike client does, trusting the listener's
+# freshly-generated dev cert the same dev-only way (see
+# `docs/decisions/0011-quic-dev-cert-trust-remains-dev-only.md`). `quinn`,
+# `rustls`, and `rcgen` themselves are real `[dependencies]` above now (the
+# listener needs them at runtime); this dev-dependency is only for the
+# test-only client-side helper.

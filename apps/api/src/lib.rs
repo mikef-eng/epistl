@@ -9,6 +9,7 @@ pub mod contacts;
 pub mod db;
 pub mod keys;
 pub mod nats;
+pub mod quic;
 pub mod registry;
 pub mod relay;
 pub mod ws;
