@@ -42,7 +42,7 @@ Root [CLAUDE.md](CLAUDE.md) imports [AGENTS.md](AGENTS.md). Agent tooling lives 
 - **Skills** — `open-task-issue`, `pqc-crypto-change`
 - **Plugins** — root enables `superpowers@claude-plugins-official`; `apps/mobile` enables `expo@claude-plugins-official`
 
-Postgres MCP and NATS channel plugins are deferred until those services are stood up.
+Postgres MCP is configured in [`.mcp.json`](.mcp.json) (project-scoped, via [`crystaldba/postgres-mcp`](https://github.com/crystaldba/postgres-mcp) over Docker — connects to the local `docker compose` Postgres by default). A NATS channel plugin remains deferred — no such plugin was found in the official Claude Code marketplace as of this writing; revisit if one becomes available.
 
 ## Running the stack locally
 
