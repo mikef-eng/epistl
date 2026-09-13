@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
 
 import { ApiError, login, signup, type AuthUser } from '../api/client';
+import { saveUserId } from '../api/session';
 import { ensureKeysRegistered } from '../crypto/keyRegistration';
 import type { RootStackParamList } from '../navigation/types';
 
@@ -42,6 +43,10 @@ export default function LoginScreen({ navigation }: Props) {
       const data = mode === 'login' ? await login(email, password) : await signup(email, password);
       const userId = userIdOf(data.user);
       if (userId !== null) {
+        // Persisted so later screens (e.g. `ChatScreen`, issue #41) can
+        // identify "self" for PQXDH session establishment and envelope AAD
+        // binding without re-deriving it from the login/signup response.
+        await saveUserId(userId);
         // `ensureKeysRegistered` already swallows its own errors (network,
         // etc.) so a failed upload never blocks login/signup from
         // completing; this `catch` is defense-in-depth in case that

@@ -1,6 +1,14 @@
 import * as SecureStore from 'expo-secure-store';
 
-import { saveToken, getToken, clearToken, SESSION_TOKEN_KEY } from '../session';
+import {
+  saveToken,
+  getToken,
+  clearToken,
+  saveUserId,
+  getUserId,
+  SESSION_TOKEN_KEY,
+  SESSION_USER_ID_KEY,
+} from '../session';
 
 jest.mock('expo-secure-store', () => ({
   setItemAsync: jest.fn(),
@@ -38,5 +46,24 @@ describe('session', () => {
     await clearToken();
 
     expect(mockSecureStore.deleteItemAsync).toHaveBeenCalledWith(SESSION_TOKEN_KEY);
+  });
+
+  it('saveUserId persists the user id under its own session key', async () => {
+    await saveUserId('user-123');
+
+    expect(mockSecureStore.setItemAsync).toHaveBeenCalledWith(SESSION_USER_ID_KEY, 'user-123');
+  });
+
+  it('getUserId reads the user id from secure storage', async () => {
+    mockSecureStore.getItemAsync.mockResolvedValueOnce('user-abc');
+
+    await expect(getUserId()).resolves.toBe('user-abc');
+    expect(mockSecureStore.getItemAsync).toHaveBeenCalledWith(SESSION_USER_ID_KEY);
+  });
+
+  it('getUserId resolves null when no user id is stored', async () => {
+    mockSecureStore.getItemAsync.mockResolvedValueOnce(null);
+
+    await expect(getUserId()).resolves.toBeNull();
   });
 });

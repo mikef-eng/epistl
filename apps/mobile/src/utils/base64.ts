@@ -45,7 +45,7 @@ function utf8Bytes(text: string): number[] {
   return bytes;
 }
 
-function bytesToUtf8(bytes: number[]): string {
+function decodeUtf8Bytes(bytes: number[]): string {
   let result = '';
   let i = 0;
   while (i < bytes.length) {
@@ -175,5 +175,18 @@ export function base64ToUtf8(base64: string): string {
     }
   }
 
-  return bytesToUtf8(bytes);
+  return decodeUtf8Bytes(bytes);
+}
+
+/** Encodes `text` as raw UTF-8 bytes, with no base64 layer. Used where a
+ * caller needs plaintext bytes directly (e.g. `../crypto/envelope.ts`
+ * AEAD-encrypts raw bytes, not base64 text). */
+export function utf8ToBytes(text: string): Uint8Array {
+  return new Uint8Array(utf8Bytes(text));
+}
+
+/** Decodes raw UTF-8 bytes back into text, with no base64 layer. See
+ * `utf8ToBytes`. */
+export function bytesToUtf8(bytes: Uint8Array): string {
+  return decodeUtf8Bytes(Array.from(bytes));
 }
