@@ -4,7 +4,7 @@ import { FlatList, Pressable, Text, TextInput, View } from 'react-native';
 
 import { type Contact, listContacts } from '../api/client';
 import { getToken, getUserId } from '../api/session';
-import { createChatSocket, type IncomingFrame } from '../api/ws';
+import { createReconnectingChatSocket, type ConnectionStatus, type IncomingFrame } from '../api/ws';
 import { ensureLocalIdentity, type Identity } from '../crypto/identity';
 import {
   decodeHandshakeEnvelope,
@@ -84,10 +84,10 @@ export default function ChatScreen({ route }: Props) {
 
   const [messages, setMessages] = useState<ChatListItem[]>([]);
   const [draft, setDraft] = useState('');
-  const [connected, setConnected] = useState(true);
+  const [status, setStatus] = useState<ConnectionStatus>('connecting');
   const [sendError, setSendError] = useState<string | null>(null);
 
-  const socketRef = useRef<WebSocket | null>(null);
+  const socketHandleRef = useRef<ReturnType<typeof createReconnectingChatSocket> | null>(null);
   const lastSentKeyRef = useRef<string | null>(null);
   const listRef = useRef<FlatList<ChatListItem> | null>(null);
 
@@ -183,11 +183,12 @@ export default function ChatScreen({ route }: Props) {
   }
 
   // Loads crypto context (self identity + contact key bundle) and message
-  // history, then opens the WebSocket connection, all on mount. No
-  // reconnect logic by design (see issue #10 out-of-scope).
+  // history, then opens the (auto-reconnecting) WebSocket connection, all
+  // on mount. Reconnect-with-backoff lives in `createReconnectingChatSocket`
+  // (issue #55, superseding issue #10's "no reconnect logic" scope note).
   useEffect(() => {
     let cancelled = false;
-    let socket: WebSocket | null = null;
+    let handle: ReturnType<typeof createReconnectingChatSocket> | null = null;
 
     async function setup() {
       const token = await getToken();
@@ -195,7 +196,7 @@ export default function ChatScreen({ route }: Props) {
         return;
       }
       if (!token) {
-        setConnected(false);
+        setStatus('disconnected');
         return;
       }
 
@@ -227,44 +228,31 @@ export default function ChatScreen({ route }: Props) {
         }))
       );
 
-      socket = createChatSocket(token);
-      socketRef.current = socket;
-
-      socket.onmessage = (event: { data: unknown }) => {
-        let frame: IncomingFrame;
-        try {
-          frame = JSON.parse(String(event.data)) as IncomingFrame;
-        } catch {
-          return;
-        }
-        handleFrame(frame);
-      };
-      socket.onclose = () => {
-        if (!cancelled) {
-          setConnected(false);
-        }
-      };
-      socket.onerror = () => {
-        if (!cancelled) {
-          setConnected(false);
-        }
-      };
+      handle = createReconnectingChatSocket(getToken, {
+        onMessage: handleFrame,
+        onStatusChange: (next) => {
+          if (!cancelled) {
+            setStatus(next);
+          }
+        },
+      });
+      socketHandleRef.current = handle;
     }
 
     setup();
 
     return () => {
       cancelled = true;
-      socket?.close();
-      socketRef.current = null;
+      handle?.close();
+      socketHandleRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contactUserId]);
 
   async function handleSend() {
     const text = draft.trim();
-    const socket = socketRef.current;
-    if (!text || !socket) {
+    const handle = socketHandleRef.current;
+    if (!text || !handle || status !== 'connected') {
       return;
     }
 
@@ -329,7 +317,7 @@ export default function ChatScreen({ route }: Props) {
     const createdAt = new Date().toISOString();
     const key = nextLocalKey();
 
-    socket.send(JSON.stringify({ type: 'send', to: contactUserId, body_b64: bodyB64 }));
+    handle.send(JSON.stringify({ type: 'send', to: contactUserId, body_b64: bodyB64 }));
 
     // The optimistic, locally-appended copy renders the real plaintext
     // immediately — no round trip needed to see your own sent message.
@@ -356,9 +344,11 @@ export default function ChatScreen({ route }: Props) {
         <Text className="text-lg font-semibold">{email}</Text>
       </View>
 
-      {!connected ? (
+      {status === 'reconnecting' || status === 'disconnected' ? (
         <View testID="disconnected-banner" className="bg-red-100 px-4 py-2">
-          <Text className="text-center text-red-700">Disconnected</Text>
+          <Text className="text-center text-red-700">
+            {status === 'reconnecting' ? 'Reconnecting...' : 'Disconnected'}
+          </Text>
         </View>
       ) : null}
 
