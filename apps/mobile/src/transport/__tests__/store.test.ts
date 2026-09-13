@@ -1,7 +1,7 @@
-import { createReconnectingChatSocket, type IncomingFrame } from '../ws';
+import { transportStore, type ConnectionStatus } from '../store';
 
-/** Minimal fake matching the subset of the platform `WebSocket` surface
- * `createReconnectingChatSocket` relies on (see `../ws.ts`): the
+/** Minimal fake matching the subset of the platform `WebSocket` surface the
+ * store's `connect` action relies on (see `../store.ts`): the
  * `onopen`/`onmessage`/`onclose`/`onerror` callback properties and a
  * `close()` method. Real close events (browser + React Native) carry a
  * `code`, which is what distinguishes a terminal 4001 (unauthorized) close
@@ -25,7 +25,23 @@ async function flush(): Promise<void> {
   await jest.advanceTimersByTimeAsync(0);
 }
 
-describe('createReconnectingChatSocket', () => {
+/** Subscribes to `transportStore` and records every distinct `status`
+ * value it passes through, mirroring the `onStatusChange` call log the
+ * old `createReconnectingChatSocket` handlers received. */
+function trackStatuses(): ConnectionStatus[] {
+  const statuses: ConnectionStatus[] = [];
+  let last: ConnectionStatus | undefined;
+  transportStore.subscribe(() => {
+    const current = transportStore.state.status;
+    if (current !== last) {
+      statuses.push(current);
+      last = current;
+    }
+  });
+  return statuses;
+}
+
+describe('transportStore', () => {
   const originalWebSocket = globalThis.WebSocket;
 
   beforeEach(() => {
@@ -35,30 +51,31 @@ describe('createReconnectingChatSocket', () => {
   });
 
   afterEach(() => {
+    // Closes any connection/pending reconnect left over from the test so
+    // state doesn't leak into the next one (the store is a module-level
+    // singleton, unlike the old factory which returned a fresh instance
+    // per call).
+    transportStore.actions.close();
     jest.useRealTimers();
     (globalThis as unknown as { WebSocket: unknown }).WebSocket = originalWebSocket;
   });
 
-  function statuses(onStatusChange: jest.Mock): unknown[] {
-    return onStatusChange.mock.calls.map((call) => call[0]);
-  }
-
   it('opens an initial connection, announcing "connecting" first', async () => {
     const getToken = jest.fn().mockResolvedValue('token-1');
-    const onStatusChange = jest.fn();
-    createReconnectingChatSocket(getToken, { onMessage: jest.fn(), onStatusChange });
+    const statuses = trackStatuses();
+    transportStore.actions.connect(getToken);
 
     await flush();
 
-    expect(statuses(onStatusChange)[0]).toBe('connecting');
+    expect(statuses[0]).toBe('connecting');
     expect(FakeWebSocket.instances).toHaveLength(1);
     expect(getToken).toHaveBeenCalledTimes(1);
   });
 
   it('doubles the backoff delay across consecutive failed reconnect attempts (~1s, ~2s, ~4s)', async () => {
     const getToken = jest.fn().mockResolvedValue('token-1');
-    const onStatusChange = jest.fn();
-    createReconnectingChatSocket(getToken, { onMessage: jest.fn(), onStatusChange });
+    const statuses = trackStatuses();
+    transportStore.actions.connect(getToken);
     await flush();
     expect(FakeWebSocket.instances).toHaveLength(1);
 
@@ -83,15 +100,13 @@ describe('createReconnectingChatSocket', () => {
     await jest.advanceTimersByTimeAsync(1700); // total 4899ms, past the 4800ms ceiling
     expect(FakeWebSocket.instances).toHaveLength(4);
 
-    expect(statuses(onStatusChange)).toEqual(
-      expect.arrayContaining(['connecting', 'reconnecting'])
-    );
+    expect(statuses).toEqual(expect.arrayContaining(['connecting', 'reconnecting']));
   });
 
   it('resets the backoff back to ~1s after a successful reconnect', async () => {
     const getToken = jest.fn().mockResolvedValue('token-1');
-    const onStatusChange = jest.fn();
-    createReconnectingChatSocket(getToken, { onMessage: jest.fn(), onStatusChange });
+    const statuses = trackStatuses();
+    transportStore.actions.connect(getToken);
     await flush();
 
     // Fail twice in a row so the backoff would otherwise be at ~4s.
@@ -103,7 +118,8 @@ describe('createReconnectingChatSocket', () => {
 
     // This attempt succeeds.
     FakeWebSocket.instances[2].onopen?.();
-    expect(statuses(onStatusChange).at(-1)).toBe('connected');
+    expect(statuses.at(-1)).toBe('connected');
+    expect(transportStore.state.activeTransport).toBe('ws');
 
     // A subsequent failure should schedule the *next* attempt at ~1s again,
     // not continue climbing from ~4s.
@@ -116,13 +132,14 @@ describe('createReconnectingChatSocket', () => {
 
   it('does not schedule a reconnect after a 4001 (unauthorized) close, and reports "disconnected"', async () => {
     const getToken = jest.fn().mockResolvedValue('token-1');
-    const onStatusChange = jest.fn();
-    createReconnectingChatSocket(getToken, { onMessage: jest.fn(), onStatusChange });
+    const statuses = trackStatuses();
+    transportStore.actions.connect(getToken);
     await flush();
 
     FakeWebSocket.instances[0].onclose?.({ code: 4001 });
 
-    expect(statuses(onStatusChange).at(-1)).toBe('disconnected');
+    expect(statuses.at(-1)).toBe('disconnected');
+    expect(transportStore.state.activeTransport).toBeNull();
 
     await jest.advanceTimersByTimeAsync(60000);
     expect(FakeWebSocket.instances).toHaveLength(1);
@@ -130,12 +147,11 @@ describe('createReconnectingChatSocket', () => {
 
   it('close() cancels a pending scheduled reconnect', async () => {
     const getToken = jest.fn().mockResolvedValue('token-1');
-    const onStatusChange = jest.fn();
-    const handle = createReconnectingChatSocket(getToken, { onMessage: jest.fn(), onStatusChange });
+    transportStore.actions.connect(getToken);
     await flush();
 
     FakeWebSocket.instances[0].onclose?.({ code: 1006 });
-    handle.close();
+    transportStore.actions.close();
 
     await jest.advanceTimersByTimeAsync(60000);
     expect(FakeWebSocket.instances).toHaveLength(1);
@@ -143,20 +159,17 @@ describe('createReconnectingChatSocket', () => {
 
   it('closes the current open socket when close() is called', async () => {
     const getToken = jest.fn().mockResolvedValue('token-1');
-    const handle = createReconnectingChatSocket(getToken, {
-      onMessage: jest.fn(),
-      onStatusChange: jest.fn(),
-    });
+    transportStore.actions.connect(getToken);
     await flush();
 
-    handle.close();
+    transportStore.actions.close();
 
     expect(FakeWebSocket.instances[0].close).toHaveBeenCalled();
   });
 
   it('calls getToken() again on every reconnect attempt, not just the first', async () => {
     const getToken = jest.fn().mockResolvedValue('token-1');
-    createReconnectingChatSocket(getToken, { onMessage: jest.fn(), onStatusChange: jest.fn() });
+    transportStore.actions.connect(getToken);
     await flush();
     expect(getToken).toHaveBeenCalledTimes(1);
 
@@ -169,15 +182,30 @@ describe('createReconnectingChatSocket', () => {
     expect(getToken).toHaveBeenCalledTimes(3);
   });
 
-  it('dispatches incoming message frames to onMessage on the current socket', async () => {
+  it('dispatches incoming message frames onto lastFrame', async () => {
     const getToken = jest.fn().mockResolvedValue('token-1');
-    const onMessage = jest.fn();
-    createReconnectingChatSocket(getToken, { onMessage, onStatusChange: jest.fn() });
+    transportStore.actions.connect(getToken);
     await flush();
 
-    const frame: IncomingFrame = { type: 'ack' };
+    const frame = { type: 'ack' as const };
     FakeWebSocket.instances[0].onmessage?.({ data: JSON.stringify(frame) });
 
-    expect(onMessage).toHaveBeenCalledWith(frame);
+    expect(transportStore.state.lastFrame).toEqual(frame);
+  });
+
+  it('send() forwards a frame to the currently-open socket', async () => {
+    const getToken = jest.fn().mockResolvedValue('token-1');
+    transportStore.actions.connect(getToken);
+    await flush();
+    FakeWebSocket.instances[0].onopen?.();
+
+    const sendSpy = jest.fn();
+    (FakeWebSocket.instances[0] as unknown as { send: typeof sendSpy }).send = sendSpy;
+
+    transportStore.actions.send({ type: 'send', to: 'contact-1', body_b64: 'Ym9keQ==' });
+
+    expect(sendSpy).toHaveBeenCalledWith(
+      JSON.stringify({ type: 'send', to: 'contact-1', body_b64: 'Ym9keQ==' })
+    );
   });
 });
