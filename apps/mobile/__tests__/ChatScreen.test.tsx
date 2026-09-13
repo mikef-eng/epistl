@@ -353,6 +353,33 @@ describe('ChatScreen', () => {
     expect(mockedSaveMessage).not.toHaveBeenCalled();
   });
 
+  it('blocks sending when the contact\'s prekey bundle fails verification, without sending an envelope or persisting history', async () => {
+    // Tamper with Bob's server-reported prekey signature so
+    // `verifyPrekeyBundle` fails, simulating a compromised/incorrect
+    // key bundle from the server.
+    const tamperedContact = {
+      ...bob.contact,
+      prekey_signature_b64: bytesToBase64(
+        Uint8Array.from(base64ToBytes(bob.contact.prekey_signature_b64 as string)).map(
+          (byte, index) => (index === 0 ? byte ^ 0xff : byte)
+        )
+      ),
+    };
+    mockedListContacts.mockResolvedValue({ contacts: [tamperedContact] });
+
+    const { user, socket } = await renderChatScreen();
+
+    await user.type(screen.getByPlaceholderText('Message'), 'this should never be sent');
+    await user.press(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('send-error')).toHaveTextContent("Cannot verify this contact's keys");
+    });
+    expect(socket.send).not.toHaveBeenCalled();
+    expect(screen.queryByText('this should never be sent')).toBeNull();
+    expect(mockedSaveMessage).not.toHaveBeenCalled();
+  });
+
   it('shows an inline "not delivered" note on a recipient_offline error, without removing the message', async () => {
     const { user, socket } = await renderChatScreen();
 
