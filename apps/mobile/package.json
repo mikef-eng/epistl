@@ -14,6 +14,7 @@
     "expo-sqlite": "~57.0.3",
     "expo-status-bar": "~57.0.1",
     "nativewind": "^4.2.6",
+    "quic-relay-client": "file:./modules/quic-relay-client",
     "react": "19.2.3",
     "react-native": "0.86.3",
     "react-native-get-random-values": "2.0.0",

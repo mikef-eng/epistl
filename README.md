@@ -16,7 +16,8 @@ Ship post-quantum E2EE chat using CRYSTALS-Kyber and CRYSTALS-Dilithium (standar
 | Message broker | NATS JetStream, via [`async-nats`](https://crates.io/crates/async-nats) (the official `nats-io`-maintained Rust client, pinned in `apps/api/Cargo.toml`) — local dev requires the `nats` docker-compose service. On startup the API configures (or fetches, if already present) the `EPISTL_OFFLINE_MESSAGES` stream, a transient, short-TTL offline-delivery queue — see [`docs/decisions/0008-jetstream-transient-offline-queue.md`](docs/decisions/0008-jetstream-transient-offline-queue.md). A `/ws` `send` to a recipient who isn't currently connected is published to this stream (one subject per recipient, `epistl.offline.<user_id>`) instead of failing; on reconnect (or initial connect), `/ws` fetches and delivers everything queued for that user, in order, over the same live-relay frame shape, acking each only after it's actually been forwarded — so it's removed from the queue once delivered, not on any fixed timer |
 | Primary DB | Postgres (auth and core app data only — see [`docs/decisions/0001-message-content-never-in-postgres.md`](docs/decisions/0001-message-content-never-in-postgres.md)) |
 | Cold storage | ScyllaDB (chat history backup; opt-in, not yet built — see [`docs/decisions/0002-scylla-backup-is-opt-in.md`](docs/decisions/0002-scylla-backup-is-opt-in.md)) |
-| Transport | Quinn/QUIC (planned; API currently serves plain HTTP/WebSocket) |
+| Native module tooling (spike) | [`packages/quic-relay-client`](packages/quic-relay-client) (Rust crate wrapping [Quinn](https://crates.io/crates/quinn), one UniFFI-annotated async `quic_ping` function) + [`uniffi-bindgen-react-native`](https://github.com/jhugman/uniffi-bindgen-react-native) (generates the RN TurboModule glue at `apps/mobile/modules/quic-relay-client`, a local, unpublished `file:` dependency of `apps/mobile`) — issue #67's spike proving Quinn can be exposed to React Native as a real TurboModule. Not adopted as product transport; see the Transport row below. |
+| Transport | HTTP/WebSocket (the API's real, in-use transport). Quinn/QUIC has only been spiked, not adopted — see [`packages/quic-relay-client`](packages/quic-relay-client) above and issue #67; a real server-side QUIC listener and dual-stack QUIC/WS client racing remain undesigned future work, not committed to. |
 
 Postgres and NATS are stood up and required for local development (see "Running the stack locally" below). ScyllaDB is documented here for orientation only — it is not yet stood up.
 
@@ -26,7 +27,8 @@ Postgres and NATS are stood up and required for local development (see "Running 
 apps/
   mobile/   Expo + React Native client
   api/      Rust Axum API
-packages/   Shared libraries (reserved)
+packages/   Shared libraries
+  quic-relay-client/   Rust/Quinn QUIC client crate (issue #67 spike; not product code)
 ```
 
 ## Development harness
@@ -100,6 +102,11 @@ moon run mobile:test
 moon run api:check    # cargo fmt --check
 moon run api:lint     # cargo clippy -D warnings
 moon run api:test
+
+# packages/quic-relay-client (issue #67 spike crate -- see the Stack table)
+moon run quic-relay-client:check
+moon run quic-relay-client:lint
+moon run quic-relay-client:test
 ```
 
 CI (`.github/workflows/ci.yml`) runs these same `moon run` tasks, so a green local run is a reliable predictor of a green CI run.

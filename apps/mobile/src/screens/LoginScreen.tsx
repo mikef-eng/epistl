@@ -102,6 +102,15 @@ export default function LoginScreen({ navigation }: Props) {
           {mode === 'login' ? "Don't have an account? Sign up" : 'Already have an account? Log in'}
         </Text>
       </Pressable>
+
+      {__DEV__ ? (
+        // Dev-only (issue #67 spike): the only entry point to
+        // `QuicSpikeScreen`. Never shown in a production build, and
+        // deliberately kept off the real login flow above.
+        <Pressable className="mt-8" onPress={() => navigation.navigate('QuicSpike')}>
+          <Text className="text-center text-xs text-gray-400">[dev] QUIC spike</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
