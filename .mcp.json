@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "postgres": {
+      "type": "stdio",
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "--network=host",
+        "-e",
+        "DATABASE_URI",
+        "crystaldba/postgres-mcp",
+        "--access-mode=unrestricted"
+      ],
+      "env": {
+        "DATABASE_URI": "${DATABASE_URL:-postgresql://epistl:epistl@localhost:5432/epistl}"
+      }
+    }
+  }
+}

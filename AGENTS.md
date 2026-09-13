@@ -126,4 +126,4 @@ Claude Code does not auto-read this file. Root [`CLAUDE.md`](CLAUDE.md) imports 
 
 `apps/mobile/.claude/settings.json` enables `expo@claude-plugins-official` for Expo-specific skills.
 
-**Deferred:** Postgres MCP and NATS channel plugins. Add each in the same PR that stands up that service — not before.
+Postgres MCP is configured project-scoped in `.mcp.json` (`crystaldba/postgres-mcp` over Docker, `--network=host`, connects to the local `docker compose` Postgres by default — override via `DATABASE_URL`). **Deferred:** a NATS channel plugin — no such plugin exists in the official Claude Code marketplace as of this writing; revisit if one becomes available, rather than assuming the original "add in the same PR that stands up that service" guidance still applies to something that may not exist.
