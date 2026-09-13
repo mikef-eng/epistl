@@ -622,6 +622,11 @@ pub struct AppState {
     /// In-memory registry of connected users' live `/ws` sockets. Never
     /// backed by Postgres -- see `crate::registry`.
     pub registry: crate::registry::ConnectionRegistry,
+    /// Connected NATS client, backing the offline-delivery queue built out
+    /// in later issues -- see `crate::nats`. `async_nats::Client` is
+    /// itself a cheap `Clone` (an internal `Arc`-backed handle), the same
+    /// way `pool` is a `sqlx::PgPool`.
+    pub nats: async_nats::Client,
 }
 
 /// The axum router for `/signup`, `/login`, and (by composition with other
