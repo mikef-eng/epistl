@@ -10,6 +10,7 @@ pub mod db;
 pub mod keys;
 pub mod nats;
 pub mod registry;
+pub mod relay;
 pub mod ws;
 
 use axum::routing::get;

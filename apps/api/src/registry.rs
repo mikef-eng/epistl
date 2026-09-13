@@ -1,27 +1,50 @@
-//! In-memory registry of connected users' live WebSocket senders.
+//! In-memory registry of connected users' live outbound-frame senders.
 //!
-//! This exists solely so the `/ws` relay (see [`crate::ws`]) can look up a
-//! currently-connected recipient's socket and write a frame directly to it.
-//! It is intentionally **not** backed by Postgres or any other durable
-//! store: entries disappear the moment a socket disconnects, and nothing
-//! here ever touches disk.
+//! This exists solely so the shared relay logic in [`crate::relay`] can
+//! look up a currently-connected recipient's connection and write a frame
+//! directly to it, regardless of which transport (WebSocket today, QUIC in
+//! the future -- see issue #72/#73) that connection came in over. It is
+//! intentionally **not** backed by Postgres or any other durable store:
+//! entries disappear the moment a connection disconnects, and nothing here
+//! ever touches disk.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use axum::extract::ws::Message;
 use tokio::sync::{mpsc, RwLock};
 use uuid::Uuid;
 
-/// The channel used to push frames out to a connected user's socket. A
-/// background task per connection owns the actual `WebSocket` sink and
-/// forwards everything received here onto it (see `ws::handle_socket`).
-pub type Sender = mpsc::UnboundedSender<Message>;
+/// A transport-agnostic outbound frame carried through a
+/// [`ConnectionRegistry`] entry. Produced by the shared relay logic in
+/// [`crate::relay`], which has no dependency on any specific transport
+/// crate; each transport's own glue module (e.g. [`crate::ws`] for
+/// WebSocket) translates a `Frame` into that transport's wire
+/// representation on the way out, and translates inbound wire frames back
+/// into the shapes `crate::relay` expects on the way in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Frame {
+    /// A JSON text frame -- relayed messages, acks, and errors alike, all
+    /// serialized to their `{"type": ..., ...}` wire shape already.
+    Text(String),
+    /// A connection-level close, carrying a close code and a
+    /// human-readable reason. WS maps this onto
+    /// `axum::extract::ws::CloseFrame`; used for both the
+    /// unauthorized-connect close and the same-user replaced-connection
+    /// close.
+    Close { code: u16, reason: String },
+}
 
-/// Maps a connected user's id to the sender half of their socket's outbound
-/// channel. Cloning a [`ConnectionRegistry`] is cheap and shares the same
-/// underlying map (`Arc`-backed), matching how [`crate::auth::AppState`] is
-/// cloned per-request.
+/// The channel used to push frames out to a connected user's transport
+/// connection. A background task per connection owns the actual transport
+/// sink and forwards everything received here onto it, translating `Frame`
+/// into that transport's own wire representation (see `ws::handle_socket`
+/// for the WebSocket case).
+pub type Sender = mpsc::UnboundedSender<Frame>;
+
+/// Maps a connected user's id to the sender half of their connection's
+/// outbound channel. Cloning a [`ConnectionRegistry`] is cheap and shares
+/// the same underlying map (`Arc`-backed), matching how
+/// [`crate::auth::AppState`] is cloned per-request.
 #[derive(Clone, Default)]
 pub struct ConnectionRegistry(Arc<RwLock<HashMap<Uuid, Sender>>>);
 
