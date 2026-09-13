@@ -8,7 +8,7 @@ import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';
 import { concatBytes } from '@noble/hashes/utils.js';
 
 import { getToken } from '../src/api/session';
-import { createChatSocket } from '../src/api/ws';
+import { createReconnectingChatSocket, type ConnectionStatus, type IncomingFrame } from '../src/api/ws';
 import { ensureLocalIdentity, PREKEY_SIGNATURE_CONTEXT } from '../src/crypto/identity';
 import { encodeHandshakeEnvelope, encodeRatchetEnvelope } from '../src/crypto/envelope';
 import { deriveNextSendingMessageKey, initiateSession } from '../src/crypto/session';
@@ -17,7 +17,7 @@ import { getMessages, saveMessage } from '../src/storage/messages';
 import { base64ToBytes, bytesToBase64, utf8ToBytes } from '../src/utils/base64';
 
 jest.mock('../src/api/ws', () => ({
-  createChatSocket: jest.fn(),
+  createReconnectingChatSocket: jest.fn(),
 }));
 
 jest.mock('../src/api/session', () => ({
@@ -49,7 +49,7 @@ jest.mock('expo-secure-store', () => {
 });
 
 const mockSecureStore = SecureStore as unknown as { __store: Map<string, string> };
-const mockedCreateChatSocket = createChatSocket as jest.Mock;
+const mockedCreateReconnectingChatSocket = createReconnectingChatSocket as jest.Mock;
 const mockedGetToken = getToken as jest.Mock;
 // `getUserId` is mocked via the same `../src/api/session` factory above.
 const { getUserId: mockedGetUserId } = jest.requireMock('../src/api/session');
@@ -66,21 +66,49 @@ jest.setTimeout(20000);
 const ALICE_USER_ID = 'alice-user-id';
 const CONTACT_USER_ID = 'contact-1';
 
-interface MockSocket {
+/** Test double standing in for the `{ close, send }` handle
+ * `createReconnectingChatSocket` (mocked wholesale below) returns to
+ * `ChatScreen`, plus `receive`/`setStatus` helpers that invoke the
+ * `onMessage`/`onStatusChange` handlers `ChatScreen` passed in — the
+ * mocked-module equivalent of "the socket delivers a frame" / "the
+ * connection status changes", without needing a real WebSocket. The
+ * reconnect-with-backoff logic itself (retry scheduling, jitter, the 4001
+ * terminal case, etc.) is unit-tested directly against the real
+ * implementation in `src/api/__tests__/ws.test.ts`; this file only checks
+ * that `ChatScreen` wires the four statuses to the banner correctly and
+ * that message handling is unaffected by reconnects. */
+interface ChatSocketHarness {
   send: jest.Mock;
   close: jest.Mock;
-  onmessage: ((event: { data: string }) => void) | null;
-  onclose: (() => void) | null;
-  onerror: (() => void) | null;
+  receive: (frame: IncomingFrame) => void;
+  setStatus: (status: ConnectionStatus) => void;
 }
 
-function createMockSocket(): MockSocket {
+function createChatSocketHarness(): ChatSocketHarness {
+  const send = jest.fn();
+  const close = jest.fn();
+  let handlers: {
+    onMessage: (frame: IncomingFrame) => void;
+    onStatusChange: (status: ConnectionStatus) => void;
+  } | null = null;
+
+  mockedCreateReconnectingChatSocket.mockImplementation(
+    (_getToken: unknown, h: NonNullable<typeof handlers>) => {
+      handlers = h;
+      // Mirrors the real `createReconnectingChatSocket`'s initial
+      // connect succeeding immediately, so tests that don't care about
+      // connection-status transitions can send/receive right away; tests
+      // that do care call `setStatus(...)` explicitly to override this.
+      h.onStatusChange('connected');
+      return { send, close };
+    }
+  );
+
   return {
-    send: jest.fn(),
-    close: jest.fn(),
-    onmessage: null,
-    onclose: null,
-    onerror: null,
+    send,
+    close,
+    receive: (frame) => handlers?.onMessage(frame),
+    setStatus: (status) => handlers?.onStatusChange(status),
   };
 }
 
@@ -115,13 +143,14 @@ function buildContact() {
 
 const ROUTE = { params: { userId: CONTACT_USER_ID, email: 'bob@example.com' } };
 
-async function renderChatScreen(socket: MockSocket = createMockSocket()) {
-  mockedCreateChatSocket.mockReturnValue(socket);
+async function renderChatScreen(socket: ChatSocketHarness = createChatSocketHarness()) {
   const navigation = { navigate: jest.fn() };
   const view = await render(<ChatScreen navigation={navigation as never} route={ROUTE as never} />);
   const user = userEvent.setup();
   await waitFor(() => expect(mockedGetMessages).toHaveBeenCalledWith(CONTACT_USER_ID));
-  await waitFor(() => expect(mockedCreateChatSocket).toHaveBeenCalledWith('token-123'));
+  await waitFor(() =>
+    expect(mockedCreateReconnectingChatSocket).toHaveBeenCalledWith(mockedGetToken, expect.any(Object))
+  );
   return { navigation, user, socket, unmount: view.unmount };
 }
 
@@ -223,12 +252,10 @@ describe('ChatScreen', () => {
     });
 
     await act(async () => {
-      socket.onmessage?.({
-        data: JSON.stringify({
+      socket.receive({
           type: 'message',
           from: CONTACT_USER_ID,
           body_b64: bytesToBase64(envelope),
-        }),
       });
     });
 
@@ -268,12 +295,10 @@ describe('ChatScreen', () => {
       signingSecretKey: bob.dilithiumKeys.secretKey,
     });
     await act(async () => {
-      socket.onmessage?.({
-        data: JSON.stringify({
+      socket.receive({
           type: 'message',
           from: CONTACT_USER_ID,
           body_b64: bytesToBase64(handshakeEnvelope),
-        }),
       });
     });
     await waitFor(() => expect(screen.getByText('hi alice')).toBeTruthy());
@@ -297,12 +322,10 @@ describe('ChatScreen', () => {
       signingSecretKey: bob.dilithiumKeys.secretKey,
     });
     await act(async () => {
-      socket.onmessage?.({
-        data: JSON.stringify({
+      socket.receive({
           type: 'message',
           from: CONTACT_USER_ID,
           body_b64: bytesToBase64(ratchetEnvelope),
-        }),
       });
     });
 
@@ -337,12 +360,10 @@ describe('ChatScreen', () => {
     tampered[tampered.length - 1] ^= 0xff; // corrupt the signature
 
     await act(async () => {
-      socket.onmessage?.({
-        data: JSON.stringify({
+      socket.receive({
           type: 'message',
           from: CONTACT_USER_ID,
           body_b64: bytesToBase64(tampered),
-        }),
       });
     });
 
@@ -391,9 +412,7 @@ describe('ChatScreen', () => {
     });
 
     await act(async () => {
-      socket.onmessage?.({
-        data: JSON.stringify({ type: 'error', code: 'recipient_offline' }),
-      });
+      socket.receive({ type: 'error', code: 'recipient_offline' });
     });
 
     await waitFor(() => {
@@ -402,19 +421,83 @@ describe('ChatScreen', () => {
     expect(screen.getByText('hi')).toBeTruthy();
   });
 
-  it('shows a Disconnected banner when the socket closes, with no reconnect attempt', async () => {
+  it('shows a "Reconnecting..." banner while reconnecting, and a distinct "Disconnected" banner if reconnection is abandoned', async () => {
     const { socket } = await renderChatScreen();
 
     expect(screen.queryByTestId('disconnected-banner')).toBeNull();
 
     await act(async () => {
-      socket.onclose?.();
+      socket.setStatus('reconnecting');
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('disconnected-banner')).toHaveTextContent('Reconnecting...');
+    });
+
+    await act(async () => {
+      socket.setStatus('disconnected');
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('disconnected-banner')).toHaveTextContent('Disconnected');
+    });
+  });
+
+  it('clears the banner after a reconnect succeeds, and renders a message delivered on the new connection exactly like a pre-reconnect one', async () => {
+    const { socket } = await renderChatScreen();
+    const aliceIdentity = await ensureLocalIdentity();
+
+    // The connection drops...
+    await act(async () => {
+      socket.setStatus('reconnecting');
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('disconnected-banner')).toHaveTextContent('Reconnecting...');
+    });
+
+    // ...then a new underlying socket reconnects successfully. From
+    // `ChatScreen`'s perspective this is just another status update:
+    // `createReconnectingChatSocket` owns swapping out the underlying
+    // WebSocket instance (see `src/api/__tests__/ws.test.ts` for that).
+    await act(async () => {
+      socket.setStatus('connected');
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('disconnected-banner')).toBeNull();
+    });
+
+    // A message delivered on the reconnected socket (e.g. a server-side
+    // catch-up delivery per issue #54) goes through the exact same
+    // decrypt/render path as any other incoming frame — no special
+    // "post-reconnect" branch.
+    const { state: bobState, ea, kyberCiphertext } = initiateSession({
+      contactUserId: ALICE_USER_ID,
+      selfUserId: CONTACT_USER_ID,
+      contactBundle: {
+        x25519PublicKey: aliceIdentity.x25519PublicKey,
+        kyberPublicKey: aliceIdentity.kyberPublicKey,
+      },
+    });
+    const send0 = deriveNextSendingMessageKey(bobState);
+    const envelope = encodeHandshakeEnvelope({
+      ea,
+      kyberCiphertext,
+      messageKey: send0.messageKey,
+      plaintext: utf8ToBytes('caught up while you were away'),
+      selfUserId: CONTACT_USER_ID,
+      contactUserId: ALICE_USER_ID,
+      signingSecretKey: bob.dilithiumKeys.secretKey,
+    });
+
+    await act(async () => {
+      socket.receive({
+        type: 'message',
+        from: CONTACT_USER_ID,
+        body_b64: bytesToBase64(envelope),
+      });
     });
 
     await waitFor(() => {
-      expect(screen.getByTestId('disconnected-banner')).toBeTruthy();
+      expect(screen.getByText('caught up while you were away')).toBeTruthy();
     });
-    expect(mockedCreateChatSocket).toHaveBeenCalledTimes(1);
   });
 
   it('closes the WebSocket connection when the screen unmounts', async () => {

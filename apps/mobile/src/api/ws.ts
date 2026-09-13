@@ -51,3 +51,154 @@ export function buildWsUrl(token: string): string {
 export function createChatSocket(token: string): WebSocket {
   return new WebSocket(buildWsUrl(token));
 }
+
+export type ConnectionStatus = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
+
+export interface ReconnectingChatSocketHandlers {
+  onMessage: (frame: IncomingFrame) => void;
+  onStatusChange: (status: ConnectionStatus) => void;
+}
+
+export interface ReconnectingChatSocket {
+  /** Cancels any pending/future reconnect attempt and closes the current
+   * socket if one is open. Safe to call more than once. */
+  close: () => void;
+  /** Forwards `data` to the currently-open underlying socket, if any. A
+   * no-op while `'connecting'`/`'reconnecting'`/`'disconnected'` (callers
+   * should gate sends on `onStatusChange` reporting `'connected'`). */
+  send: (data: string) => void;
+}
+
+/** The chat relay's close code for an unauthorized/invalid token (see
+ * `CLOSE_UNAUTHORIZED` in `apps/api/src/ws.rs`). A stale/invalid token is a
+ * terminal state requiring re-authentication, not a transient network
+ * blip, so it must not trigger a reconnect. */
+const CLOSE_UNAUTHORIZED = 4001;
+
+const INITIAL_BACKOFF_MS = 1000;
+const MAX_BACKOFF_MS = 30000;
+/** +/-20% jitter so multiple clients reconnecting after the same outage
+ * don't all retry in lockstep. */
+const JITTER_RATIO = 0.2;
+
+function withJitter(delayMs: number): number {
+  const jitter = delayMs * JITTER_RATIO;
+  return delayMs + (Math.random() * 2 - 1) * jitter;
+}
+
+/**
+ * Wraps `createChatSocket` with automatic reconnection so a dropped `/ws`
+ * connection resumes on its own instead of requiring the caller to
+ * leave/re-enter the screen (issue #55, superseding issue #10's "no
+ * reconnect logic" scope note).
+ *
+ * Behavior:
+ *  - Opens an initial connection via `createChatSocket(await getToken())`,
+ *    reporting `'connecting'` first.
+ *  - Any close/error other than the server's `CLOSE_UNAUTHORIZED` (4001)
+ *    close code schedules a reconnect with exponential backoff: 1s, 2s,
+ *    4s, ... capped at 30s, +/-20% jitter. `'reconnecting'` is reported
+ *    while a retry is scheduled/in flight; a successful reconnect reports
+ *    `'connected'` and resets the backoff back to 1s.
+ *  - A 4001 close (or `getToken()` resolving to `null`, meaning there's no
+ *    session to reconnect with) is terminal: reports `'disconnected'` and
+ *    stops retrying.
+ *  - `getToken()` is called fresh on every (re)connect attempt so a token
+ *    refreshed while disconnected is picked up rather than reusing a
+ *    stale one.
+ */
+export function createReconnectingChatSocket(
+  getToken: () => Promise<string | null>,
+  handlers: ReconnectingChatSocketHandlers
+): ReconnectingChatSocket {
+  let closed = false;
+  let socket: WebSocket | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let backoffMs = INITIAL_BACKOFF_MS;
+
+  function scheduleReconnect() {
+    if (closed) {
+      return;
+    }
+    handlers.onStatusChange('reconnecting');
+    const delay = withJitter(backoffMs);
+    backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      void connect();
+    }, delay);
+  }
+
+  async function connect() {
+    if (closed) {
+      return;
+    }
+    const token = await getToken();
+    if (closed) {
+      return;
+    }
+    if (!token) {
+      handlers.onStatusChange('disconnected');
+      return;
+    }
+
+    const ws = createChatSocket(token);
+    socket = ws;
+
+    ws.onmessage = (event: { data: unknown }) => {
+      let frame: IncomingFrame;
+      try {
+        frame = JSON.parse(String(event.data)) as IncomingFrame;
+      } catch {
+        return;
+      }
+      handlers.onMessage(frame);
+    };
+
+    ws.onopen = () => {
+      if (closed) {
+        return;
+      }
+      backoffMs = INITIAL_BACKOFF_MS;
+      handlers.onStatusChange('connected');
+    };
+
+    ws.onclose = (event: { code: number }) => {
+      if (socket === ws) {
+        socket = null;
+      }
+      if (closed) {
+        return;
+      }
+      if (event?.code === CLOSE_UNAUTHORIZED) {
+        handlers.onStatusChange('disconnected');
+        return;
+      }
+      scheduleReconnect();
+    };
+
+    // Real WebSocket implementations (browser and React Native) always
+    // follow a failed connection's `error` event with a `close` event, so
+    // reconnect scheduling lives entirely in `onclose` above; this just
+    // avoids relying on unhandled-error-event warnings.
+    ws.onerror = () => {};
+  }
+
+  handlers.onStatusChange('connecting');
+  void connect();
+
+  return {
+    close() {
+      closed = true;
+      if (reconnectTimer !== null) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      socket?.close();
+      socket = null;
+    },
+    send(data: string) {
+      socket?.send(data);
+    },
+  };
+}
