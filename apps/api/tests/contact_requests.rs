@@ -701,3 +701,82 @@ async fn decline_after_accept_returns_404() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(body, json!({ "error": "request_not_found" }));
 }
+
+/// Regression test for a race where two genuinely concurrent `accept` calls
+/// against the same pending request could both observe `status = 'pending'`
+/// before either resolved it, and both succeed with `204`. Only one of the
+/// two must ever win; the other must see the request already resolved and
+/// get `404`, exactly like a serialized double-accept
+/// (`accept_already_resolved_request_returns_404`) or double-decline
+/// (`decline_already_resolved_request_returns_404`).
+///
+/// This is inherently racy to reproduce, so the check runs several
+/// iterations with a fresh request each time rather than relying on a
+/// single `tokio::join!` to happen to interleave badly.
+#[tokio::test]
+async fn concurrent_accept_calls_only_one_succeeds() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+
+    for i in 0..10 {
+        let (requester_token, requester_id, _requester_email) =
+            signup_user(&pool, state.clone(), &format!("race-accept-requester-{i}")).await;
+        let (recipient_token, recipient_id, recipient_email) =
+            signup_user(&pool, state.clone(), &format!("race-accept-recipient-{i}")).await;
+        let (_, create_body) =
+            send_request(state.clone(), &requester_token, &recipient_email).await;
+        let request_id = create_body["id"].as_str().unwrap().to_string();
+
+        let first = resolve_request(state.clone(), &recipient_token, &request_id, "accept");
+        let second = resolve_request(state.clone(), &recipient_token, &request_id, "accept");
+        let ((first_status, first_body), (second_status, second_body)) =
+            tokio::join!(first, second);
+
+        let statuses = [first_status, second_status];
+        assert_eq!(
+            statuses
+                .iter()
+                .filter(|s| **s == StatusCode::NO_CONTENT)
+                .count(),
+            1,
+            "exactly one concurrent accept must succeed (iteration {i}): got {statuses:?}"
+        );
+        assert_eq!(
+            statuses.iter().filter(|s| **s == StatusCode::NOT_FOUND).count(),
+            1,
+            "exactly one concurrent accept must be rejected as already-resolved (iteration {i}): got {statuses:?}"
+        );
+        let not_found_body = if first_status == StatusCode::NOT_FOUND {
+            &first_body
+        } else {
+            &second_body
+        };
+        assert_eq!(*not_found_body, json!({ "error": "request_not_found" }));
+
+        // Regardless of which call "won", exactly one pair of `contacts`
+        // rows must exist -- the loser's insert-then-rollback must not
+        // leave a duplicate or a partial row behind.
+        let contacts_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM contacts
+             WHERE (owner_user_id = $1 AND contact_user_id = $2)
+                OR (owner_user_id = $2 AND contact_user_id = $1)",
+        )
+        .bind(requester_id)
+        .bind(recipient_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(contacts_count, 2, "iteration {i}");
+
+        let request_still_present: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM contact_requests WHERE id = $1::uuid")
+                .bind(&request_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            request_still_present, 0,
+            "resolved request row must be deleted (iteration {i})"
+        );
+    }
+}

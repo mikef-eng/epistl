@@ -516,13 +516,22 @@ async fn accept_contact_request(
         return internal_error();
     }
 
-    let deleted = sqlx::query("DELETE FROM contact_requests WHERE id = $1")
+    let deleted = sqlx::query("DELETE FROM contact_requests WHERE id = $1 AND status = 'pending'")
         .bind(request_id)
         .execute(&mut *tx)
         .await;
 
-    if deleted.is_err() {
-        return internal_error();
+    let deleted = match deleted {
+        Ok(result) => result,
+        Err(_) => return internal_error(),
+    };
+
+    if deleted.rows_affected() == 0 {
+        // Raced with another resolution (e.g. a concurrent accept/decline)
+        // between the load above and this delete -- same
+        // indistinguishable-from-missing 404 as decline, and dropping `tx`
+        // here rolls back the `contacts` rows inserted above.
+        return request_not_found_error();
     }
 
     match tx.commit().await {
