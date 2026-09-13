@@ -205,6 +205,17 @@ async fn recv_json(ws: &mut WebSocketStream<MaybeTlsStream<TcpStream>>) -> Value
     }
 }
 
+/// Asserts no frame arrives on `ws` within a short window -- used to prove
+/// a message was never queued (or was already fully drained from the
+/// queue) rather than merely to wait for something that never lands.
+async fn assert_no_frame(ws: &mut WebSocketStream<MaybeTlsStream<TcpStream>>) {
+    let result = timeout(Duration::from_millis(750), ws.next()).await;
+    assert!(
+        result.is_err(),
+        "expected no frame within the window, but got one: {result:?}"
+    );
+}
+
 async fn recv_close(ws: &mut WebSocketStream<MaybeTlsStream<TcpStream>>) -> u16 {
     let message = timeout(RECV_TIMEOUT, ws.next())
         .await
@@ -459,6 +470,117 @@ async fn send_to_non_contact_returns_not_a_contact_without_delivering() {
         .expect("failed to send frame");
     let relayed = recv_json(&mut recipient_ws).await;
     assert_eq!(relayed["body_b64"], BASE64.encode(b"now a contact"));
+}
+
+/// Acceptance criteria (issue #54): messages queued for an offline
+/// recipient (issue #53) are delivered, in order, immediately on
+/// reconnect -- before any other traffic -- and removed from the queue
+/// once delivered, so a second reconnect gets nothing.
+#[tokio::test]
+#[serial]
+async fn queued_messages_are_delivered_on_reconnect_then_removed_from_the_queue() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (sender_token, sender_id, _sender_email) =
+        signup_user(&pool, state.clone(), "ws-deliver-sender").await;
+    let (recipient_token, recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "ws-deliver-recipient").await;
+    add_contact(state.clone(), &sender_token, &recipient_email).await;
+
+    let jetstream = async_nats::jetstream::new(state.nats.clone());
+    api::nats::ensure_offline_stream(&jetstream)
+        .await
+        .expect("failed to ensure the offline-delivery stream exists");
+
+    let addr = spawn_server(state).await;
+    let mut sender_ws = connect_ws(addr, &sender_token).await;
+    // Note: the recipient never connects while these are sent.
+
+    let first_body = BASE64.encode(b"first queued message");
+    let second_body = BASE64.encode(b"second queued message");
+    for body in [&first_body, &second_body] {
+        sender_ws
+            .send(WsMessage::text(
+                json!({ "type": "send", "to": recipient_id, "body_b64": body }).to_string(),
+            ))
+            .await
+            .expect("failed to send frame");
+        let ack = recv_json(&mut sender_ws).await;
+        assert_eq!(ack, json!({ "type": "ack", "to": recipient_id }));
+    }
+
+    // First connect: both queued messages arrive, in order, before any
+    // other traffic.
+    let mut recipient_ws = connect_ws(addr, &recipient_token).await;
+
+    let first = recv_json(&mut recipient_ws).await;
+    assert_eq!(first["type"], "message");
+    assert_eq!(first["from"], sender_id.to_string());
+    assert_eq!(first["body_b64"], first_body);
+    assert!(first["sent_at"].is_string());
+
+    let second = recv_json(&mut recipient_ws).await;
+    assert_eq!(second["type"], "message");
+    assert_eq!(second["from"], sender_id.to_string());
+    assert_eq!(second["body_b64"], second_body);
+
+    assert_no_frame(&mut recipient_ws).await;
+    drop(recipient_ws);
+
+    // Second connect: nothing left -- both messages were removed from the
+    // queue after delivery, not just after some fixed time.
+    let mut recipient_ws_again = connect_ws(addr, &recipient_token).await;
+    assert_no_frame(&mut recipient_ws_again).await;
+}
+
+/// Acceptance criteria (issue #54): a message sent to a recipient who is
+/// already connected is delivered exactly once, via the live-relay path --
+/// it must never also land in the offline queue and get redelivered.
+#[tokio::test]
+#[serial]
+async fn send_to_connected_recipient_is_not_also_delivered_via_the_queue() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (sender_token, sender_id, _sender_email) =
+        signup_user(&pool, state.clone(), "ws-no-double-sender").await;
+    let (recipient_token, recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "ws-no-double-recipient").await;
+    add_contact(state.clone(), &sender_token, &recipient_email).await;
+
+    let jetstream = async_nats::jetstream::new(state.nats.clone());
+    api::nats::ensure_offline_stream(&jetstream)
+        .await
+        .expect("failed to ensure the offline-delivery stream exists");
+
+    let addr = spawn_server(state).await;
+    let mut sender_ws = connect_ws(addr, &sender_token).await;
+    let mut recipient_ws = connect_ws(addr, &recipient_token).await;
+
+    let body_b64 = BASE64.encode(b"delivered live, not queued");
+    sender_ws
+        .send(WsMessage::text(
+            json!({ "type": "send", "to": recipient_id, "body_b64": body_b64 }).to_string(),
+        ))
+        .await
+        .expect("failed to send frame");
+
+    let relayed = recv_json(&mut recipient_ws).await;
+    assert_eq!(relayed["type"], "message");
+    assert_eq!(relayed["from"], sender_id.to_string());
+    assert_eq!(relayed["body_b64"], body_b64);
+
+    let ack = recv_json(&mut sender_ws).await;
+    assert_eq!(ack, json!({ "type": "ack", "to": recipient_id }));
+
+    // Nothing else arrives on this connection...
+    assert_no_frame(&mut recipient_ws).await;
+    drop(recipient_ws);
+
+    // ...and a fresh reconnect gets nothing either -- proving the message
+    // was never queued in the first place, not merely "queued but already
+    // drained".
+    let mut recipient_ws_again = connect_ws(addr, &recipient_token).await;
+    assert_no_frame(&mut recipient_ws_again).await;
 }
 
 #[tokio::test]

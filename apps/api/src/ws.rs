@@ -17,6 +17,10 @@
 //! Expo's cross-platform WebSocket client can't reliably set custom
 //! headers -- see issue #4's notes.
 
+use std::time::Duration;
+
+use async_nats::jetstream::consumer::pull::Config as PullConsumerConfig;
+use async_nats::jetstream::consumer::{AckPolicy, PullConsumer};
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
 use axum::response::Response;
@@ -37,6 +41,23 @@ use crate::auth::{self, AppState};
 const CLOSE_UNAUTHORIZED: u16 = 4001;
 /// Close code sent to a connection that a same-user reconnect has replaced.
 const CLOSE_REPLACED: u16 = 4002;
+
+/// Upper bound on how many currently-queued messages are fetched on a
+/// single connect -- far above any realistic queue depth for one user
+/// within the offline-delivery TTL (issue #52's `max_age`). A user with
+/// more than this queued still gets the rest: JetStream's `WorkQueuePolicy`
+/// retention (issue #52) leaves anything un-acked visible to the very next
+/// consumer created against the same stream/subject, i.e. their next
+/// reconnect.
+const MAX_QUEUED_MESSAGES_PER_FETCH: usize = 256;
+
+/// How long the initial fetch of queued messages waits for the *first*
+/// message before giving up. A pull consumer's `fetch()` (unlike `batch()`)
+/// returns as soon as the stream runs dry rather than waiting the full
+/// duration once *something* has arrived, so this bound only matters for a
+/// user with nothing queued -- keeping it short means connecting stays
+/// perceptually instant in that (common) case.
+const QUEUED_MESSAGES_FETCH_TIMEOUT: Duration = Duration::from_millis(300);
 
 pub fn router(state: AppState) -> Router {
     Router::new()
@@ -103,6 +124,11 @@ async fn handle_socket(socket: WebSocket, user_id: Uuid, state: AppState) {
         }
     });
 
+    // Deliver anything queued for this user while they were offline
+    // (issue #53) before processing any frames the client sends -- so a
+    // reconnect always catches up before doing anything else.
+    deliver_queued_messages(&state, user_id, &tx).await;
+
     while let Some(frame) = stream.next().await {
         let message = match frame {
             Ok(message) => message,
@@ -126,6 +152,90 @@ async fn handle_socket(socket: WebSocket, user_id: Uuid, state: AppState) {
     state.registry.remove_if_current(&user_id, &tx).await;
     drop(tx);
     forward_task.abort();
+}
+
+/// Delivers any messages queued for `user_id` while they were offline
+/// (see `queue_for_offline_delivery`, backed by issue #52's
+/// `EPISTL_OFFLINE_MESSAGES` JetStream stream) over the just-registered
+/// `tx`, in the order JetStream returns them -- the identical
+/// `{"type": "message", ...}` frame shape a live relay send produces, so
+/// nothing on the client needs to distinguish the two paths.
+///
+/// Each message is acknowledged (removing it from the queue) only after
+/// the send over `tx` succeeds. If `tx` is gone (the socket vanished
+/// before delivery finished), the remaining messages are left un-acked so
+/// they stay queued for the next connection attempt, bounded by issue
+/// #52's `max_age`.
+///
+/// Creates a fresh ephemeral (non-durable) pull consumer on every call
+/// scoped to this user's own subject (`epistl.offline.<user_id>`): it
+/// doesn't need to survive an API process restart, since `WorkQueuePolicy`
+/// retention (issue #52) leaves un-acked messages visible to the next
+/// consumer created against the same stream/subject regardless of which
+/// consumer originally fetched them.
+///
+/// Failures anywhere in this path (the stream not configured yet, NATS
+/// unreachable, the fetch itself erroring) are swallowed: there is
+/// nothing meaningful to report back to the connecting client beyond
+/// "some queued messages might not have arrived yet", and any messages
+/// that were never fetched simply remain queued for the next attempt.
+async fn deliver_queued_messages(
+    state: &AppState,
+    user_id: Uuid,
+    tx: &mpsc::UnboundedSender<Message>,
+) {
+    let jetstream = async_nats::jetstream::new(state.nats.clone());
+
+    let consumer: PullConsumer = match jetstream
+        .create_consumer_on_stream(
+            PullConsumerConfig {
+                ack_policy: AckPolicy::Explicit,
+                filter_subject: crate::nats::offline_subject(user_id),
+                ..Default::default()
+            },
+            crate::nats::OFFLINE_STREAM_NAME,
+        )
+        .await
+    {
+        Ok(consumer) => consumer,
+        Err(_) => return,
+    };
+
+    let mut messages = match consumer
+        .fetch()
+        .max_messages(MAX_QUEUED_MESSAGES_PER_FETCH)
+        .expires(QUEUED_MESSAGES_FETCH_TIMEOUT)
+        .messages()
+        .await
+    {
+        Ok(messages) => messages,
+        Err(_) => return,
+    };
+
+    while let Some(Ok(message)) = messages.next().await {
+        let Ok(payload) = serde_json::from_slice::<Value>(&message.payload) else {
+            // Not a shape `queue_for_offline_delivery` could have
+            // produced -- leave it un-acked rather than guess at a frame
+            // to forward from it.
+            continue;
+        };
+
+        let relay = json!({
+            "type": "message",
+            "from": payload.get("from"),
+            "body_b64": payload.get("body_b64"),
+            "sent_at": payload.get("sent_at"),
+        });
+
+        if tx.send(Message::Text(relay.to_string().into())).is_err() {
+            // The socket is already gone -- stop here; this message and
+            // any remaining ones stay un-acked (still queued) for the
+            // next connection attempt.
+            break;
+        }
+
+        let _ = message.ack().await;
+    }
 }
 
 /// Returns `Err(())` only when the connection itself is done (the outbound
