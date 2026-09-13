@@ -30,7 +30,7 @@ pub const OFFLINE_STREAM_NAME: &str = "EPISTL_OFFLINE_MESSAGES";
 pub const OFFLINE_STREAM_SUBJECTS: &str = "epistl.offline.*";
 
 /// Returns the JetStream subject a message queued for `user_id` (because
-/// they weren't connected at send time -- see `crate::ws::handle_send`) is
+/// they weren't connected at send time -- see `crate::relay::handle_send`) is
 /// published to: one subject per recipient, matching the
 /// [`OFFLINE_STREAM_SUBJECTS`] filter.
 pub fn offline_subject(user_id: Uuid) -> String {
