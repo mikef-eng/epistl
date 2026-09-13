@@ -5,9 +5,13 @@
 //! frame is read off the sender's socket, checked against the `contacts`
 //! table (existing rows only -- no writes), and if the recipient is
 //! currently connected (per [`crate::registry::ConnectionRegistry`]) it is
-//! written straight to their socket. If they aren't connected, the send
-//! fails back to the sender; nothing is queued, logged, or persisted
-//! anywhere.
+//! written straight to their socket. If they aren't connected, the message
+//! is instead published to the JetStream offline-delivery queue (see
+//! `crate::nats`) and the sender still gets a plain `ack` frame -- from the
+//! sender's perspective, "delivered live" and "queued for offline
+//! delivery" are indistinguishable successes. Only a failure to even queue
+//! it (JetStream/NATS unreachable, stream missing, etc.) surfaces back to
+//! the sender as an error.
 //!
 //! The session token is passed as a query parameter (not a header) because
 //! Expo's cross-platform WebSocket client can't reliably set custom
@@ -179,11 +183,7 @@ async fn handle_send(
     }
 
     let Some(recipient_tx) = state.registry.get(&to).await else {
-        return send_error(
-            tx,
-            "recipient_offline",
-            "recipient is not currently connected",
-        );
+        return queue_for_offline_delivery(state, sender_id, to, &body_b64, tx).await;
     };
 
     let relay = json!({
@@ -197,18 +197,66 @@ async fn handle_send(
         .is_err()
     {
         // The recipient's socket vanished between the registry lookup and
-        // this send (e.g. they disconnected concurrently) -- report the
-        // same failure as if they had never been connected.
-        return send_error(
-            tx,
-            "recipient_offline",
-            "recipient is not currently connected",
-        );
+        // this send (e.g. they disconnected concurrently) -- fall through
+        // to the same offline-queueing path as if they had never been
+        // connected; from the sender's perspective this is just another
+        // flavor of "not currently connected".
+        return queue_for_offline_delivery(state, sender_id, to, &body_b64, tx).await;
     }
 
     let ack = json!({ "type": "ack", "to": to });
     tx.send(Message::Text(ack.to_string().into()))
         .map_err(|_| ())
+}
+
+/// Publishes a message to the JetStream offline-delivery queue (subject
+/// `epistl.offline.<to>`, see [`crate::nats::offline_subject`]) for a
+/// recipient who isn't currently connected, then reports the outcome back
+/// to the sender.
+///
+/// Awaits the publish's ack -- `async-nats`'s publish-then-ack pattern --
+/// so a rejection from JetStream itself (stream missing, NATS unreachable,
+/// etc.) is caught here rather than silently dropped. On success, the
+/// sender gets the same `{"type": "ack", "to": to}` frame as a live
+/// delivery: there is no wire-visible distinction between "delivered live"
+/// and "queued for offline delivery". On failure, the sender gets a
+/// `queue_unavailable` error frame and the message is not delivered by any
+/// path.
+async fn queue_for_offline_delivery(
+    state: &AppState,
+    sender_id: Uuid,
+    to: Uuid,
+    body_b64: &str,
+    tx: &mpsc::UnboundedSender<Message>,
+) -> Result<(), ()> {
+    let jetstream = async_nats::jetstream::new(state.nats.clone());
+    let payload = json!({
+        "from": sender_id,
+        "body_b64": body_b64,
+        "sent_at": Utc::now().to_rfc3339(),
+    });
+
+    let published: Result<(), async_nats::Error> = async {
+        let ack = jetstream
+            .publish(crate::nats::offline_subject(to), payload.to_string().into())
+            .await?;
+        ack.await?;
+        Ok(())
+    }
+    .await;
+
+    match published {
+        Ok(()) => {
+            let ack = json!({ "type": "ack", "to": to });
+            tx.send(Message::Text(ack.to_string().into()))
+                .map_err(|_| ())
+        }
+        Err(_) => send_error(
+            tx,
+            "queue_unavailable",
+            "message could not be queued for offline delivery",
+        ),
+    }
 }
 
 fn send_error(tx: &mpsc::UnboundedSender<Message>, code: &str, message: &str) -> Result<(), ()> {

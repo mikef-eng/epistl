@@ -15,6 +15,7 @@ use std::time::Duration;
 
 use async_nats::jetstream::stream::{Config as StreamConfig, RetentionPolicy, StorageType};
 use async_nats::jetstream::{context::CreateStreamError, stream::Stream, Context};
+use uuid::Uuid;
 
 /// Environment variable read for the NATS connection URL.
 pub const NATS_URL_VAR: &str = "NATS_URL";
@@ -27,6 +28,14 @@ pub const OFFLINE_STREAM_NAME: &str = "EPISTL_OFFLINE_MESSAGES";
 /// Subject filter the offline-delivery stream captures: one subject per
 /// recipient, `epistl.offline.<user_id>`.
 pub const OFFLINE_STREAM_SUBJECTS: &str = "epistl.offline.*";
+
+/// Returns the JetStream subject a message queued for `user_id` (because
+/// they weren't connected at send time -- see `crate::ws::handle_send`) is
+/// published to: one subject per recipient, matching the
+/// [`OFFLINE_STREAM_SUBJECTS`] filter.
+pub fn offline_subject(user_id: Uuid) -> String {
+    format!("epistl.offline.{user_id}")
+}
 
 /// Environment variable read for the offline-delivery queue's message TTL,
 /// in seconds. See [`DEFAULT_OFFLINE_QUEUE_MAX_AGE_SECS`] for the default

@@ -401,7 +401,7 @@ describe('ChatScreen', () => {
     expect(mockedSaveMessage).not.toHaveBeenCalled();
   });
 
-  it('shows an inline "not delivered" note on a recipient_offline error, without removing the message', async () => {
+  it('shows an inline "not delivered" note on a queue_unavailable error, without removing the message', async () => {
     const { user, socket } = await renderChatScreen();
 
     await user.type(screen.getByPlaceholderText('Message'), 'hi');
@@ -412,11 +412,11 @@ describe('ChatScreen', () => {
     });
 
     await act(async () => {
-      socket.receive({ type: 'error', code: 'recipient_offline' });
+      socket.receive({ type: 'error', code: 'queue_unavailable' });
     });
 
     await waitFor(() => {
-      expect(screen.getByText('Not delivered: contact is offline')).toBeTruthy();
+      expect(screen.getByText('Not delivered: message could not be queued')).toBeTruthy();
     });
     expect(screen.getByText('hi')).toBeTruthy();
   });

@@ -323,20 +323,82 @@ async fn successful_send_does_not_change_any_table_row_counts() {
     assert_eq!(before, after, "a send must never write to Postgres");
 }
 
+/// Acceptance criterion: a message to a real contact who isn't currently
+/// connected is queued via JetStream rather than failing -- the sender gets
+/// the same `ack` frame as a live delivery, and the message is verifiably
+/// present in the `EPISTL_OFFLINE_MESSAGES` stream afterward.
 #[tokio::test]
 #[serial]
-async fn send_to_offline_contact_returns_recipient_offline() {
+async fn send_to_offline_contact_queues_via_jetstream_and_acks_sender() {
     let pool = test_pool().await;
     let state = test_state().await;
-    let (sender_token, _sender_id, _sender_email) =
+    let (sender_token, sender_id, _sender_email) =
         signup_user(&pool, state.clone(), "ws-offline-sender").await;
     let (_recipient_token, recipient_id, recipient_email) =
         signup_user(&pool, state.clone(), "ws-offline-recipient").await;
     add_contact(state.clone(), &sender_token, &recipient_email).await;
 
+    let jetstream = async_nats::jetstream::new(state.nats.clone());
+    let stream = api::nats::ensure_offline_stream(&jetstream)
+        .await
+        .expect("failed to ensure the offline-delivery stream exists");
+
     let addr = spawn_server(state).await;
     let mut sender_ws = connect_ws(addr, &sender_token).await;
     // Note: the recipient never connects.
+
+    let body_b64 = BASE64.encode(b"queued while the recipient is offline");
+    sender_ws
+        .send(WsMessage::text(
+            json!({ "type": "send", "to": recipient_id, "body_b64": body_b64 }).to_string(),
+        ))
+        .await
+        .expect("failed to send frame");
+
+    let ack = recv_json(&mut sender_ws).await;
+    assert_eq!(ack, json!({ "type": "ack", "to": recipient_id }));
+
+    let subject = api::nats::offline_subject(recipient_id);
+    let raw = stream
+        .get_last_raw_message_by_subject(&subject)
+        .await
+        .expect("queued message should be present in the offline-delivery stream");
+    let payload: Value =
+        serde_json::from_slice(&raw.payload).expect("queued payload should be JSON");
+    assert_eq!(payload["from"], sender_id.to_string());
+    assert_eq!(payload["body_b64"], body_b64);
+    assert!(payload["sent_at"].is_string());
+}
+
+/// Acceptance criterion: a publish rejection from JetStream itself (here,
+/// simulated by the offline-delivery stream not existing, which
+/// `async-nats`'s publish-ack future surfaces as a "no responders" publish
+/// error -- see its own doc comment) is reported to the sender as
+/// `queue_unavailable`, distinct from the retired `recipient_offline`.
+#[tokio::test]
+#[serial]
+async fn send_to_offline_contact_returns_queue_unavailable_when_jetstream_publish_fails() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (sender_token, _sender_id, _sender_email) =
+        signup_user(&pool, state.clone(), "ws-queue-fail-sender").await;
+    let (_recipient_token, recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "ws-queue-fail-recipient").await;
+    add_contact(state.clone(), &sender_token, &recipient_email).await;
+
+    let jetstream = async_nats::jetstream::new(state.nats.clone());
+    // Deliberately remove the stream so JetStream has no responder for
+    // `epistl.offline.*` -- the same "stream missing" condition the
+    // acceptance criteria call out. Restored below so other tests (in this
+    // file or run afterward) still find it present; mirrors the
+    // delete-then-recreate pattern already used by
+    // `apps/api/tests/nats.rs`'s `ensure_offline_stream` test.
+    let _ = jetstream
+        .delete_stream(api::nats::OFFLINE_STREAM_NAME)
+        .await;
+
+    let addr = spawn_server(state.clone()).await;
+    let mut sender_ws = connect_ws(addr, &sender_token).await;
 
     sender_ws
         .send(WsMessage::text(
@@ -348,8 +410,12 @@ async fn send_to_offline_contact_returns_recipient_offline() {
 
     let error = recv_json(&mut sender_ws).await;
     assert_eq!(error["type"], "error");
-    assert_eq!(error["code"], "recipient_offline");
+    assert_eq!(error["code"], "queue_unavailable");
     assert!(error["message"].is_string());
+
+    api::nats::ensure_offline_stream(&jetstream)
+        .await
+        .expect("failed to restore the offline-delivery stream after the test");
 }
 
 #[tokio::test]

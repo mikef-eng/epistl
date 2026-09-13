@@ -11,7 +11,7 @@
  *  - outgoing: `{"type": "send", "to": "<uuid>", "body_b64": "<base64>"}`
  *  - incoming: `{"type": "message", "from": "<uuid>", "body_b64": "<base64>"}`
  *              `{"type": "ack"}`
- *              `{"type": "error", "code": "recipient_offline" | "not_a_contact" | "invalid_payload", ...}`
+ *              `{"type": "error", "code": "queue_unavailable" | "not_a_contact" | "invalid_payload", ...}`
  */
 import { API_BASE_URL } from './client';
 
