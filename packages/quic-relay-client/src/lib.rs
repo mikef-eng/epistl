@@ -14,12 +14,16 @@
 //! or a typed [`QuicClientError`].
 
 use std::net::SocketAddr;
-use std::sync::{Arc, LazyLock};
+use std::sync::{Arc, LazyLock, Mutex as StdMutex};
+use std::time::Duration;
 
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::CryptoProvider;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, SignatureScheme};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::sync::Mutex as AsyncMutex;
+use tokio::task::JoinHandle;
 
 uniffi::setup_scaffolding!();
 
@@ -42,6 +46,19 @@ pub enum QuicClientError {
     /// the echoed response back.
     #[error("QUIC stream I/O failed: {message}")]
     StreamIoFailed { message: String },
+
+    /// [`QuicConnection::connect`]-only (issue #75): the server closed the
+    /// connection with QUIC application error code
+    /// [`CLOSE_CODE_UNAUTHORIZED`] within [`AUTH_RESULT_GRACE`] of the auth
+    /// frame being written, i.e. it rejected the token. Distinguished from
+    /// [`QuicClientError::ConnectionFailed`] so a caller (the mobile
+    /// driver, the next issue in this batch) can tell "bad token" apart
+    /// from "network problem" -- see [`AUTH_RESULT_GRACE`]'s doc comment
+    /// for why this can't be a fully reliable synchronous signal, and
+    /// [`QuicConnectionListener::on_closed`] for the fallback when a
+    /// rejection arrives later than that.
+    #[error("QUIC auth failed: {message}")]
+    AuthFailed { message: String },
 }
 
 const PING_BYTES: &[u8] = b"ping";
@@ -242,5 +259,332 @@ impl ServerCertVerifier for DangerousDevOnlyCertVerifier {
         rustls::crypto::ring::default_provider()
             .signature_verification_algorithms
             .supported_schemes()
+    }
+}
+
+// ---------------------------------------------------------------------
+// Persistent connection (issue #75)
+// ---------------------------------------------------------------------
+//
+// Everything below extends this crate beyond `quic_ping`'s one-shot round
+// trip into a long-lived [`QuicConnection`], capable of carrying
+// `apps/api/src/quic.rs`'s (issue #73) real wire protocol for the lifetime
+// of a chat session: one client-opened bidirectional stream used as a
+// persistent control channel, newline-delimited JSON frames,
+// `{"type":"auth","token":...}` as the first frame, and QUIC application
+// close codes 4001 (auth failure) / 4002 (replaced by a newer connection).
+// This is new, additive UniFFI surface -- `quic_ping` above is untouched
+// and remains available as a standalone manual-smoke-test tool (see its own
+// doc comment).
+//
+// Reuses (does not reinvent) the exact same dev-cert trust posture as
+// `quic_ping`: `resolve_addr` and `build_dev_client_config` above are
+// called as-is -- see
+// `docs/decisions/0011-quic-dev-cert-trust-remains-dev-only.md`.
+
+/// QUIC application error code `apps/api/src/quic.rs` (issue #73) sends
+/// when the first frame isn't a valid `auth` frame with a token that
+/// authenticates. Numerically mirrors that module's `CLOSE_UNAUTHORIZED`
+/// (and WS's `CLOSE_UNAUTHORIZED`, which it in turn mirrors).
+const CLOSE_CODE_UNAUTHORIZED: u64 = 4001;
+
+/// How long [`QuicConnection::connect`] waits, after writing the auth
+/// frame, to see whether the server closes the connection before
+/// concluding the token was accepted.
+///
+/// The wire protocol (issue #73) has no explicit "auth ok" frame -- a
+/// successful auth is silent, the server just starts relaying. So this is
+/// a bounded heuristic, not a real acknowledgement: if the server takes
+/// longer than this to reject a bad token, `connect` still returns `Ok`,
+/// and the rejection is instead reported later via
+/// [`QuicConnectionListener::on_closed`] once the connection actually
+/// closes. 200ms is generous relative to same-host integration tests and a
+/// same-network mobile client talking to its own backend, since the
+/// server-side check (`authenticate_first_frame` in `apps/api/src/quic.rs`)
+/// does no I/O beyond a JSON parse and an in-memory/DB token lookup --
+/// nowhere near 200ms of added latency in the success case, where `connect`
+/// always waits out this whole window (nothing else could tell it sooner
+/// that the server is *not* about to close the connection).
+const AUTH_RESULT_GRACE: Duration = Duration::from_millis(200);
+
+/// Pushed to the JS side as frames/close notifications arrive on a
+/// [`QuicConnection`]'s control stream, asynchronously and independently of
+/// any specific `connect`/`send` call -- implemented on the JS side by the
+/// generated TurboModule glue (the mobile driver, the next issue in this
+/// batch), and passed in to [`QuicConnection::connect`].
+///
+/// A UniFFI callback interface: when the *foreign* (JS) side implements
+/// this trait, calls to `on_frame`/`on_closed` cross the FFI boundary via
+/// UniFFI's generated callback machinery. When this crate's own tests
+/// implement it directly in Rust (see `tests/connection.rs`), these are
+/// just ordinary trait method calls -- no FFI involved.
+#[uniffi::export(callback_interface)]
+pub trait QuicConnectionListener: Send + Sync {
+    /// Called once per newline-delimited JSON frame received on the
+    /// control stream (the trailing newline is stripped, the frame's text
+    /// is otherwise unparsed/unvalidated -- same division of
+    /// responsibility as `apps/api/src/quic.rs`, which also treats framing
+    /// and payload parsing as separate concerns).
+    fn on_frame(&self, frame: String);
+
+    /// Called exactly once, when the control stream ends for any reason --
+    /// the server closed the connection (including an auth rejection that
+    /// arrived after [`AUTH_RESULT_GRACE`] had already elapsed), a network
+    /// failure, or [`QuicConnection::close`] was called locally. No further
+    /// `on_frame` calls follow. `reason` is a human-readable description,
+    /// not a machine code, but it includes the QUIC application error code
+    /// when the peer closed with one (e.g. `4001`/`4002`) so a caller that
+    /// cares can still find it via substring match.
+    fn on_closed(&self, reason: String);
+}
+
+/// A persistent QUIC connection to `apps/api`'s real listener (issue #73):
+/// opened once via [`QuicConnection::connect`], then
+/// [`QuicConnection::send`] and the [`QuicConnectionListener`] callback
+/// carry frames for the life of the connection, until
+/// [`QuicConnection::close`] or the peer closes it.
+#[derive(Debug, uniffi::Object)]
+pub struct QuicConnection {
+    connection: quinn::Connection,
+    endpoint: quinn::Endpoint,
+    send: AsyncMutex<quinn::SendStream>,
+    // Aborted by `close()` so a locally-initiated close doesn't also fire
+    // `listener.on_closed` -- the caller already knows it closed the
+    // connection itself. `std::sync::Mutex` (not tokio's) is fine here:
+    // `close()` is synchronous and only ever holds this lock for the
+    // instant it takes to `take()` the handle.
+    reader_task: StdMutex<Option<JoinHandle<()>>>,
+}
+
+#[uniffi::export]
+impl QuicConnection {
+    /// Opens a QUIC connection to `host:port`, opens the one control
+    /// stream, and writes `{"type":"auth","token":"<token>"}` plus a
+    /// trailing newline as its first frame -- see this module's doc
+    /// comment for the full wire protocol. Reuses the exact same dev-cert
+    /// trust posture as [`quic_ping`] (`build_dev_client_config`, not
+    /// reimplemented).
+    ///
+    /// `listener`'s `on_frame`/`on_closed` are called for every frame
+    /// subsequently received on the control stream, for the lifetime of
+    /// the connection -- see [`QuicConnectionListener`].
+    ///
+    /// Returns `Err(QuicClientError::AuthFailed)` if the server closes the
+    /// connection with application error code `4001` within
+    /// [`AUTH_RESULT_GRACE`] of the auth frame being written; see that
+    /// constant's doc comment for why a rejection that arrives later than
+    /// that is instead reported via `listener.on_closed` rather than from
+    /// here.
+    #[uniffi::constructor]
+    pub async fn connect(
+        host: String,
+        port: u16,
+        token: String,
+        listener: Box<dyn QuicConnectionListener>,
+    ) -> Result<Self, QuicClientError> {
+        match RUNTIME
+            .spawn(connect_impl(host, port, token, listener))
+            .await
+        {
+            Ok(result) => result,
+            Err(join_error) => Err(QuicClientError::ConnectionFailed {
+                message: format!("internal quic-relay-client task panicked: {join_error}"),
+            }),
+        }
+    }
+
+    /// Writes `frame` plus a trailing newline to the control stream.
+    pub async fn send(self: Arc<Self>, frame: String) -> Result<(), QuicClientError> {
+        match RUNTIME.spawn(send_frame(self, frame)).await {
+            Ok(result) => result,
+            Err(join_error) => Err(QuicClientError::StreamIoFailed {
+                message: format!("internal quic-relay-client task panicked: {join_error}"),
+            }),
+        }
+    }
+
+    /// Closes the connection. Harmless to call more than once, or after the
+    /// peer already closed the connection (Quinn no-ops a close on an
+    /// already-closed connection). Aborts this connection's background
+    /// reader task first, so `listener.on_closed` is not called for a close
+    /// the caller itself initiated -- the caller already knows.
+    pub fn close(&self) {
+        if let Some(reader_task) = self.reader_task.lock().unwrap().take() {
+            reader_task.abort();
+        }
+        self.connection.close(0u32.into(), b"closed by client");
+        self.endpoint.close(0u32.into(), b"closed by client");
+    }
+}
+
+/// The actual body of [`QuicConnection::connect`] -- a free function, not
+/// an associated function inside the `#[uniffi::export]`ed impl block.
+/// `#[uniffi::export]` treats *every* function in that block as exported
+/// UniFFI surface (even a private one, and even a constructor-shaped one
+/// without a `self` receiver isn't supported there at all), so any helper
+/// that shouldn't itself become part of the public API has to live outside
+/// it -- see also [`send_frame`] below. Run on [`RUNTIME`], same division
+/// as [`quic_ping_impl`] above.
+async fn connect_impl(
+    host: String,
+    port: u16,
+    token: String,
+    listener: Box<dyn QuicConnectionListener>,
+) -> Result<QuicConnection, QuicClientError> {
+    let remote_addr = resolve_addr(&host, port).await?;
+    let client_config = build_dev_client_config()?;
+
+    let mut endpoint = quinn::Endpoint::client("0.0.0.0:0".parse().unwrap()).map_err(|error| {
+        QuicClientError::ConnectionFailed {
+            message: format!("failed to bind local UDP socket: {error}"),
+        }
+    })?;
+    endpoint.set_default_client_config(client_config);
+
+    let connecting = endpoint.connect(remote_addr, &host).map_err(|error| {
+        QuicClientError::ConnectionFailed {
+            message: format!("failed to start QUIC connection: {error}"),
+        }
+    })?;
+
+    let connection = connecting
+        .await
+        .map_err(|error| QuicClientError::ConnectionFailed {
+            message: format!("QUIC/TLS handshake failed: {error}"),
+        })?;
+
+    let (mut send, recv) =
+        connection
+            .open_bi()
+            .await
+            .map_err(|error| QuicClientError::ConnectionFailed {
+                message: format!("failed to open control stream: {error}"),
+            })?;
+
+    let auth_frame = build_auth_frame(&token)?;
+    send.write_all(auth_frame.as_bytes())
+        .await
+        .map_err(|error| QuicClientError::StreamIoFailed {
+            message: format!("failed to write auth frame: {error}"),
+        })?;
+
+    // See `AUTH_RESULT_GRACE`'s doc comment: the wire protocol has no
+    // explicit "auth ok" frame, so this is a bounded heuristic, not a real
+    // acknowledgement.
+    let closed_within_grace = tokio::select! {
+        close_reason = connection.closed() => Some(close_reason),
+        () = tokio::time::sleep(AUTH_RESULT_GRACE) => None,
+    };
+    if let Some(close_reason) = closed_within_grace {
+        endpoint.close(0u32.into(), b"connect failed");
+        return Err(classify_early_close(close_reason));
+    }
+
+    let reader_task = tokio::spawn(run_reader_loop(recv, connection.clone(), listener));
+
+    Ok(QuicConnection {
+        connection,
+        endpoint,
+        send: AsyncMutex::new(send),
+        reader_task: StdMutex::new(Some(reader_task)),
+    })
+}
+
+/// The actual body of [`QuicConnection::send`] -- a free function, not an
+/// associated function inside the `#[uniffi::export]`ed impl block, for the
+/// same reason as [`connect_impl`]: a function in that impl block, even a
+/// private one with a `self` receiver, becomes part of the exported UniFFI
+/// surface, which this helper deliberately is not.
+async fn send_frame(connection: Arc<QuicConnection>, frame: String) -> Result<(), QuicClientError> {
+    let mut send = connection.send.lock().await;
+    send.write_all(frame.as_bytes())
+        .await
+        .map_err(|error| QuicClientError::StreamIoFailed {
+            message: format!("failed to write frame: {error}"),
+        })?;
+    send.write_all(b"\n")
+        .await
+        .map_err(|error| QuicClientError::StreamIoFailed {
+            message: format!("failed to write frame delimiter: {error}"),
+        })
+}
+
+/// Reads newline-delimited frames off `recv` and pushes each to
+/// `listener.on_frame`, for as long as the control stream stays open. When
+/// it ends (for any reason), calls `listener.on_closed` exactly once with a
+/// human-readable description -- see [`QuicConnectionListener::on_closed`].
+async fn run_reader_loop(
+    recv: quinn::RecvStream,
+    connection: quinn::Connection,
+    listener: Box<dyn QuicConnectionListener>,
+) {
+    let mut reader = BufReader::new(recv);
+    let mut line = String::new();
+    loop {
+        line.clear();
+        match reader.read_line(&mut line).await {
+            Ok(0) => break,
+            Err(_) => break,
+            Ok(_) => {
+                let frame = line.trim_end_matches(['\r', '\n']).to_string();
+                listener.on_frame(frame);
+            }
+        }
+    }
+
+    let reason = match connection.close_reason() {
+        Some(error) => describe_close_reason(&error),
+        None => "control stream ended".to_string(),
+    };
+    listener.on_closed(reason);
+}
+
+/// Builds `connect`'s auth frame (`{"type":"auth","token":"<token>"}` plus
+/// a trailing newline) as real JSON, so `token` is escaped correctly if it
+/// ever contains characters that would need it -- matching
+/// `apps/api/src/quic.rs`'s use of `serde_json` on the other side of this
+/// same wire protocol.
+fn build_auth_frame(token: &str) -> Result<String, QuicClientError> {
+    let mut text = serde_json::to_string(&serde_json::json!({
+        "type": "auth",
+        "token": token,
+    }))
+    .map_err(|error| QuicClientError::StreamIoFailed {
+        message: format!("failed to encode auth frame: {error}"),
+    })?;
+    text.push('\n');
+    Ok(text)
+}
+
+/// Classifies a connection closure observed within [`AUTH_RESULT_GRACE`] of
+/// writing the auth frame: application error code
+/// [`CLOSE_CODE_UNAUTHORIZED`] means the token was rejected
+/// ([`QuicClientError::AuthFailed`]); anything else is some other early
+/// closure ([`QuicClientError::ConnectionFailed`]).
+fn classify_early_close(error: quinn::ConnectionError) -> QuicClientError {
+    if let quinn::ConnectionError::ApplicationClosed(app_close) = &error {
+        if u64::from(app_close.error_code) == CLOSE_CODE_UNAUTHORIZED {
+            return QuicClientError::AuthFailed {
+                message: describe_close_reason(&error),
+            };
+        }
+    }
+    QuicClientError::ConnectionFailed {
+        message: format!("connection closed before auth could be confirmed: {error}"),
+    }
+}
+
+/// Formats a [`quinn::ConnectionError`] for [`QuicConnectionListener::on_closed`]
+/// and [`QuicClientError`] messages, including the application error code
+/// and peer-supplied reason text when the peer closed the connection with
+/// one (rather than e.g. a transport-level failure or idle timeout).
+fn describe_close_reason(error: &quinn::ConnectionError) -> String {
+    match error {
+        quinn::ConnectionError::ApplicationClosed(app_close) => format!(
+            "closed by peer with application error code {} ({})",
+            u64::from(app_close.error_code),
+            String::from_utf8_lossy(&app_close.reason)
+        ),
+        other => format!("{other}"),
     }
 }

@@ -166,12 +166,44 @@ interface NativeModuleInterface {
     uniffi_out_err: UniffiRustCallStatus
   ): void;
   ubrn_ffi_quic_relay_client_rust_future_free_void(handle: bigint): void;
+  ubrn_uniffi_quic_relay_client_fn_clone_quicconnection(
+    ptr: bigint,
+    uniffi_out_err: UniffiRustCallStatus
+  ): bigint;
+  ubrn_uniffi_quic_relay_client_fn_free_quicconnection(
+    ptr: bigint,
+    uniffi_out_err: UniffiRustCallStatus
+  ): void;
+  ubrn_uniffi_quic_relay_client_fn_init_callback_vtable_quicconnectionlistener(
+    vtable: UniffiVTableCallbackInterfaceQuicRelayClientQuicConnectionListener
+  ): void;
   ubrn_uniffi_quic_relay_client_fn_func_quic_ping(
     host: Uint8Array,
     port: number
   ): bigint;
+  ubrn_uniffi_quic_relay_client_fn_constructor_quicconnection_connect(
+    host: Uint8Array,
+    port: number,
+    token: Uint8Array,
+    listener: bigint
+  ): bigint;
+  ubrn_uniffi_quic_relay_client_fn_method_quicconnection_close(
+    uniffiSelf: bigint,
+    uniffi_out_err: UniffiRustCallStatus
+  ): void;
+  ubrn_uniffi_quic_relay_client_fn_method_quicconnection_send(
+    uniffiSelf: bigint,
+    frame: Uint8Array
+  ): bigint;
   ubrn_ffi_quic_relay_client_uniffi_contract_version(): number;
   ubrn_uniffi_quic_relay_client_checksum_func_quic_ping(): number;
+  ubrn_uniffi_quic_relay_client_checksum_constructor_quicconnection_connect(): number;
+  ubrn_uniffi_quic_relay_client_checksum_method_quicconnection_close(): number;
+  ubrn_uniffi_quic_relay_client_checksum_method_quicconnection_send(): number;
+  ubrn_uniffi_internal_fn_method_quicconnection_ffi__bless_pointer(
+    pointer: bigint,
+    uniffi_out_err: UniffiRustCallStatus
+  ): UniffiGcObject;
   // Codegen call sites use these via `nativeModule().rustbuffer_alloc(...)`
   // and `nativeModule().rustbuffer_free(...)`. The JSI host object exposes
   // them as properties; see `props["rustbuffer_alloc"]` / `props["rustbuffer_free"]`
@@ -194,6 +226,27 @@ export type UniffiForeignFutureDroppedCallbackStruct = {
   handle: bigint;
   free: UniffiForeignFutureDroppedCallback;
 };
+type UniffiCallbackInterfaceQuicRelayClientQuicConnectionListenerMethod0 = (
+  uniffiHandle: bigint,
+  frame: Uint8Array
+) => UniffiResult<void>;
+type UniffiCallbackInterfaceQuicRelayClientQuicConnectionListenerMethod1 = (
+  uniffiHandle: bigint,
+  reason: Uint8Array
+) => UniffiResult<void>;
+type UniffiCallbackInterfaceCloneQuicRelayClientQuicConnectionListener = (
+  handle: bigint
+) => UniffiResult<void>;
+type UniffiCallbackInterfaceFreeQuicRelayClientQuicConnectionListener = (
+  handle: bigint
+) => void;
+export type UniffiVTableCallbackInterfaceQuicRelayClientQuicConnectionListener =
+  {
+    uniffi_free: UniffiCallbackInterfaceFreeQuicRelayClientQuicConnectionListener;
+    uniffi_clone: UniffiCallbackInterfaceCloneQuicRelayClientQuicConnectionListener;
+    on_frame: UniffiCallbackInterfaceQuicRelayClientQuicConnectionListenerMethod0;
+    on_closed: UniffiCallbackInterfaceQuicRelayClientQuicConnectionListenerMethod1;
+  };
 
 // UniffiRustFutureContinuationCallback is generated as part of the component interface's
 // ffi_definitions. However, we need it in the runtime.
