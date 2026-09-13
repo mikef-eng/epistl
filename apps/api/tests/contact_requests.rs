@@ -378,3 +378,405 @@ async fn list_contact_requests_without_token_returns_401() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(body, json!({ "error": "unauthorized" }));
 }
+
+async fn resolve_request(
+    state: AppState,
+    token: &str,
+    request_id: &str,
+    action: &str,
+) -> (StatusCode, Value) {
+    request(
+        api::app(state),
+        "POST",
+        &format!("/api/contacts/requests/{request_id}/{action}"),
+        Some(token),
+        None,
+    )
+    .await
+}
+
+async fn contacts_of(state: AppState, token: &str) -> Vec<Value> {
+    let (status, body) = request(api::app(state), "GET", "/api/contacts", Some(token), None).await;
+    assert_eq!(status, StatusCode::OK);
+    body["contacts"].as_array().unwrap().clone()
+}
+
+#[tokio::test]
+async fn accept_contact_request_creates_mutual_contacts_and_returns_204() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (requester_token, requester_id, requester_email) =
+        signup_user(&pool, state.clone(), "accept-requester").await;
+    let (recipient_token, recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "accept-recipient").await;
+
+    let (_, create_body) = send_request(state.clone(), &requester_token, &recipient_email).await;
+    let request_id = create_body["id"].as_str().unwrap().to_string();
+
+    let (status, body) =
+        resolve_request(state.clone(), &recipient_token, &request_id, "accept").await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(body, Value::Null);
+
+    let requester_contacts = contacts_of(state.clone(), &requester_token).await;
+    assert_eq!(requester_contacts.len(), 1);
+    assert_eq!(requester_contacts[0]["user_id"], recipient_id.to_string());
+    assert_eq!(requester_contacts[0]["email"], recipient_email);
+
+    let recipient_contacts = contacts_of(state.clone(), &recipient_token).await;
+    assert_eq!(recipient_contacts.len(), 1);
+    assert_eq!(recipient_contacts[0]["user_id"], requester_id.to_string());
+    assert_eq!(recipient_contacts[0]["email"], requester_email);
+
+    // The resolved request no longer shows up in either party's pending list.
+    let (_, list_body) = request(
+        api::app(state),
+        "GET",
+        "/api/contacts/requests",
+        Some(&recipient_token),
+        None,
+    )
+    .await;
+    assert_eq!(list_body["incoming"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn decline_contact_request_creates_no_contacts_and_allows_re_request() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (requester_token, requester_id, _requester_email) =
+        signup_user(&pool, state.clone(), "decline-requester").await;
+    let (recipient_token, recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "decline-recipient").await;
+
+    let (_, create_body) = send_request(state.clone(), &requester_token, &recipient_email).await;
+    let request_id = create_body["id"].as_str().unwrap().to_string();
+
+    let (status, body) =
+        resolve_request(state.clone(), &recipient_token, &request_id, "decline").await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(body, Value::Null);
+
+    let contacts_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM contacts
+         WHERE (owner_user_id = $1 AND contact_user_id = $2)
+            OR (owner_user_id = $2 AND contact_user_id = $1)",
+    )
+    .bind(requester_id)
+    .bind(recipient_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(contacts_count, 0);
+
+    let declined_status: String =
+        sqlx::query_scalar("SELECT status FROM contact_requests WHERE id = $1::uuid")
+            .bind(&request_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(declined_status, "declined");
+
+    // Requester can send a fresh request afterward -- the declined row
+    // doesn't block a new pending one.
+    let (re_request_status, _) = send_request(state, &requester_token, &recipient_email).await;
+    assert_eq!(re_request_status, StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn accept_contact_request_by_non_recipient_returns_403() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (requester_token, _requester_id, _requester_email) =
+        signup_user(&pool, state.clone(), "accept-403-requester").await;
+    let (_recipient_token, _recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "accept-403-recipient").await;
+    let (_, create_body) = send_request(state.clone(), &requester_token, &recipient_email).await;
+    let request_id = create_body["id"].as_str().unwrap().to_string();
+
+    let (bystander_token, _bystander_id, _bystander_email) =
+        signup_user(&pool, state.clone(), "accept-403-bystander").await;
+
+    let (status, body) =
+        resolve_request(state.clone(), &bystander_token, &request_id, "accept").await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body, json!({ "error": "not_recipient" }));
+
+    // The requester (also not the recipient) is likewise forbidden.
+    let (status, body) = resolve_request(state, &requester_token, &request_id, "accept").await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body, json!({ "error": "not_recipient" }));
+}
+
+#[tokio::test]
+async fn decline_contact_request_by_non_recipient_returns_403() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (requester_token, _requester_id, _requester_email) =
+        signup_user(&pool, state.clone(), "decline-403-requester").await;
+    let (_recipient_token, _recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "decline-403-recipient").await;
+    let (_, create_body) = send_request(state.clone(), &requester_token, &recipient_email).await;
+    let request_id = create_body["id"].as_str().unwrap().to_string();
+
+    let (bystander_token, _bystander_id, _bystander_email) =
+        signup_user(&pool, state.clone(), "decline-403-bystander").await;
+
+    let (status, body) = resolve_request(state, &bystander_token, &request_id, "decline").await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body, json!({ "error": "not_recipient" }));
+}
+
+#[tokio::test]
+async fn accept_contact_request_nonexistent_id_returns_404() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (token, _id, _email) = signup_user(&pool, state.clone(), "accept-404").await;
+
+    let (status, body) =
+        resolve_request(state, &token, &Uuid::new_v4().to_string(), "accept").await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, json!({ "error": "request_not_found" }));
+}
+
+#[tokio::test]
+async fn decline_contact_request_nonexistent_id_returns_404() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (token, _id, _email) = signup_user(&pool, state.clone(), "decline-404").await;
+
+    let (status, body) =
+        resolve_request(state, &token, &Uuid::new_v4().to_string(), "decline").await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, json!({ "error": "request_not_found" }));
+}
+
+#[tokio::test]
+async fn accept_already_resolved_request_returns_404() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (requester_token, _requester_id, _requester_email) =
+        signup_user(&pool, state.clone(), "accept-resolved-requester").await;
+    let (recipient_token, _recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "accept-resolved-recipient").await;
+    let (_, create_body) = send_request(state.clone(), &requester_token, &recipient_email).await;
+    let request_id = create_body["id"].as_str().unwrap().to_string();
+
+    let (first_status, _) =
+        resolve_request(state.clone(), &recipient_token, &request_id, "accept").await;
+    assert_eq!(first_status, StatusCode::NO_CONTENT);
+
+    let (status, body) = resolve_request(state, &recipient_token, &request_id, "accept").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, json!({ "error": "request_not_found" }));
+}
+
+#[tokio::test]
+async fn decline_already_resolved_request_returns_404() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (requester_token, _requester_id, _requester_email) =
+        signup_user(&pool, state.clone(), "decline-resolved-requester").await;
+    let (recipient_token, _recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "decline-resolved-recipient").await;
+    let (_, create_body) = send_request(state.clone(), &requester_token, &recipient_email).await;
+    let request_id = create_body["id"].as_str().unwrap().to_string();
+
+    let (first_status, _) =
+        resolve_request(state.clone(), &recipient_token, &request_id, "decline").await;
+    assert_eq!(first_status, StatusCode::NO_CONTENT);
+
+    let (status, body) = resolve_request(state, &recipient_token, &request_id, "decline").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, json!({ "error": "request_not_found" }));
+}
+
+#[tokio::test]
+async fn accept_contact_request_without_token_returns_401() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (requester_token, _requester_id, _requester_email) =
+        signup_user(&pool, state.clone(), "accept-401-requester").await;
+    let (_recipient_token, _recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "accept-401-recipient").await;
+    let (_, create_body) = send_request(state.clone(), &requester_token, &recipient_email).await;
+    let request_id = create_body["id"].as_str().unwrap().to_string();
+
+    let (status, body) = request(
+        api::app(state),
+        "POST",
+        &format!("/api/contacts/requests/{request_id}/accept"),
+        None,
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body, json!({ "error": "unauthorized" }));
+}
+
+#[tokio::test]
+async fn decline_contact_request_without_token_returns_401() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (requester_token, _requester_id, _requester_email) =
+        signup_user(&pool, state.clone(), "decline-401-requester").await;
+    let (_recipient_token, _recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "decline-401-recipient").await;
+    let (_, create_body) = send_request(state.clone(), &requester_token, &recipient_email).await;
+    let request_id = create_body["id"].as_str().unwrap().to_string();
+
+    let (status, body) = request(
+        api::app(state),
+        "POST",
+        &format!("/api/contacts/requests/{request_id}/decline"),
+        None,
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body, json!({ "error": "unauthorized" }));
+}
+
+/// The 404-for-resolved behaviour must hold across actions, not just for
+/// the same action repeated: a request already resolved by `decline`
+/// (status = 'declined', row still present) must 404 on a subsequent
+/// `accept` attempt, same as a nonexistent id -- not e.g. succeed and
+/// create `contacts` rows for a relationship the recipient rejected.
+#[tokio::test]
+async fn accept_after_decline_returns_404_and_creates_no_contacts() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (requester_token, requester_id, _requester_email) =
+        signup_user(&pool, state.clone(), "aad-requester").await;
+    let (recipient_token, recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "aad-recipient").await;
+    let (_, create_body) = send_request(state.clone(), &requester_token, &recipient_email).await;
+    let request_id = create_body["id"].as_str().unwrap().to_string();
+
+    let (decline_status, _) =
+        resolve_request(state.clone(), &recipient_token, &request_id, "decline").await;
+    assert_eq!(decline_status, StatusCode::NO_CONTENT);
+
+    let (status, body) = resolve_request(state, &recipient_token, &request_id, "accept").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, json!({ "error": "request_not_found" }));
+
+    let contacts_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM contacts
+         WHERE (owner_user_id = $1 AND contact_user_id = $2)
+            OR (owner_user_id = $2 AND contact_user_id = $1)",
+    )
+    .bind(requester_id)
+    .bind(recipient_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(contacts_count, 0);
+}
+
+/// Mirror of the above in the other direction: a request already resolved
+/// by `accept` (row deleted, `contacts` rows created) must 404 on a
+/// subsequent `decline` attempt, not e.g. overwrite anything or return
+/// success for a request that no longer exists.
+#[tokio::test]
+async fn decline_after_accept_returns_404() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (requester_token, _requester_id, _requester_email) =
+        signup_user(&pool, state.clone(), "daa-requester").await;
+    let (recipient_token, _recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "daa-recipient").await;
+    let (_, create_body) = send_request(state.clone(), &requester_token, &recipient_email).await;
+    let request_id = create_body["id"].as_str().unwrap().to_string();
+
+    let (accept_status, _) =
+        resolve_request(state.clone(), &recipient_token, &request_id, "accept").await;
+    assert_eq!(accept_status, StatusCode::NO_CONTENT);
+
+    let (status, body) = resolve_request(state, &recipient_token, &request_id, "decline").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, json!({ "error": "request_not_found" }));
+}
+
+/// Regression test for a race where two genuinely concurrent `accept` calls
+/// against the same pending request could both observe `status = 'pending'`
+/// before either resolved it, and both succeed with `204`. Only one of the
+/// two must ever win; the other must see the request already resolved and
+/// get `404`, exactly like a serialized double-accept
+/// (`accept_already_resolved_request_returns_404`) or double-decline
+/// (`decline_already_resolved_request_returns_404`).
+///
+/// This is inherently racy to reproduce, so the check runs several
+/// iterations with a fresh request each time rather than relying on a
+/// single `tokio::join!` to happen to interleave badly.
+#[tokio::test]
+async fn concurrent_accept_calls_only_one_succeeds() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+
+    for i in 0..10 {
+        let (requester_token, requester_id, _requester_email) =
+            signup_user(&pool, state.clone(), &format!("race-accept-requester-{i}")).await;
+        let (recipient_token, recipient_id, recipient_email) =
+            signup_user(&pool, state.clone(), &format!("race-accept-recipient-{i}")).await;
+        let (_, create_body) =
+            send_request(state.clone(), &requester_token, &recipient_email).await;
+        let request_id = create_body["id"].as_str().unwrap().to_string();
+
+        let first = resolve_request(state.clone(), &recipient_token, &request_id, "accept");
+        let second = resolve_request(state.clone(), &recipient_token, &request_id, "accept");
+        let ((first_status, first_body), (second_status, second_body)) =
+            tokio::join!(first, second);
+
+        let statuses = [first_status, second_status];
+        assert_eq!(
+            statuses
+                .iter()
+                .filter(|s| **s == StatusCode::NO_CONTENT)
+                .count(),
+            1,
+            "exactly one concurrent accept must succeed (iteration {i}): got {statuses:?}"
+        );
+        assert_eq!(
+            statuses.iter().filter(|s| **s == StatusCode::NOT_FOUND).count(),
+            1,
+            "exactly one concurrent accept must be rejected as already-resolved (iteration {i}): got {statuses:?}"
+        );
+        let not_found_body = if first_status == StatusCode::NOT_FOUND {
+            &first_body
+        } else {
+            &second_body
+        };
+        assert_eq!(*not_found_body, json!({ "error": "request_not_found" }));
+
+        // Regardless of which call "won", exactly one pair of `contacts`
+        // rows must exist -- the loser's insert-then-rollback must not
+        // leave a duplicate or a partial row behind.
+        let contacts_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM contacts
+             WHERE (owner_user_id = $1 AND contact_user_id = $2)
+                OR (owner_user_id = $2 AND contact_user_id = $1)",
+        )
+        .bind(requester_id)
+        .bind(recipient_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(contacts_count, 2, "iteration {i}");
+
+        let request_still_present: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM contact_requests WHERE id = $1::uuid")
+                .bind(&request_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            request_still_present, 0,
+            "resolved request row must be deleted (iteration {i})"
+        );
+    }
+}
