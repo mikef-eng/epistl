@@ -117,6 +117,65 @@ user-facing fingerprint/safety-number comparison UI to strengthen this
 trust model further is out of scope for both #40 and #41 (issue #40's
 Notes) and would be a new, separate issue.
 
+### Envelope wire format (issue #41)
+
+`apps/mobile/src/crypto/envelope.ts` packs this module's key material into
+two signed, authenticated binary layouts. Both end with a fixed-length
+ML-DSA-65 signature (3309 bytes, FIPS 204-standard for this parameter
+set) sliced from the end of the buffer — regardless of the variable-length
+AEAD ciphertext in the middle — covering every preceding byte (version
+through AEAD ciphertext+tag), signed with `ml_dsa65.sign` using the
+sender's Dilithium secret key. The per-message AEAD key is the
+`messageKey` returned by `deriveNextSendingMessageKey`/
+`deriveNextReceivingMessageKey` above, used directly as the
+XChaCha20-Poly1305 key (`@noble/ciphers/chacha.js`) — no further HKDF at
+this layer. AAD is the concatenated sender+recipient user id UTF-8 bytes
+(this codebase treats user ids as opaque strings everywhere else — see
+`rootKeyInfoBytes` above for the same precedent — not a parsed 16-byte
+binary UUID), binding ciphertext to a specific conversation direction.
+
+- **Handshake-init envelope, version byte `0x02`** — sent only as the very
+  first message of a brand-new session, carrying `initiateSession`'s `ea`
+  and `kyberCiphertext` plus the message-0 key from
+  `deriveNextSendingMessageKey`:
+  `[1B version = 0x02][32B EA][1088B ML-KEM-768 ciphertext][4B BE message
+  number, always 0][24B XChaCha20-Poly1305 nonce][variable AEAD
+  ciphertext + 16B tag][3309B ML-DSA-65 signature]`.
+- **Ratchet envelope, version byte `0x03`** — used for every message once
+  a session is established (including the responder's very first reply),
+  carrying `deriveNextSendingMessageKey`'s header:
+  `[1B version = 0x03][32B header.dhPublicKey][4B BE
+  header.previousChainLength][4B BE header.messageNumber][24B
+  XChaCha20-Poly1305 nonce][variable AEAD ciphertext + 16B tag][3309B
+  ML-DSA-65 signature]`.
+- **Version `0x01`** (the pre-ADR-0005 single-shot design) is retired: no
+  code path decodes it, and both decode functions treat it the same as
+  any other unrecognized version byte — a decode failure.
+- 1088 (Kyber ciphertext), 3309 (Dilithium signature), and 32 (X25519
+  public key) are FIPS 203/204-standard and RFC 7748-standard sizes for
+  this codebase's pinned parameter sets, confirmed empirically against
+  `@noble/post-quantum`'s and `@noble/curves`'s own output during
+  implementation.
+
+**Fail-closed out-of-order handling, confirmed at the envelope layer:**
+`decodeRatchetEnvelope` calls
+`deriveNextReceivingMessageKey(state, header.dhPublicKey,
+header.messageNumber)` exactly as described in the fail-closed section
+above; a `{ rejected: true }` result is surfaced as a decode failure
+without attempting AEAD decryption, and the caller's ratchet state is
+left untouched (`saveSession` is the caller's responsibility, and callers
+in this codebase — `ChatScreen.tsx` — skip it on any decode failure). A
+verification failure (AEAD decryption failure, `ml_dsa65.verify` failure,
+or this out-of-order rejection) is uniformly a hard "cannot be trusted"
+result: `apps/mobile/src/crypto/envelope.ts`'s decode functions never
+return partial or garbage plaintext, and never throw for
+attacker-controlled input.
+
+Local on-device history storage (`apps/mobile/src/storage/messages.ts`)
+is a separate concern from this wire format — see
+`docs/decisions/0007-local-history-stores-plaintext.md` for why history
+reload does not replay this module's functions against stored envelopes.
+
 ## Consequences
 
 - `apps/mobile/src/crypto/session.ts` implements exactly this: `KDF_RK`/

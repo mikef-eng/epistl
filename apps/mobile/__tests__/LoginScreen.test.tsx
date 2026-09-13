@@ -2,6 +2,7 @@ import { render, screen, userEvent, waitFor } from '@testing-library/react-nativ
 
 import LoginScreen from '../src/screens/LoginScreen';
 import { login, signup } from '../src/api/client';
+import { saveUserId } from '../src/api/session';
 import { ensureKeysRegistered } from '../src/crypto/keyRegistration';
 
 jest.mock('../src/api/client', () => {
@@ -26,9 +27,14 @@ jest.mock('../src/crypto/keyRegistration', () => ({
   ensureKeysRegistered: jest.fn(),
 }));
 
+jest.mock('../src/api/session', () => ({
+  saveUserId: jest.fn(),
+}));
+
 const mockedLogin = login as jest.Mock;
 const mockedSignup = signup as jest.Mock;
 const mockedEnsureKeysRegistered = ensureKeysRegistered as jest.Mock;
+const mockedSaveUserId = saveUserId as jest.Mock;
 
 async function renderLoginScreen() {
   const navigation = { replace: jest.fn() };
@@ -40,6 +46,7 @@ async function renderLoginScreen() {
 describe('LoginScreen', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedSaveUserId.mockResolvedValue(undefined);
   });
 
   it('disables the submit button when the email or password field is empty', async () => {
@@ -119,6 +126,19 @@ describe('LoginScreen', () => {
     });
   });
 
+  it('persists the authenticated user id after a successful login (issue #41)', async () => {
+    mockedLogin.mockResolvedValueOnce({ token: 'tok-1', user: { id: 'user-123' } });
+    const { user } = await renderLoginScreen();
+
+    await user.type(screen.getByPlaceholderText('Email'), 'a@example.com');
+    await user.type(screen.getByPlaceholderText('Password'), 'hunter2');
+    await user.press(screen.getByRole('button', { name: 'Log in' }));
+
+    await waitFor(() => {
+      expect(mockedSaveUserId).toHaveBeenCalledWith('user-123');
+    });
+  });
+
   it('calls ensureKeysRegistered with the authenticated user id after a successful signup', async () => {
     mockedSignup.mockResolvedValueOnce({ token: 'tok-2', user: { id: 'user-456' } });
     const { user } = await renderLoginScreen();
@@ -145,6 +165,7 @@ describe('LoginScreen', () => {
       expect(navigation.replace).toHaveBeenCalledWith('Contacts');
     });
     expect(mockedEnsureKeysRegistered).not.toHaveBeenCalled();
+    expect(mockedSaveUserId).not.toHaveBeenCalled();
   });
 
   it('still navigates to Contacts when ensureKeysRegistered rejects', async () => {
