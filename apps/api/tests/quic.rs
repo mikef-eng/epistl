@@ -1,9 +1,14 @@
 //! Integration tests for the real QUIC listener (`apps/api/src/quic.rs`,
-//! issue #73) against a real Postgres instance, the real `better-auth`-
-//! backed session validation, and a real Quinn client dialing a real
-//! Quinn-served QUIC endpoint -- mirroring `apps/api/tests/ws.rs`'s
-//! coverage shape, but proving the QUIC transport and (critically)
-//! cross-transport delivery via the shared `ConnectionRegistry`.
+//! on by default as of issue #114, originally added opt-in by issue #73)
+//! against a real Postgres instance, the real `better-auth`-backed session
+//! validation, and a real Quinn client dialing a real Quinn-served QUIC
+//! endpoint -- mirroring `apps/api/tests/ws.rs`'s coverage shape, but
+//! proving the QUIC transport and (critically) cross-transport delivery via
+//! the shared `ConnectionRegistry`. See `apps/api/src/quic.rs`'s own
+//! `#[cfg(test)]` unit tests for coverage of the default-on/override/
+//! disable env var resolution logic itself -- these integration tests
+//! always pin an explicit ephemeral-port override (see
+//! `spawn_quic_server`), the same as before issue #114.
 //!
 //! Requires `DATABASE_URL` and `NATS_URL` to point at a reachable Postgres
 //! and NATS (see `docker-compose.yml` for local dev, or the CI services).
@@ -190,7 +195,11 @@ async fn recv_ws_json(ws: &mut WebSocketStream<MaybeTlsStream<tokio::net::TcpStr
 
 /// Binds the real QUIC listener via its actual public entry point,
 /// `api::quic::maybe_spawn` (driven by the `QUIC_LISTEN_ADDR` env var it
-/// reads), on an ephemeral port, and returns the address it bound to.
+/// reads), on an ephemeral port, and returns the address it bound to. This
+/// always pins an explicit override rather than relying on
+/// `api::quic::DEFAULT_LISTEN_ADDR` (issue #114) -- a fixed default port
+/// would collide across parallel test runs, whereas these tests need a
+/// known-free ephemeral one.
 ///
 /// Sets `QUIC_LISTEN_ADDR` to that address for the duration of this call
 /// only (env var access is otherwise process-global) -- safe here because

@@ -9,13 +9,17 @@
  * `createChatSocket`, and the wire frame types) that `connect`/`send` below
  * call into.
  *
- * Per issue #77, `connect` races a QUIC connection attempt (`../transport/
- * quic.ts`'s `connectQuic`, issue #76's driver) against the existing WS
- * path on every (re)connect attempt, giving QUIC a bounded head start
- * (`QUIC_CONNECT_TIMEOUT_MS` below) before falling back to WS. See that
- * constant's doc comment for the exact race/tie-break rules. `ws.ts`'s own
+ * Per issue #114, QUIC is the default, always-attempted-first transport:
+ * `connect` attempts a QUIC connection (`../transport/quic.ts`'s
+ * `connectQuic`, issue #76's driver) alone first on every (re)connect
+ * attempt, and only starts dialing WS once that QUIC attempt has failed
+ * outright or exceeded a bounded timeout (`QUIC_CONNECT_TIMEOUT_MS` below)
+ * -- never concurrently with a QUIC attempt that hasn't yet failed or timed
+ * out. See that constant's doc comment for the exact fallback/tie-break
+ * rules. This corrects issue #77's original design, which raced QUIC and WS
+ * concurrently with only a bounded head start for QUIC. `ws.ts`'s own
  * reconnect/backoff/terminal-close semantics (this file's original WS-only
- * behavior, issue #74) are preserved unchanged for the WS side of the race.
+ * behavior, issue #74) are preserved unchanged for the WS fallback.
  *
  * Screens never hold a socket handle/ref or register `onMessage`/
  * `onStatusChange` callbacks: they call `transportStore.actions.send(frame)`
@@ -38,20 +42,22 @@ export interface TransportState {
 }
 
 export interface TransportActions extends Record<string, (...args: never[]) => unknown> {
-  /** Opens a connection by racing a QUIC attempt (`./quic.ts`'s
-   * `connectQuic`) against a WS attempt (`createChatSocket(await
-   * getToken())`) concurrently -- see `QUIC_CONNECT_TIMEOUT_MS` for the
-   * exact race rules -- reporting `'connecting'` first. Any WS close/error
-   * other than the server's `CLOSE_UNAUTHORIZED` (4001) close code (mirrored
-   * on the QUIC side by `QuicCloseInfo.authFailed`) schedules a reconnect
-   * attempt (which itself races QUIC vs WS again) with exponential backoff:
-   * 1s, 2s, 4s, ... capped at 30s, +/-20% jitter, reporting `'reconnecting'`
-   * while a retry is scheduled/in flight. A successful (re)connect reports
-   * `'connected'`, sets `activeTransport` to whichever transport won the
-   * race, and resets the backoff back to 1s. A 4001 close (or `getToken()`
-   * resolving to `null`, meaning there's no session to reconnect with) is
-   * terminal: reports `'disconnected'` and stops retrying. Any disconnect
-   * sets `activeTransport: null`. `getToken()` is called fresh on every
+  /** Opens a connection by attempting QUIC (`./quic.ts`'s `connectQuic`)
+   * alone first, only starting a WS attempt (`createChatSocket(await
+   * getToken())`) once QUIC has failed outright or exceeded
+   * `QUIC_CONNECT_TIMEOUT_MS` -- see that constant's doc comment for the
+   * exact fallback/tie-break rules -- reporting `'connecting'` first. Any
+   * WS close/error other than the server's `CLOSE_UNAUTHORIZED` (4001)
+   * close code (mirrored on the QUIC side by `QuicCloseInfo.authFailed`)
+   * schedules a reconnect attempt (which itself tries QUIC first again)
+   * with exponential backoff: 1s, 2s, 4s, ... capped at 30s, +/-20% jitter,
+   * reporting `'reconnecting'` while a retry is scheduled/in flight. A
+   * successful (re)connect reports `'connected'` and sets `activeTransport`
+   * to whichever transport actually connected, and resets the backoff back
+   * to 1s. A 4001 close (or `getToken()` resolving to `null`, meaning
+   * there's no session to reconnect with) is terminal: reports
+   * `'disconnected'` and stops retrying. Any disconnect sets
+   * `activeTransport: null`. `getToken()` is called fresh on every
    * (re)connect attempt so a token refreshed while disconnected is picked
    * up rather than reusing a stale one. Calling `connect` again (e.g. a
    * screen remounting) supersedes any previous in-flight/scheduled attempt. */
@@ -62,8 +68,9 @@ export interface TransportActions extends Record<string, (...args: never[]) => u
    * today). */
   send: (frame: SendFrame) => void;
   /** Cancels any pending/future reconnect attempt and closes the current
-   * connection (whichever transport is active, plus any still-racing
-   * attempt) if one is open/in flight. Safe to call more than once. */
+   * connection (whichever transport is active, plus any still in-flight
+   * QUIC/WS attempt) if one is open/in flight. Safe to call more than
+   * once. */
   close: () => void;
 }
 
@@ -79,18 +86,24 @@ const MAX_BACKOFF_MS = 30000;
  * don't all retry in lockstep. */
 const JITTER_RATIO = 0.2;
 
-/** How long QUIC (`./quic.ts`'s `connectQuic`) is given a head start over WS
- * on every (re)connect attempt, per issue #77's acceptance criteria.
- * Started alongside a WS connection attempt, not after it:
- *  - QUIC connects before this elapses -> `activeTransport: 'quic'`, and the
- *    WS attempt in flight is aborted/closed without ever being used.
+/** How long QUIC (`./quic.ts`'s `connectQuic`) is tried alone before this
+ * attempt falls back to WS (issue #114's strict-sequential model -- QUIC is
+ * the default, always-attempted-first transport, not raced against WS with
+ * a head start as issue #77 originally had it):
+ *  - QUIC connects before this elapses -> `activeTransport: 'quic'`; WS is
+ *    never dialed at all for this attempt.
  *  - QUIC hasn't connected by the time this elapses (or fails outright
  *    before then -- in which case the client does not wait out the rest of
- *    this timeout) -> falls back to WS: `activeTransport: 'ws'` once WS is
- *    (or becomes) connected.
- *  - A QUIC success that arrives *after* the timeout already caused a
- *    fallback to WS is closed immediately and discarded -- it never
- *    displaces an already-active WS session mid-attempt.
+ *    this timeout) -> WS is dialed for the first time: `activeTransport:
+ *    'ws'` once it connects.
+ *  - The original (never-aborted) QUIC attempt can still resolve after WS
+ *    has been dialed. If WS has *already connected* (this attempt is
+ *    settled) by the time that late QUIC success arrives, it is closed
+ *    immediately and discarded -- it never displaces an already-connected
+ *    WS session mid-attempt. If WS is still in the process of connecting
+ *    (dialed, but not yet open) when QUIC succeeds, QUIC still wins (WS's
+ *    in-flight attempt is discarded instead) -- nothing has been decided
+ *    yet for this attempt.
  * 2000ms is a starting value (a real device's QUIC handshake, including TLS
  * 1.3, is expected to resolve well within this on a healthy network) --
  * tune based on real-world data once this ships, not a value with any
@@ -113,27 +126,27 @@ function withJitter(delayMs: number): number {
 let socket: WebSocket | null = null;
 /** The QUIC driver connection currently backing `activeTransport: 'quic'`,
  * if any -- mirrors `socket` above for the WS side. Only ever set once a
- * given attempt's race has actually been won by QUIC (see `attemptConnect`
- * below); a QUIC connection that loses the race is closed and discarded
+ * given attempt has actually connected over QUIC (see `attemptConnect`
+ * below); a QUIC connection that loses out to WS is closed and discarded
  * without ever being assigned here. */
 let quicConnection: QuicDriverConnection | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let backoffMs = INITIAL_BACKOFF_MS;
 let closed = true;
 /** Bumped on every `connect()`/`close()` call so a superseded connect
- * attempt's in-flight `getToken()` call, scheduled reconnect, race timers,
- * or socket/QUIC event handlers can recognize they're stale and no-op
- * instead of resurrecting a dead connection or clobbering a newer one's
- * state. */
+ * attempt's in-flight `getToken()` call, scheduled reconnect, fallback
+ * timer, or socket/QUIC event handlers can recognize they're stale and
+ * no-op instead of resurrecting a dead connection or clobbering a newer
+ * one's state. */
 let generation = 0;
-/** Bumped every time a new race (QUIC vs WS) actually starts -- i.e. once
- * per `attemptConnect` call, which happens on the initial `connect()` and
- * on every subsequent reconnect attempt within the same `generation`.
+/** Bumped every time a new attempt actually starts -- i.e. once per
+ * `attemptConnect` call, which happens on the initial `connect()` and on
+ * every subsequent reconnect attempt within the same `generation`.
  * `generation` alone can't distinguish "this reconnect attempt" from "the
  * next one" since both share it; this closes that gap so a late event from
  * an earlier attempt within the same session (e.g. a QUIC success arriving
- * after that attempt's own race was already lost and a fresh reconnect
- * attempt has since started) is recognized as stale too. */
+ * after that attempt already fell back to WS and a fresh reconnect attempt
+ * has since started) is recognized as stale too. */
 let attemptId = 0;
 
 export const transportStore = new Store<TransportState, TransportActions>(
@@ -156,9 +169,9 @@ export const transportStore = new Store<TransportState, TransportActions>(
       }, delay);
     }
 
-    /** Starts one race (QUIC vs WS) for a single (re)connect attempt. See
-     * `QUIC_CONNECT_TIMEOUT_MS`'s doc comment for the race rules this
-     * implements. */
+    /** Runs one QUIC-first, WS-fallback sequence for a single (re)connect
+     * attempt. See `QUIC_CONNECT_TIMEOUT_MS`'s doc comment for the exact
+     * fallback/tie-break rules this implements. */
     async function attemptConnect(
       getToken: () => Promise<string | null>,
       myGeneration: number
@@ -166,35 +179,36 @@ export const transportStore = new Store<TransportState, TransportActions>(
       if (closed || myGeneration !== generation) {
         return;
       }
-      const token = await getToken();
+      const fetchedToken = await getToken();
       if (closed || myGeneration !== generation) {
         return;
       }
-      if (!token) {
+      if (!fetchedToken) {
         setState((s) => ({ ...s, status: 'disconnected', activeTransport: null }));
         return;
       }
+      // Re-bound to a variable TypeScript's control-flow narrowing tracks
+      // as `string` (not `string | null`) inside the nested closures below
+      // (`startWs`, the `connectQuic(...).then(...)` handlers) -- narrowing
+      // on `fetchedToken` itself doesn't carry into those, since they could
+      // in principle run after further reassignment.
+      const token: string = fetchedToken;
 
       attemptId += 1;
       const myAttempt = attemptId;
       const stale = () => closed || myGeneration !== generation || myAttempt !== attemptId;
 
-      // This attempt's race state. All of it is local to this attempt (as
+      // This attempt's state. All of it is local to this attempt (as
       // opposed to the module-scoped `socket`/`quicConnection` above, which
-      // track whichever connection -- if any -- actually won).
+      // track whichever connection -- if any -- actually ended up active).
       let settled = false;
-      let wsReady = false;
+      let ws: WebSocket | null = null;
       let wsDiscarded = false;
-      let quicOutOfRace = false;
-      let wsOutOfRace = false;
       let quicTimer: ReturnType<typeof setTimeout> | null = null;
       // Set once `connectQuic`'s promise resolves, so the QUIC listeners
       // below (created before that promise resolves) can recognize
       // mid-session events for *this* connection specifically.
       let thisQuicConn: QuicDriverConnection | null = null;
-
-      const ws = createChatSocket(token);
-      socket = ws;
 
       function clearQuicTimer() {
         if (quicTimer !== null) {
@@ -207,11 +221,11 @@ export const transportStore = new Store<TransportState, TransportActions>(
         settled = true;
         clearQuicTimer();
         quicConnection = conn;
-        if (!wsDiscarded) {
+        if (ws !== null && !wsDiscarded) {
           wsDiscarded = true;
           ws.close();
         }
-        if (socket === ws) {
+        if (ws !== null && socket === ws) {
           socket = null;
         }
         backoffMs = INITIAL_BACKOFF_MS;
@@ -220,89 +234,96 @@ export const transportStore = new Store<TransportState, TransportActions>(
 
       function finishWithWs() {
         settled = true;
-        clearQuicTimer();
         backoffMs = INITIAL_BACKOFF_MS;
         setState((s) => ({ ...s, status: 'connected', activeTransport: 'ws' }));
       }
 
       /** Neither transport connected for this attempt -- schedule a
-       * reconnect, same as a lone failed WS attempt did before this issue. */
+       * reconnect, same as a lone failed WS attempt did before issue
+       * #77. */
       function giveUp() {
         settled = true;
         setState((s) => ({ ...s, activeTransport: null }));
         scheduleReconnect(getToken, myGeneration);
       }
 
-      ws.onmessage = (event: { data: unknown }) => {
-        if (stale() || wsDiscarded) {
+      /** Starts the WS fallback attempt. Called only once QUIC has failed
+       * outright or exceeded `QUIC_CONNECT_TIMEOUT_MS` for this attempt --
+       * never while a QUIC attempt that hasn't yet failed/timed out is
+       * still outstanding (issue #114's strict-sequential model). */
+      function startWs() {
+        if (stale() || settled) {
           return;
         }
-        let frame: IncomingFrame;
-        try {
-          frame = JSON.parse(String(event.data)) as IncomingFrame;
-        } catch {
-          return;
-        }
-        setState((s) => ({ ...s, lastFrame: frame }));
-      };
+        const socketInstance = createChatSocket(token);
+        ws = socketInstance;
+        socket = socketInstance;
 
-      ws.onopen = () => {
-        if (stale()) {
-          ws.close();
-          return;
-        }
-        wsReady = true;
-        if (settled) {
-          // QUIC already won (or this attempt otherwise already concluded)
-          // -- this WS connection was never meant to be used.
-          wsDiscarded = true;
-          ws.close();
-          return;
-        }
-        if (quicOutOfRace) {
+        socketInstance.onmessage = (event: { data: unknown }) => {
+          if (stale() || wsDiscarded) {
+            return;
+          }
+          let frame: IncomingFrame;
+          try {
+            frame = JSON.parse(String(event.data)) as IncomingFrame;
+          } catch {
+            return;
+          }
+          setState((s) => ({ ...s, lastFrame: frame }));
+        };
+
+        socketInstance.onopen = () => {
+          if (stale()) {
+            socketInstance.close();
+            return;
+          }
+          if (settled) {
+            // QUIC won late (it resolved successfully after this WS
+            // attempt was dialed, but before WS itself connected) -- this
+            // WS connection was never meant to be used.
+            wsDiscarded = true;
+            socketInstance.close();
+            return;
+          }
           finishWithWs();
-        }
-        // Otherwise QUIC's head start hasn't concluded yet -- wait for it.
-      };
+        };
 
-      ws.onclose = (event: { code: number }) => {
-        if (socket === ws) {
-          socket = null;
-        }
-        if (stale() || wsDiscarded) {
-          return;
-        }
-        if (settled) {
-          // WS was this attempt's winner and is now dropping mid-session --
-          // issue #74's existing reconnect/backoff/terminal-close behavior,
-          // unchanged by the race.
+        socketInstance.onclose = (event: { code: number }) => {
+          if (socket === socketInstance) {
+            socket = null;
+          }
+          if (stale() || wsDiscarded) {
+            return;
+          }
+          if (settled) {
+            // WS was this attempt's winner and is now dropping mid-session
+            // -- issue #74's existing reconnect/backoff/terminal-close
+            // behavior, unchanged by the QUIC-first fallback.
+            if (event?.code === CLOSE_UNAUTHORIZED) {
+              setState((s) => ({ ...s, status: 'disconnected', activeTransport: null }));
+              return;
+            }
+            setState((s) => ({ ...s, activeTransport: null }));
+            scheduleReconnect(getToken, myGeneration);
+            return;
+          }
+          // WS failed before ever connecting. QUIC has already
+          // failed/timed out by the time WS was dialed, so there's nothing
+          // left to fall back to for this attempt.
           if (event?.code === CLOSE_UNAUTHORIZED) {
+            settled = true;
             setState((s) => ({ ...s, status: 'disconnected', activeTransport: null }));
             return;
           }
-          setState((s) => ({ ...s, activeTransport: null }));
-          scheduleReconnect(getToken, myGeneration);
-          return;
-        }
-        // WS closed before ever winning this attempt's race.
-        if (event?.code === CLOSE_UNAUTHORIZED) {
-          settled = true;
-          clearQuicTimer();
-          setState((s) => ({ ...s, status: 'disconnected', activeTransport: null }));
-          return;
-        }
-        wsOutOfRace = true;
-        if (quicOutOfRace) {
           giveUp();
-        }
-        // Otherwise QUIC might still win -- wait for it.
-      };
+        };
 
-      // Real WebSocket implementations (browser and React Native) always
-      // follow a failed connection's `error` event with a `close` event, so
-      // reconnect scheduling lives entirely in `onclose` above; this just
-      // avoids relying on unhandled-error-event warnings.
-      ws.onerror = () => {};
+        // Real WebSocket implementations (browser and React Native) always
+        // follow a failed connection's `error` event with a `close` event,
+        // so reconnect scheduling lives entirely in `onclose` above; this
+        // just avoids relying on unhandled-error-event warnings.
+        socketInstance.onerror = () => {};
+      }
 
       const quicListeners: QuicListeners = {
         onFrame(frame) {
@@ -330,38 +351,37 @@ export const transportStore = new Store<TransportState, TransportActions>(
         if (stale() || settled) {
           return;
         }
-        quicOutOfRace = true;
-        if (wsReady) {
-          finishWithWs();
-        }
-        // Otherwise WS hasn't connected yet either -- its own `onopen` will
-        // finish the attempt once it does, without waiting any further.
+        // QUIC hasn't succeeded (or failed) within its bounded timeout --
+        // fall back to WS now. The original QUIC attempt is not aborted; a
+        // late success is handled in the `connectQuic(...).then(...)`
+        // success handler below.
+        startWs();
       }, QUIC_CONNECT_TIMEOUT_MS);
 
       connectQuic(token, quicListeners).then(
         (conn) => {
           thisQuicConn = conn;
+          clearQuicTimer();
           if (stale() || settled) {
-            // Either this attempt is dead, or QUIC lost this attempt's race
-            // already (timed out/failed and WS won) -- a late QUIC success
-            // is discarded, never displacing an already-decided outcome.
+            // Either this attempt is dead, or WS has already connected by
+            // the time QUIC finally succeeded -- a late QUIC success is
+            // discarded, never displacing an already-connected WS session.
             conn.close();
             return;
           }
           finishWithQuic(conn);
         },
         () => {
-          if (stale() || settled) {
+          if (stale()) {
             return;
           }
           clearQuicTimer();
-          quicOutOfRace = true;
-          if (wsReady) {
-            finishWithWs();
-          } else if (wsOutOfRace) {
-            giveUp();
+          if (settled) {
+            return;
           }
-          // Otherwise WS hasn't connected (or failed) yet -- let it decide.
+          // QUIC failed outright -- fall back to WS immediately, without
+          // waiting out the rest of QUIC_CONNECT_TIMEOUT_MS.
+          startWs();
         }
       );
     }
