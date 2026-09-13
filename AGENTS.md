@@ -94,6 +94,7 @@ Coder updates the docs in the same PR; Reviewer blocks merge if they're stale re
 - [`docs/decisions/0007-local-history-stores-plaintext.md`](docs/decisions/0007-local-history-stores-plaintext.md)
 - [`docs/decisions/0008-jetstream-transient-offline-queue.md`](docs/decisions/0008-jetstream-transient-offline-queue.md)
 - [`docs/decisions/0009-tanstack-store-and-query-for-network-layer.md`](docs/decisions/0009-tanstack-store-and-query-for-network-layer.md)
+- [`docs/decisions/0010-no-device-testing-gate.md`](docs/decisions/0010-no-device-testing-gate.md)
 
 Add a new numbered file here for any future decision with real cost-of-change (data model, protocol, storage boundaries) — not for routine implementation choices.
 
