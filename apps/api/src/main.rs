@@ -48,6 +48,15 @@ async fn main() {
         }
     };
 
+    // Fail fast the same way: the offline-delivery queue is a fixed part
+    // of the app's contract with itself (see ADR 0008), so an
+    // unconfigurable JetStream is as fatal as an unreachable NATS server.
+    let jetstream = async_nats::jetstream::new(nats_client.clone());
+    if let Err(err) = nats::ensure_offline_stream(&jetstream).await {
+        eprintln!("startup failed: {err}");
+        std::process::exit(1);
+    }
+
     let secret = match std::env::var(AUTH_SECRET_VAR) {
         Ok(secret) => secret,
         Err(_) => {
