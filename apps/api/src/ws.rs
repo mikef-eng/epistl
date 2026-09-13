@@ -332,6 +332,15 @@ async fn handle_send(
 /// and "queued for offline delivery". On failure, the sender gets a
 /// `queue_unavailable` error frame and the message is not delivered by any
 /// path.
+///
+/// After a successful publish, spawns a best-effort background attempt
+/// (see [`redeliver_if_now_connected`]) to close the narrow race where the
+/// recipient finishes connecting concurrently with this publish -- too
+/// late for their own connect-time catch-up fetch (issue #54) to have
+/// caught this specific message, but soon enough that making them wait
+/// for their *next* reconnect would be needlessly slow (issue #63). This
+/// is spawned rather than awaited so it never adds latency to the sender's
+/// own `ack` frame below.
 async fn queue_for_offline_delivery(
     state: &AppState,
     sender_id: Uuid,
@@ -340,23 +349,34 @@ async fn queue_for_offline_delivery(
     tx: &mpsc::UnboundedSender<Message>,
 ) -> Result<(), ()> {
     let jetstream = async_nats::jetstream::new(state.nats.clone());
+    let sent_at = Utc::now().to_rfc3339();
     let payload = json!({
         "from": sender_id,
         "body_b64": body_b64,
-        "sent_at": Utc::now().to_rfc3339(),
+        "sent_at": sent_at,
     });
 
-    let published: Result<(), async_nats::Error> = async {
+    let published: Result<u64, async_nats::Error> = async {
         let ack = jetstream
             .publish(crate::nats::offline_subject(to), payload.to_string().into())
             .await?;
-        ack.await?;
-        Ok(())
+        Ok(ack.await?.sequence)
     }
     .await;
 
     match published {
-        Ok(()) => {
+        Ok(sequence) => {
+            let relay = json!({
+                "type": "message",
+                "from": sender_id,
+                "body_b64": body_b64,
+                "sent_at": sent_at,
+            });
+            let redelivery_state = state.clone();
+            tokio::spawn(async move {
+                redeliver_if_now_connected(&redelivery_state, to, sequence, relay).await;
+            });
+
             let ack = json!({ "type": "ack", "to": to });
             tx.send(Message::Text(ack.to_string().into()))
                 .map_err(|_| ())
@@ -369,8 +389,314 @@ async fn queue_for_offline_delivery(
     }
 }
 
+/// Best-effort close of the narrow race between [`queue_for_offline_delivery`]
+/// publishing a message and the recipient finishing a concurrent reconnect
+/// too early for their own connect-time catch-up fetch
+/// (`deliver_queued_messages`, issue #54) to have caught it -- see issue
+/// #63. Only ever invoked as a spawned background task, after the publish
+/// it concerns has already been acked by JetStream, so `sequence` reliably
+/// identifies a message currently sitting in [`crate::nats::OFFLINE_STREAM_NAME`].
+///
+/// Re-checks the registry for `to`; if they're connected, forwards `relay`
+/// (the identical frame `deliver_queued_messages` and a live relay would
+/// produce for this message) directly over their `tx`, then -- only on a
+/// successful send -- removes the message from the queue with
+/// [`async_nats::jetstream::stream::Stream::delete_message`], a direct
+/// administrative delete by sequence number.
+///
+/// Deliberately does not create or touch any consumer. An earlier attempt
+/// at this fix re-invoked `deliver_queued_messages` itself (i.e. created a
+/// second ephemeral pull consumer on the same `epistl.offline.<to>`
+/// subject) and found that collided with the recipient's own
+/// still-registered connect-time consumer -- `deliver_queued_messages`
+/// doesn't explicitly delete its ephemeral consumer, and JetStream keeps
+/// one registered for several seconds past its `fetch()` returning -- in
+/// essentially every real occurrence of this race, not just a rare
+/// sub-window. Deleting by sequence number instead sidesteps that
+/// entirely: it works the same whether or not the recipient's own
+/// connect-time consumer is still lingering.
+///
+/// Swallows every failure (recipient not connected after all, their `tx`
+/// gone, the delete erroring): this is strictly a best-effort improvement
+/// layered on top of the self-resolving behavior that already exists
+/// without it -- a message left undeleted here simply stays queued for the
+/// recipient's next reconnect, bounded by issue #52's `max_age` TTL.
+async fn redeliver_if_now_connected(state: &AppState, to: Uuid, sequence: u64, relay: Value) {
+    let Some(recipient_tx) = state.registry.get(&to).await else {
+        return;
+    };
+
+    if recipient_tx
+        .send(Message::Text(relay.to_string().into()))
+        .is_err()
+    {
+        return;
+    }
+
+    let jetstream = async_nats::jetstream::new(state.nats.clone());
+    let Ok(stream) = jetstream.get_stream(crate::nats::OFFLINE_STREAM_NAME).await else {
+        return;
+    };
+    let _ = stream.delete_message(sequence).await;
+}
+
 fn send_error(tx: &mpsc::UnboundedSender<Message>, code: &str, message: &str) -> Result<(), ()> {
     let frame = json!({ "type": "error", "code": code, "message": message });
     tx.send(Message::Text(frame.to_string().into()))
         .map_err(|_| ())
+}
+
+/// Deterministic (no wall-clock reliance) unit tests for
+/// [`redeliver_if_now_connected`], issue #63's fix for the narrow race
+/// between [`queue_for_offline_delivery`]'s publish and a recipient
+/// finishing a concurrent reconnect too early for their own connect-time
+/// catch-up fetch (`deliver_queued_messages`, issue #54) to have caught
+/// this specific message.
+///
+/// These call the module's private functions directly (white-box) rather
+/// than going through a real `/ws` connection (as `apps/api/tests/ws.rs`
+/// does): the whole point is to control the exact interleaving between
+/// the recipient's connect-time consumer and the fix's direct
+/// forward-and-delete, which real concurrent WebSocket traffic can't
+/// deterministically reproduce. See `apps/api/tests/ws.rs` for the
+/// unmodified-wire-behavior coverage (ack framing, no-double-delivery,
+/// etc.) that already exercises `queue_for_offline_delivery` end to end.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::postgres::PgPoolOptions;
+    use tokio::time::timeout;
+
+    /// A fixed test secret -- `better-auth` requires at least 32 bytes. Not
+    /// a real secret; only ever used against ephemeral/local test
+    /// databases. Mirrors `apps/api/tests/ws.rs`'s `TEST_SECRET`.
+    const TEST_SECRET: &str = "test-only-secret-do-not-use-in-prod-32+";
+
+    /// How long a single channel `.recv()` is allowed to take before a test
+    /// fails -- generous CI slack, not part of the race being driven
+    /// (that's controlled entirely by call ordering below, not timing).
+    const RECV_TIMEOUT: Duration = Duration::from_secs(5);
+
+    /// How long `assert_no_further_message` waits before concluding nothing
+    /// else is coming.
+    const NO_MESSAGE_WINDOW: Duration = Duration::from_millis(750);
+
+    async fn test_state() -> AppState {
+        dotenvy::dotenv().ok();
+        let database_url =
+            std::env::var("DATABASE_URL").expect("DATABASE_URL must be set to run this test");
+        let auth = auth::build_auth(&database_url, TEST_SECRET)
+            .await
+            .expect("failed to build BetterAuth for test");
+        let pool = PgPoolOptions::new()
+            .max_connections(5)
+            .connect(&database_url)
+            .await
+            .expect("failed to connect to Postgres");
+        let nats_url = std::env::var("NATS_URL").expect("NATS_URL must be set to run this test");
+        let nats = async_nats::connect(&nats_url)
+            .await
+            .expect("failed to connect to NATS");
+        AppState {
+            auth,
+            pool,
+            registry: crate::registry::ConnectionRegistry::new(),
+            nats,
+        }
+    }
+
+    async fn recv_frame(rx: &mut mpsc::UnboundedReceiver<Message>) -> Value {
+        let message = timeout(RECV_TIMEOUT, rx.recv())
+            .await
+            .expect("timed out waiting for a frame")
+            .expect("channel closed before sending a frame");
+        match message {
+            Message::Text(text) => serde_json::from_str(&text).expect("frame was not valid JSON"),
+            other => panic!("expected a text frame, got {other:?}"),
+        }
+    }
+
+    async fn assert_no_further_message(rx: &mut mpsc::UnboundedReceiver<Message>) {
+        let result = timeout(NO_MESSAGE_WINDOW, rx.recv()).await;
+        assert!(
+            result.is_err(),
+            "expected no further frame, but got one: {result:?}"
+        );
+    }
+
+    /// Publishes directly to `to`'s offline subject (mirroring what
+    /// `queue_for_offline_delivery` itself publishes) and returns the
+    /// resulting `PublishAck.sequence`, so the test can drive
+    /// `redeliver_if_now_connected` with full control over ordering
+    /// instead of going through the spawn inside `queue_for_offline_delivery`.
+    async fn publish_offline_message(
+        state: &AppState,
+        sender_id: Uuid,
+        to: Uuid,
+        body_b64: &str,
+        sent_at: &str,
+    ) -> u64 {
+        let jetstream = async_nats::jetstream::new(state.nats.clone());
+        let payload = json!({
+            "from": sender_id,
+            "body_b64": body_b64,
+            "sent_at": sent_at,
+        });
+        let ack = jetstream
+            .publish(crate::nats::offline_subject(to), payload.to_string().into())
+            .await
+            .expect("failed to publish offline message");
+        ack.await.expect("publish was not acked").sequence
+    }
+
+    /// Drives the exact race from issue #63 deterministically, by ordering
+    /// (not timing):
+    ///
+    /// 1. The recipient "connects" (registry insert) and runs their own
+    ///    connect-time catch-up fetch (`deliver_queued_messages`, issue
+    ///    #54) -- *before* the sender's message has been published at all,
+    ///    so it (correctly, per #54's own scope) finds nothing. This is
+    ///    exactly what leaves an ephemeral consumer registered on
+    ///    `epistl.offline.<to>` that lingers for several seconds
+    ///    afterward -- the condition that broke the original
+    ///    re-invoke-`deliver_queued_messages` design (see this function's
+    ///    module-level doc comment and the issue's empirical-finding
+    ///    comment).
+    /// 2. The sender's message is published (mirroring
+    ///    `queue_for_offline_delivery`'s publish, which -- per the issue --
+    ///    is understood to race a concurrent connect like step 1's).
+    /// 3. `redeliver_if_now_connected` is invoked directly and awaited
+    ///    (the exact call `queue_for_offline_delivery` spawns after its
+    ///    publish is acked), immediately after step 2 and thus still well
+    ///    within the lingering-consumer window from step 1 -- proving the
+    ///    fix's `delete_message` call succeeds without needing or creating
+    ///    any consumer of its own, sidestepping the collision that broke
+    ///    the original design.
+    ///
+    /// Asserts the recipient receives the message as an ordinary
+    /// `{"type": "message", ...}` frame (no reconnect needed), that
+    /// nothing else arrives after it, and that a subsequent reconnect's
+    /// own catch-up fetch sees nothing further for it -- exactly-once
+    /// delivery via the direct-delete path, not a duplicate left sitting
+    /// in the queue.
+    #[tokio::test]
+    async fn redeliver_forwards_directly_and_deletes_by_sequence_while_recipients_own_consumer_lingers(
+    ) {
+        let state = test_state().await;
+        let jetstream = async_nats::jetstream::new(state.nats.clone());
+        crate::nats::ensure_offline_stream(&jetstream)
+            .await
+            .expect("failed to ensure the offline-delivery stream exists");
+
+        let sender_id = Uuid::new_v4();
+        let to = Uuid::new_v4();
+        let body_b64 = BASE64.encode(b"raced past the recipient's own catch-up fetch");
+        let sent_at = Utc::now().to_rfc3339();
+
+        // Step 1: the recipient connects and runs their own connect-time
+        // catch-up fetch before anything has been published for them --
+        // nothing to deliver, but it leaves a lingering ephemeral consumer
+        // registered on their subject.
+        let (recipient_tx, mut recipient_rx) = mpsc::unbounded_channel::<Message>();
+        state.registry.insert(to, recipient_tx.clone()).await;
+        deliver_queued_messages(&state, to, &recipient_tx).await;
+        assert_no_further_message(&mut recipient_rx).await;
+
+        let mut stream = jetstream
+            .get_stream(crate::nats::OFFLINE_STREAM_NAME)
+            .await
+            .expect("failed to fetch the offline-delivery stream");
+        let consumer_count_before_delete = stream
+            .info()
+            .await
+            .expect("failed to fetch stream info")
+            .state
+            .consumer_count;
+        assert!(
+            consumer_count_before_delete >= 1,
+            "expected the recipient's own connect-time consumer to still be \
+             registered immediately after their fetch, proving this test \
+             actually drives the lingering-consumer condition -- got {consumer_count_before_delete}"
+        );
+
+        // Step 2: the sender's message is published, as if
+        // `queue_for_offline_delivery` had raced the connect above.
+        let sequence = publish_offline_message(&state, sender_id, to, &body_b64, &sent_at).await;
+
+        // Step 3: the fix's direct forward-and-delete, run immediately --
+        // still within the lingering-consumer window from step 1 -- and
+        // awaited directly instead of through `queue_for_offline_delivery`'s
+        // spawn, for a fully deterministic assertion order.
+        let relay = json!({
+            "type": "message",
+            "from": sender_id,
+            "body_b64": body_b64,
+            "sent_at": sent_at,
+        });
+        redeliver_if_now_connected(&state, to, sequence, relay.clone()).await;
+
+        // The recipient received the message directly, without a further
+        // reconnect, and nothing else follows it.
+        let received = recv_frame(&mut recipient_rx).await;
+        assert_eq!(received, relay);
+        assert_no_further_message(&mut recipient_rx).await;
+
+        // The delete succeeded without creating (or needing) any consumer
+        // of its own: the consumer count is unchanged from immediately
+        // before the delete, even though the recipient's own consumer from
+        // step 1 was still registered at that point.
+        let consumer_count_after_delete = stream
+            .info()
+            .await
+            .expect("failed to fetch stream info")
+            .state
+            .consumer_count;
+        assert_eq!(
+            consumer_count_after_delete, consumer_count_before_delete,
+            "delete_message must not create (or require) a consumer"
+        );
+
+        // A subsequent reconnect's own catch-up fetch sees nothing further
+        // for this message: it was genuinely removed from the queue by the
+        // direct delete, not merely delivered while also left behind.
+        let (reconnect_tx, mut reconnect_rx) = mpsc::unbounded_channel::<Message>();
+        deliver_queued_messages(&state, to, &reconnect_tx).await;
+        assert_no_further_message(&mut reconnect_rx).await;
+    }
+
+    /// If the registry re-check finds the recipient is *not* connected
+    /// (the ordinary, non-racing case), the message must be left alone in
+    /// the queue -- untouched -- so it remains available for their next
+    /// connect-time catch-up fetch, per this function's own doc comment
+    /// and the issue's acceptance criteria.
+    #[tokio::test]
+    async fn redeliver_leaves_the_message_queued_when_recipient_is_not_connected() {
+        let state = test_state().await;
+        let jetstream = async_nats::jetstream::new(state.nats.clone());
+        crate::nats::ensure_offline_stream(&jetstream)
+            .await
+            .expect("failed to ensure the offline-delivery stream exists");
+
+        let sender_id = Uuid::new_v4();
+        let to = Uuid::new_v4();
+        let body_b64 = BASE64.encode(b"never raced anything");
+        let sent_at = Utc::now().to_rfc3339();
+
+        let sequence = publish_offline_message(&state, sender_id, to, &body_b64, &sent_at).await;
+        let relay = json!({
+            "type": "message",
+            "from": sender_id,
+            "body_b64": body_b64,
+            "sent_at": sent_at,
+        });
+
+        // `to` was never inserted into the registry -- not connected.
+        redeliver_if_now_connected(&state, to, sequence, relay.clone()).await;
+
+        // The message is still there for the recipient's eventual connect.
+        let (rx_tx, mut rx_rx) = mpsc::unbounded_channel::<Message>();
+        deliver_queued_messages(&state, to, &rx_tx).await;
+        let received = recv_frame(&mut rx_rx).await;
+        assert_eq!(received, relay);
+    }
 }
