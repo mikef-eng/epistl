@@ -13,7 +13,7 @@ Ship post-quantum E2EE chat using CRYSTALS-Kyber and CRYSTALS-Dilithium (standar
 | Monorepo | [moonrepo](https://moonrepo.dev) |
 | Frontend | Expo + React Native (TypeScript) + expo-sqlite + NativeWind (Tailwind) + [`@noble/post-quantum`](https://www.npmjs.com/package/@noble/post-quantum) (pinned Kyber/ML-KEM and Dilithium/ML-DSA implementation) + [`@noble/curves`](https://www.npmjs.com/package/@noble/curves) (pinned X25519 implementation, same `paulmillr`-maintained suite) + [`@noble/ciphers`](https://www.npmjs.com/package/@noble/ciphers) (pinned XChaCha20-Poly1305 AEAD, same `paulmillr`-maintained suite, used by `apps/mobile/src/crypto/envelope.ts`'s message encryption) |
 | Backend | Rust (Axum, tokio) + [`better-auth`](https://crates.io/crates/better-auth) (crate name is `better-auth`, **not** `better-auth-rs` — see `apps/api/Cargo.toml` for why) |
-| Message broker | NATS JetStream, via [`async-nats`](https://crates.io/crates/async-nats) (the official `nats-io`-maintained Rust client, pinned in `apps/api/Cargo.toml`) — local dev now requires the `nats` docker-compose service; only core-NATS connectivity is wired so far (no stream/consumer config yet — see [issue tracker](https://github.com/mikef-eng/epistl/issues) for the rest of the offline-delivery batch) |
+| Message broker | NATS JetStream, via [`async-nats`](https://crates.io/crates/async-nats) (the official `nats-io`-maintained Rust client, pinned in `apps/api/Cargo.toml`) — local dev requires the `nats` docker-compose service. On startup the API configures (or fetches, if already present) the `EPISTL_OFFLINE_MESSAGES` stream, a transient, short-TTL offline-delivery queue — see [`docs/decisions/0008-jetstream-transient-offline-queue.md`](docs/decisions/0008-jetstream-transient-offline-queue.md); nothing publishes to or consumes from it yet (see [issue tracker](https://github.com/mikef-eng/epistl/issues) for the rest of the offline-delivery batch) |
 | Primary DB | Postgres (auth and core app data only — see [`docs/decisions/0001-message-content-never-in-postgres.md`](docs/decisions/0001-message-content-never-in-postgres.md)) |
 | Cold storage | ScyllaDB (chat history backup; opt-in, not yet built — see [`docs/decisions/0002-scylla-backup-is-opt-in.md`](docs/decisions/0002-scylla-backup-is-opt-in.md)) |
 | Transport | Quinn/QUIC (planned; API currently serves plain HTTP/WebSocket) |
@@ -68,7 +68,7 @@ Postgres MCP is configured in [`.mcp.json`](.mcp.json) (project-scoped, via [`cr
    moon run api:migrate
    ```
 
-4. **Run the API server** (listens on `0.0.0.0:3000`; refuses to start unless `DATABASE_URL`, `AUTH_SECRET`, and `NATS_URL` — all in your `.env` — resolve to a value):
+4. **Run the API server** (listens on `0.0.0.0:3000`; refuses to start unless `DATABASE_URL`, `AUTH_SECRET`, and `NATS_URL` — all in your `.env` — resolve to a value; also configures the `EPISTL_OFFLINE_MESSAGES` JetStream stream at startup, using `OFFLINE_QUEUE_MAX_AGE_SECS` from your `.env` if set, otherwise defaulting to 24 hours):
 
    ```bash
    moon run api:dev
