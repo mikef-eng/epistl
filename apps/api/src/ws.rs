@@ -464,6 +464,7 @@ fn send_error(tx: &mpsc::UnboundedSender<Message>, code: &str, message: &str) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use sqlx::postgres::PgPoolOptions;
     use tokio::time::timeout;
 
@@ -580,6 +581,7 @@ mod tests {
     /// delivery via the direct-delete path, not a duplicate left sitting
     /// in the queue.
     #[tokio::test]
+    #[serial]
     async fn redeliver_forwards_directly_and_deletes_by_sequence_while_recipients_own_consumer_lingers(
     ) {
         let state = test_state().await;
@@ -670,6 +672,7 @@ mod tests {
     /// connect-time catch-up fetch, per this function's own doc comment
     /// and the issue's acceptance criteria.
     #[tokio::test]
+    #[serial]
     async fn redeliver_leaves_the_message_queued_when_recipient_is_not_connected() {
         let state = test_state().await;
         let jetstream = async_nats::jetstream::new(state.nats.clone());
