@@ -616,3 +616,88 @@ async fn accept_contact_request_without_token_returns_401() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(body, json!({ "error": "unauthorized" }));
 }
+
+#[tokio::test]
+async fn decline_contact_request_without_token_returns_401() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (requester_token, _requester_id, _requester_email) =
+        signup_user(&pool, state.clone(), "decline-401-requester").await;
+    let (_recipient_token, _recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "decline-401-recipient").await;
+    let (_, create_body) = send_request(state.clone(), &requester_token, &recipient_email).await;
+    let request_id = create_body["id"].as_str().unwrap().to_string();
+
+    let (status, body) = request(
+        api::app(state),
+        "POST",
+        &format!("/api/contacts/requests/{request_id}/decline"),
+        None,
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body, json!({ "error": "unauthorized" }));
+}
+
+/// The 404-for-resolved behaviour must hold across actions, not just for
+/// the same action repeated: a request already resolved by `decline`
+/// (status = 'declined', row still present) must 404 on a subsequent
+/// `accept` attempt, same as a nonexistent id -- not e.g. succeed and
+/// create `contacts` rows for a relationship the recipient rejected.
+#[tokio::test]
+async fn accept_after_decline_returns_404_and_creates_no_contacts() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (requester_token, requester_id, _requester_email) =
+        signup_user(&pool, state.clone(), "aad-requester").await;
+    let (recipient_token, recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "aad-recipient").await;
+    let (_, create_body) = send_request(state.clone(), &requester_token, &recipient_email).await;
+    let request_id = create_body["id"].as_str().unwrap().to_string();
+
+    let (decline_status, _) =
+        resolve_request(state.clone(), &recipient_token, &request_id, "decline").await;
+    assert_eq!(decline_status, StatusCode::NO_CONTENT);
+
+    let (status, body) = resolve_request(state, &recipient_token, &request_id, "accept").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, json!({ "error": "request_not_found" }));
+
+    let contacts_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM contacts
+         WHERE (owner_user_id = $1 AND contact_user_id = $2)
+            OR (owner_user_id = $2 AND contact_user_id = $1)",
+    )
+    .bind(requester_id)
+    .bind(recipient_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(contacts_count, 0);
+}
+
+/// Mirror of the above in the other direction: a request already resolved
+/// by `accept` (row deleted, `contacts` rows created) must 404 on a
+/// subsequent `decline` attempt, not e.g. overwrite anything or return
+/// success for a request that no longer exists.
+#[tokio::test]
+async fn decline_after_accept_returns_404() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (requester_token, _requester_id, _requester_email) =
+        signup_user(&pool, state.clone(), "daa-requester").await;
+    let (recipient_token, _recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "daa-recipient").await;
+    let (_, create_body) = send_request(state.clone(), &requester_token, &recipient_email).await;
+    let request_id = create_body["id"].as_str().unwrap().to_string();
+
+    let (accept_status, _) =
+        resolve_request(state.clone(), &recipient_token, &request_id, "accept").await;
+    assert_eq!(accept_status, StatusCode::NO_CONTENT);
+
+    let (status, body) = resolve_request(state, &recipient_token, &request_id, "decline").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, json!({ "error": "request_not_found" }));
+}
