@@ -12,7 +12,10 @@ tasks:
       cache: false
   lint:
     command: "cargo"
-    args: ["clippy", "--", "-D", "warnings"]
+    # `--all-targets` so this also lints `examples/` (e.g.
+    # `examples/quic_echo_server.rs`, issue #67) and `tests/`, not just the
+    # library/binary targets that plain `cargo clippy` covers by default.
+    args: ["clippy", "--all-targets", "--", "-D", "warnings"]
   migrate:
     command: "cargo"
     args: ["run", "--bin", "migrate"]
