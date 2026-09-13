@@ -378,3 +378,241 @@ async fn list_contact_requests_without_token_returns_401() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(body, json!({ "error": "unauthorized" }));
 }
+
+async fn resolve_request(
+    state: AppState,
+    token: &str,
+    request_id: &str,
+    action: &str,
+) -> (StatusCode, Value) {
+    request(
+        api::app(state),
+        "POST",
+        &format!("/api/contacts/requests/{request_id}/{action}"),
+        Some(token),
+        None,
+    )
+    .await
+}
+
+async fn contacts_of(state: AppState, token: &str) -> Vec<Value> {
+    let (status, body) = request(api::app(state), "GET", "/api/contacts", Some(token), None).await;
+    assert_eq!(status, StatusCode::OK);
+    body["contacts"].as_array().unwrap().clone()
+}
+
+#[tokio::test]
+async fn accept_contact_request_creates_mutual_contacts_and_returns_204() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (requester_token, requester_id, requester_email) =
+        signup_user(&pool, state.clone(), "accept-requester").await;
+    let (recipient_token, recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "accept-recipient").await;
+
+    let (_, create_body) = send_request(state.clone(), &requester_token, &recipient_email).await;
+    let request_id = create_body["id"].as_str().unwrap().to_string();
+
+    let (status, body) =
+        resolve_request(state.clone(), &recipient_token, &request_id, "accept").await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(body, Value::Null);
+
+    let requester_contacts = contacts_of(state.clone(), &requester_token).await;
+    assert_eq!(requester_contacts.len(), 1);
+    assert_eq!(requester_contacts[0]["user_id"], recipient_id.to_string());
+    assert_eq!(requester_contacts[0]["email"], recipient_email);
+
+    let recipient_contacts = contacts_of(state.clone(), &recipient_token).await;
+    assert_eq!(recipient_contacts.len(), 1);
+    assert_eq!(recipient_contacts[0]["user_id"], requester_id.to_string());
+    assert_eq!(recipient_contacts[0]["email"], requester_email);
+
+    // The resolved request no longer shows up in either party's pending list.
+    let (_, list_body) = request(
+        api::app(state),
+        "GET",
+        "/api/contacts/requests",
+        Some(&recipient_token),
+        None,
+    )
+    .await;
+    assert_eq!(list_body["incoming"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn decline_contact_request_creates_no_contacts_and_allows_re_request() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (requester_token, requester_id, _requester_email) =
+        signup_user(&pool, state.clone(), "decline-requester").await;
+    let (recipient_token, recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "decline-recipient").await;
+
+    let (_, create_body) = send_request(state.clone(), &requester_token, &recipient_email).await;
+    let request_id = create_body["id"].as_str().unwrap().to_string();
+
+    let (status, body) =
+        resolve_request(state.clone(), &recipient_token, &request_id, "decline").await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(body, Value::Null);
+
+    let contacts_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM contacts
+         WHERE (owner_user_id = $1 AND contact_user_id = $2)
+            OR (owner_user_id = $2 AND contact_user_id = $1)",
+    )
+    .bind(requester_id)
+    .bind(recipient_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(contacts_count, 0);
+
+    let declined_status: String =
+        sqlx::query_scalar("SELECT status FROM contact_requests WHERE id = $1::uuid")
+            .bind(&request_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(declined_status, "declined");
+
+    // Requester can send a fresh request afterward -- the declined row
+    // doesn't block a new pending one.
+    let (re_request_status, _) = send_request(state, &requester_token, &recipient_email).await;
+    assert_eq!(re_request_status, StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn accept_contact_request_by_non_recipient_returns_403() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (requester_token, _requester_id, _requester_email) =
+        signup_user(&pool, state.clone(), "accept-403-requester").await;
+    let (_recipient_token, _recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "accept-403-recipient").await;
+    let (_, create_body) = send_request(state.clone(), &requester_token, &recipient_email).await;
+    let request_id = create_body["id"].as_str().unwrap().to_string();
+
+    let (bystander_token, _bystander_id, _bystander_email) =
+        signup_user(&pool, state.clone(), "accept-403-bystander").await;
+
+    let (status, body) =
+        resolve_request(state.clone(), &bystander_token, &request_id, "accept").await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body, json!({ "error": "not_recipient" }));
+
+    // The requester (also not the recipient) is likewise forbidden.
+    let (status, body) = resolve_request(state, &requester_token, &request_id, "accept").await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body, json!({ "error": "not_recipient" }));
+}
+
+#[tokio::test]
+async fn decline_contact_request_by_non_recipient_returns_403() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (requester_token, _requester_id, _requester_email) =
+        signup_user(&pool, state.clone(), "decline-403-requester").await;
+    let (_recipient_token, _recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "decline-403-recipient").await;
+    let (_, create_body) = send_request(state.clone(), &requester_token, &recipient_email).await;
+    let request_id = create_body["id"].as_str().unwrap().to_string();
+
+    let (bystander_token, _bystander_id, _bystander_email) =
+        signup_user(&pool, state.clone(), "decline-403-bystander").await;
+
+    let (status, body) = resolve_request(state, &bystander_token, &request_id, "decline").await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body, json!({ "error": "not_recipient" }));
+}
+
+#[tokio::test]
+async fn accept_contact_request_nonexistent_id_returns_404() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (token, _id, _email) = signup_user(&pool, state.clone(), "accept-404").await;
+
+    let (status, body) =
+        resolve_request(state, &token, &Uuid::new_v4().to_string(), "accept").await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, json!({ "error": "request_not_found" }));
+}
+
+#[tokio::test]
+async fn decline_contact_request_nonexistent_id_returns_404() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (token, _id, _email) = signup_user(&pool, state.clone(), "decline-404").await;
+
+    let (status, body) =
+        resolve_request(state, &token, &Uuid::new_v4().to_string(), "decline").await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, json!({ "error": "request_not_found" }));
+}
+
+#[tokio::test]
+async fn accept_already_resolved_request_returns_404() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (requester_token, _requester_id, _requester_email) =
+        signup_user(&pool, state.clone(), "accept-resolved-requester").await;
+    let (recipient_token, _recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "accept-resolved-recipient").await;
+    let (_, create_body) = send_request(state.clone(), &requester_token, &recipient_email).await;
+    let request_id = create_body["id"].as_str().unwrap().to_string();
+
+    let (first_status, _) =
+        resolve_request(state.clone(), &recipient_token, &request_id, "accept").await;
+    assert_eq!(first_status, StatusCode::NO_CONTENT);
+
+    let (status, body) = resolve_request(state, &recipient_token, &request_id, "accept").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, json!({ "error": "request_not_found" }));
+}
+
+#[tokio::test]
+async fn decline_already_resolved_request_returns_404() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (requester_token, _requester_id, _requester_email) =
+        signup_user(&pool, state.clone(), "decline-resolved-requester").await;
+    let (recipient_token, _recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "decline-resolved-recipient").await;
+    let (_, create_body) = send_request(state.clone(), &requester_token, &recipient_email).await;
+    let request_id = create_body["id"].as_str().unwrap().to_string();
+
+    let (first_status, _) =
+        resolve_request(state.clone(), &recipient_token, &request_id, "decline").await;
+    assert_eq!(first_status, StatusCode::NO_CONTENT);
+
+    let (status, body) = resolve_request(state, &recipient_token, &request_id, "decline").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, json!({ "error": "request_not_found" }));
+}
+
+#[tokio::test]
+async fn accept_contact_request_without_token_returns_401() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (requester_token, _requester_id, _requester_email) =
+        signup_user(&pool, state.clone(), "accept-401-requester").await;
+    let (_recipient_token, _recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "accept-401-recipient").await;
+    let (_, create_body) = send_request(state.clone(), &requester_token, &recipient_email).await;
+    let request_id = create_body["id"].as_str().unwrap().to_string();
+
+    let (status, body) = request(
+        api::app(state),
+        "POST",
+        &format!("/api/contacts/requests/{request_id}/accept"),
+        None,
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body, json!({ "error": "unauthorized" }));
+}
