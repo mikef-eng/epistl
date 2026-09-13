@@ -126,8 +126,10 @@ function createChatSocketHarness(): ChatSocketHarness {
 /** Builds a "Bob" (the contact) identity independent of Alice's on-device
  * identity, plus the server-shaped `Contact` bundle `listContacts()` would
  * report for Bob, and a self-signed valid prekey signature matching
- * `verifyPrekeyBundle`'s expectations. */
-function buildContact() {
+ * `verifyPrekeyBundle`'s expectations. `userId`/`email` are overridable so
+ * the same builder can stand in for a second, distinct contact (e.g. Carol)
+ * when a test needs two independently-verifiable contacts. */
+function buildContact(userId = CONTACT_USER_ID, email = 'bob@example.com') {
   const x25519Keys = x25519.keygen();
   const kyberKeys = ml_kem768.keygen();
   const dilithiumKeys = ml_dsa65.keygen();
@@ -141,8 +143,8 @@ function buildContact() {
     kyberKeys,
     dilithiumKeys,
     contact: {
-      user_id: CONTACT_USER_ID,
-      email: 'bob@example.com',
+      user_id: userId,
+      email,
       added_at: '2026-01-01T00:00:00.000Z',
       x25519_public_key_b64: bytesToBase64(x25519Keys.publicKey),
       kyber_public_key_b64: bytesToBase64(kyberKeys.publicKey),
@@ -153,6 +155,8 @@ function buildContact() {
 }
 
 const ROUTE = { params: { userId: CONTACT_USER_ID, email: 'bob@example.com' } };
+const CAROL_USER_ID = 'carol-user-id';
+const CAROL_ROUTE = { params: { userId: CAROL_USER_ID, email: 'carol@example.com' } };
 
 async function renderChatScreen(socket: ChatSocketHarness = createChatSocketHarness()) {
   const navigation = { navigate: jest.fn() };
@@ -516,5 +520,92 @@ describe('ChatScreen', () => {
     await unmount();
 
     expect(socket.close).toHaveBeenCalled();
+  });
+
+  it('does not drop a legitimate frame for a newly-opened contact after switching directly from a different contact\'s chat', async () => {
+    // `transportStore` is a module-wide singleton (see the `jest.mock` at
+    // the top of this file, mirroring the real `../src/transport/store`):
+    // its `lastFrame` is not reset on unmount, exactly like the real
+    // store's `close()` action. This reproduces that carry-over instead of
+    // the `createChatSocketHarness()` helper's usual reset, so the
+    // `processedFrameRef` guard in `ChatScreen.tsx` gets a genuinely stale
+    // `lastFrame` (Bob's) seeded into a freshly-mounted screen for a
+    // *different* contact (Carol) -- the scenario the guard's comment says
+    // it must not mishandle.
+    const { socket: bobSocket, unmount } = await renderChatScreen();
+    const aliceIdentity = await ensureLocalIdentity();
+
+    const bobHandshake = initiateSession({
+      contactUserId: ALICE_USER_ID,
+      selfUserId: CONTACT_USER_ID,
+      contactBundle: {
+        x25519PublicKey: aliceIdentity.x25519PublicKey,
+        kyberPublicKey: aliceIdentity.kyberPublicKey,
+      },
+    });
+    const bobSend0 = deriveNextSendingMessageKey(bobHandshake.state);
+    const bobEnvelope = encodeHandshakeEnvelope({
+      ea: bobHandshake.ea,
+      kyberCiphertext: bobHandshake.kyberCiphertext,
+      messageKey: bobSend0.messageKey,
+      plaintext: utf8ToBytes('hi from bob'),
+      selfUserId: CONTACT_USER_ID,
+      contactUserId: ALICE_USER_ID,
+      signingSecretKey: bob.dilithiumKeys.secretKey,
+    });
+    await act(async () => {
+      bobSocket.receive({
+        type: 'message',
+        from: CONTACT_USER_ID,
+        body_b64: bytesToBase64(bobEnvelope),
+      });
+    });
+    await waitFor(() => expect(screen.getByText('hi from bob')).toBeTruthy());
+
+    // Leave Bob's chat. This is the real `close()` action's behavior too:
+    // it does not clear `transportStore`'s `lastFrame`, so Bob's frame is
+    // still sitting there.
+    await unmount();
+    expect(transportStore.state.lastFrame).toEqual(
+      expect.objectContaining({ type: 'message', from: CONTACT_USER_ID })
+    );
+
+    // Switch directly to a different contact's (Carol's) chat.
+    const carol = buildContact(CAROL_USER_ID, 'carol@example.com');
+    mockedListContacts.mockResolvedValue({ contacts: [carol.contact] });
+    const navigation = { navigate: jest.fn() };
+    await render(<ChatScreen navigation={navigation as never} route={CAROL_ROUTE as never} />);
+    await waitFor(() => expect(mockedGetMessages).toHaveBeenCalledWith(CAROL_USER_ID));
+
+    // A genuinely new frame from Carol, delivered after Carol's screen has
+    // mounted, must still be rendered -- not swallowed because it happens
+    // to arrive into a store whose `lastFrame` was non-null (Bob's) at
+    // mount time.
+    const carolHandshake = initiateSession({
+      contactUserId: ALICE_USER_ID,
+      selfUserId: CAROL_USER_ID,
+      contactBundle: {
+        x25519PublicKey: aliceIdentity.x25519PublicKey,
+        kyberPublicKey: aliceIdentity.kyberPublicKey,
+      },
+    });
+    const carolSend0 = deriveNextSendingMessageKey(carolHandshake.state);
+    const carolEnvelope = encodeHandshakeEnvelope({
+      ea: carolHandshake.ea,
+      kyberCiphertext: carolHandshake.kyberCiphertext,
+      messageKey: carolSend0.messageKey,
+      plaintext: utf8ToBytes('hi from carol'),
+      selfUserId: CAROL_USER_ID,
+      contactUserId: ALICE_USER_ID,
+      signingSecretKey: carol.dilithiumKeys.secretKey,
+    });
+    await act(async () => {
+      transportStore.setState((s) => ({
+        ...s,
+        lastFrame: { type: 'message', from: CAROL_USER_ID, body_b64: bytesToBase64(carolEnvelope) },
+      }));
+    });
+
+    await waitFor(() => expect(screen.getByText('hi from carol')).toBeTruthy());
   });
 });
