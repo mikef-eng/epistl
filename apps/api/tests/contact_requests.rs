@@ -192,6 +192,36 @@ async fn create_contact_request_already_contact_returns_409() {
     assert_eq!(body, json!({ "error": "already_contact" }));
 }
 
+/// `already_contact` must be caught regardless of which direction the
+/// (directed) `contacts` row is in. Seeding only the *reverse* direction
+/// here (recipient owns requester, e.g. a leftover one-way row from the
+/// legacy `add_contact` flow) isolates the `OR (owner_user_id = $2 AND
+/// contact_user_id = $1)` half of the check -- the forward-direction seed
+/// used by the sibling test above would pass even without it.
+#[tokio::test]
+async fn create_contact_request_already_contact_reverse_direction_returns_409() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (requester_token, requester_id, _requester_email) =
+        signup_user(&pool, state.clone(), "already-contact-rev-req").await;
+    let (_recipient_token, recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "already-contact-rev-rcp").await;
+
+    // Only the reverse direction exists: recipient already owns requester
+    // as a contact, but requester does not (yet) own recipient.
+    sqlx::query("INSERT INTO contacts (owner_user_id, contact_user_id) VALUES ($1, $2)")
+        .bind(recipient_id)
+        .bind(requester_id)
+        .execute(&pool)
+        .await
+        .expect("failed to seed one-way contact row");
+
+    let (status, body) = send_request(state, &requester_token, &recipient_email).await;
+
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body, json!({ "error": "already_contact" }));
+}
+
 /// Crossed request: B already has a pending request to A. A's attempt to
 /// request B must surface B's existing request id, not silently create a
 /// mutual relationship or a second, independent request row.
