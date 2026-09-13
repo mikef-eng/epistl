@@ -80,12 +80,13 @@ async fn main() {
         nats: nats_client,
     };
 
-    // Opt-in only: starts a real QUIC listener alongside HTTP/WS when
-    // `QUIC_LISTEN_ADDR` is set (issue #73); a no-op otherwise, leaving the
-    // process's HTTP + WS behavior completely unchanged. Failing fast on a
-    // misconfigured address mirrors the Postgres/NATS checks above -- if an
-    // operator opted in, a listener that silently never started would be
-    // worse than a loud startup failure.
+    // On by default (issue #114): starts a real QUIC listener alongside
+    // HTTP/WS, binding `QUIC_LISTEN_ADDR` if set or else
+    // `api::quic::DEFAULT_LISTEN_ADDR`; a no-op only if `QUIC_LISTEN_ADDR`
+    // is explicitly set to `api::quic::DISABLE_VALUE`. Failing fast on a
+    // misconfigured address mirrors the Postgres/NATS checks above -- a
+    // listener that silently never started would be worse than a loud
+    // startup failure.
     if let Err(err) = api::quic::maybe_spawn(state.clone()).await {
         eprintln!("startup failed: {err}");
         std::process::exit(1);

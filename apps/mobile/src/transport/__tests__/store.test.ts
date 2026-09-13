@@ -64,10 +64,10 @@ describe('transportStore', () => {
     FakeWebSocket.instances = [];
     (globalThis as unknown as { WebSocket: unknown }).WebSocket = FakeWebSocket;
     // Default: QUIC fails outright and immediately on every attempt, so
-    // pre-existing WS-only tests below exercise the WS path exactly as
-    // before, without needing to advance past `QUIC_CONNECT_TIMEOUT_MS`
-    // themselves. The "QUIC vs WS race" describe block further down
-    // overrides this per test.
+    // pre-existing WS-only tests below exercise the WS fallback path
+    // exactly as before, without needing to advance past
+    // `QUIC_CONNECT_TIMEOUT_MS` themselves. The "QUIC-first, WS-fallback"
+    // describe block further down overrides this per test.
     mockConnectQuic.mockReset();
     mockConnectQuic.mockRejectedValue(new Error('quic unavailable'));
   });
@@ -231,7 +231,7 @@ describe('transportStore', () => {
     );
   });
 
-  describe('QUIC vs WS race (issue #77)', () => {
+  describe('QUIC-first, WS-fallback (issue #114)', () => {
     /** A `connectQuic` implementation whose resolution/rejection the test
      * controls explicitly, instead of settling immediately like
      * `mockResolvedValue`/`mockRejectedValue` would -- needed to exercise
@@ -267,13 +267,15 @@ describe('transportStore', () => {
       return { send: jest.fn().mockResolvedValue(undefined), close: jest.fn() };
     }
 
-    it('QUIC wins within the timeout: activeTransport becomes "quic" and the in-flight WS attempt is aborted, unused', async () => {
+    it('QUIC connects before the timeout: activeTransport becomes "quic" and WS is never dialed', async () => {
       const { resolve } = deferredQuicConnect();
       const getToken = jest.fn().mockResolvedValue('token-1');
       const statuses = trackStatuses();
       transportStore.actions.connect(getToken);
       await flush();
-      expect(FakeWebSocket.instances).toHaveLength(1);
+      // Strict sequential model: WS must never be dialed while a QUIC
+      // attempt that hasn't yet failed/timed out is still outstanding.
+      expect(FakeWebSocket.instances).toHaveLength(0);
 
       const quicConn = fakeQuicConnection();
       resolve(quicConn);
@@ -281,7 +283,7 @@ describe('transportStore', () => {
 
       expect(transportStore.state.activeTransport).toBe('quic');
       expect(statuses.at(-1)).toBe('connected');
-      expect(FakeWebSocket.instances[0].close).toHaveBeenCalled();
+      expect(FakeWebSocket.instances).toHaveLength(0);
       expect(quicConn.close).not.toHaveBeenCalled();
 
       // send() now routes to the QUIC connection, not WS.
@@ -293,31 +295,36 @@ describe('transportStore', () => {
       });
     });
 
-    it('QUIC never resolves before the timeout, WS connects: activeTransport becomes "ws"', async () => {
+    it('QUIC never resolves before the timeout: WS is dialed only once the timeout elapses, then activeTransport becomes "ws"', async () => {
       deferredQuicConnect();
       const getToken = jest.fn().mockResolvedValue('token-1');
       transportStore.actions.connect(getToken);
       await flush();
 
-      // WS opens while QUIC's head start is still pending -- not yet used.
-      FakeWebSocket.instances[0].onopen?.();
-      expect(transportStore.state.activeTransport).toBeNull();
-      expect(transportStore.state.status).not.toBe('connected');
+      // QUIC hasn't failed or timed out yet -- WS must not be dialed.
+      expect(FakeWebSocket.instances).toHaveLength(0);
+      await jest.advanceTimersByTimeAsync(QUIC_CONNECT_TIMEOUT_MS - 1);
+      expect(FakeWebSocket.instances).toHaveLength(0);
 
-      // QUIC's head start elapses without it ever resolving.
-      await jest.advanceTimersByTimeAsync(QUIC_CONNECT_TIMEOUT_MS);
+      // QUIC's timeout elapses -- only now is WS dialed for the first time.
+      await jest.advanceTimersByTimeAsync(1);
+      expect(FakeWebSocket.instances).toHaveLength(1);
+      expect(transportStore.state.activeTransport).toBeNull();
+
+      FakeWebSocket.instances[0].onopen?.();
       expect(transportStore.state.activeTransport).toBe('ws');
       expect(transportStore.state.status).toBe('connected');
     });
 
-    it('a late QUIC success after WS already won this attempt is discarded (no state change, connection closed)', async () => {
+    it('a late QUIC success after WS has already connected is discarded (no state change, connection closed)', async () => {
       const { resolve } = deferredQuicConnect();
       const getToken = jest.fn().mockResolvedValue('token-1');
       transportStore.actions.connect(getToken);
       await flush();
 
-      FakeWebSocket.instances[0].onopen?.();
       await jest.advanceTimersByTimeAsync(QUIC_CONNECT_TIMEOUT_MS);
+      expect(FakeWebSocket.instances).toHaveLength(1);
+      FakeWebSocket.instances[0].onopen?.();
       expect(transportStore.state.activeTransport).toBe('ws');
 
       const lateQuicConn = fakeQuicConnection();
@@ -327,6 +334,34 @@ describe('transportStore', () => {
       expect(transportStore.state.activeTransport).toBe('ws');
       expect(transportStore.state.status).toBe('connected');
       expect(lateQuicConn.close).toHaveBeenCalledTimes(1);
+    });
+
+    it('a late QUIC success that arrives while the WS fallback is still connecting wins instead, discarding the in-flight WS attempt', async () => {
+      const { resolve } = deferredQuicConnect();
+      const getToken = jest.fn().mockResolvedValue('token-1');
+      transportStore.actions.connect(getToken);
+      await flush();
+
+      // QUIC's timeout elapses, so WS is dialed -- but it hasn't connected
+      // (or failed) yet, so nothing is settled for this attempt.
+      await jest.advanceTimersByTimeAsync(QUIC_CONNECT_TIMEOUT_MS);
+      expect(FakeWebSocket.instances).toHaveLength(1);
+      expect(transportStore.state.activeTransport).toBeNull();
+
+      const lateQuicConn = fakeQuicConnection();
+      resolve(lateQuicConn);
+      await flush();
+
+      // QUIC still wins: this attempt hadn't settled yet, so a QUIC
+      // success displaces the still-in-flight (not-yet-connected) WS
+      // attempt instead of being discarded.
+      expect(transportStore.state.activeTransport).toBe('quic');
+      expect(FakeWebSocket.instances[0].close).toHaveBeenCalled();
+
+      // The discarded WS attempt finally opening after the fact must not
+      // flip activeTransport back to 'ws'.
+      FakeWebSocket.instances[0].onopen?.();
+      expect(transportStore.state.activeTransport).toBe('quic');
     });
 
     it('QUIC fails outright and immediately: falls back to WS without waiting out the full timeout', async () => {
@@ -356,7 +391,7 @@ describe('transportStore', () => {
       expect(transportStore.state.activeTransport).toBe('ws');
     });
 
-    it('a live QUIC connection dropping after winning the race schedules a reconnect, same as a live WS drop today', async () => {
+    it('a live QUIC connection dropping after connecting schedules a reconnect, same as a live WS drop today', async () => {
       const { resolve } = deferredQuicConnect();
       const getToken = jest.fn().mockResolvedValue('token-1');
       const statuses = trackStatuses();
@@ -375,8 +410,8 @@ describe('transportStore', () => {
       expect(transportStore.state.activeTransport).toBeNull();
       expect(statuses.at(-1)).toBe('reconnecting');
 
-      // A fresh race starts for the reconnect attempt, same as a dropped WS
-      // connection would trigger.
+      // A fresh QUIC-first attempt starts for the reconnect, same as a
+      // dropped WS connection would trigger.
       await jest.advanceTimersByTimeAsync(1300);
       expect(mockConnectQuic.mock.calls.length).toBeGreaterThan(1);
     });
@@ -402,7 +437,7 @@ describe('transportStore', () => {
       expect(mockConnectQuic.mock.calls.length).toBe(1);
     });
 
-    it('close() closes the live QUIC connection (not the discarded WS socket) when QUIC is activeTransport', async () => {
+    it('close() closes the live QUIC connection when QUIC is activeTransport', async () => {
       const { resolve } = deferredQuicConnect();
       const getToken = jest.fn().mockResolvedValue('token-1');
       transportStore.actions.connect(getToken);
@@ -412,17 +447,39 @@ describe('transportStore', () => {
       resolve(quicConn);
       await flush();
       expect(transportStore.state.activeTransport).toBe('quic');
-      // The losing WS attempt was already closed once, by the race itself.
-      expect(FakeWebSocket.instances[0].close).toHaveBeenCalledTimes(1);
+      // QUIC connected before its timeout elapsed, so WS was never dialed
+      // for this attempt at all.
+      expect(FakeWebSocket.instances).toHaveLength(0);
 
       transportStore.actions.close();
 
       expect(quicConn.close).toHaveBeenCalledTimes(1);
-      // close() must not blindly re-close/touch the already-discarded WS
-      // socket a second time.
-      expect(FakeWebSocket.instances[0].close).toHaveBeenCalledTimes(1);
       expect(transportStore.state.status).toBe('disconnected');
       expect(transportStore.state.activeTransport).toBeNull();
+    });
+
+    it('close() discards the QUIC attempt and closes the WS fallback when WS is activeTransport', async () => {
+      const { resolve } = deferredQuicConnect();
+      const getToken = jest.fn().mockResolvedValue('token-1');
+      transportStore.actions.connect(getToken);
+      await flush();
+
+      await jest.advanceTimersByTimeAsync(QUIC_CONNECT_TIMEOUT_MS);
+      FakeWebSocket.instances[0].onopen?.();
+      expect(transportStore.state.activeTransport).toBe('ws');
+
+      transportStore.actions.close();
+      expect(FakeWebSocket.instances[0].close).toHaveBeenCalled();
+      expect(transportStore.state.status).toBe('disconnected');
+      expect(transportStore.state.activeTransport).toBeNull();
+
+      // The still-outstanding QUIC attempt resolving after close() must not
+      // resurrect the connection or change state.
+      const lateQuicConn = fakeQuicConnection();
+      resolve(lateQuicConn);
+      await flush();
+      expect(transportStore.state.activeTransport).toBeNull();
+      expect(lateQuicConn.close).toHaveBeenCalledTimes(1);
     });
   });
 });
