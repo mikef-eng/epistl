@@ -1,7 +1,7 @@
 import { render, screen, userEvent, waitFor } from '@testing-library/react-native';
 
 import AddContactScreen from '../src/screens/AddContactScreen';
-import { addContact } from '../src/api/client';
+import { acceptContactRequest, sendContactRequest } from '../src/api/client';
 
 jest.mock('../src/api/client', () => {
   class ApiError extends Error {
@@ -14,13 +14,24 @@ jest.mock('../src/api/client', () => {
       this.status = status;
     }
   }
+  class IncomingRequestExistsError extends ApiError {
+    requestId: string;
+    constructor(requestId: string) {
+      super('incoming_request_exists', 409);
+      this.name = 'IncomingRequestExistsError';
+      this.requestId = requestId;
+    }
+  }
   return {
     ApiError,
-    addContact: jest.fn(),
+    IncomingRequestExistsError,
+    sendContactRequest: jest.fn(),
+    acceptContactRequest: jest.fn(),
   };
 });
 
-const mockedAddContact = addContact as jest.Mock;
+const mockedSendContactRequest = sendContactRequest as jest.Mock;
+const mockedAcceptContactRequest = acceptContactRequest as jest.Mock;
 
 async function renderAddContactScreen() {
   const navigation = { navigate: jest.fn(), goBack: jest.fn() };
@@ -44,52 +55,56 @@ describe('AddContactScreen', () => {
   it('disables the submit button when the email field is empty or does not contain an @', async () => {
     const { user } = await renderAddContactScreen();
 
-    expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Send request' })).toBeDisabled();
 
     await user.type(screen.getByPlaceholderText('Email'), 'not-an-email');
-    expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Send request' })).toBeDisabled();
 
     await user.type(screen.getByPlaceholderText('Email'), '@example.com');
-    expect(screen.getByRole('button', { name: 'Add' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Send request' })).toBeEnabled();
   });
 
   it('does not call the API when submit is pressed with an invalid-looking email', async () => {
     const { user } = await renderAddContactScreen();
 
     await user.type(screen.getByPlaceholderText('Email'), 'not-an-email');
-    await user.press(screen.getByRole('button', { name: 'Add' }));
+    await user.press(screen.getByRole('button', { name: 'Send request' }));
 
-    expect(mockedAddContact).not.toHaveBeenCalled();
+    expect(mockedSendContactRequest).not.toHaveBeenCalled();
   });
 
-  it('navigates back to Main when addContact succeeds', async () => {
-    mockedAddContact.mockResolvedValueOnce({
-      user_id: 'u1',
-      email: 'a@example.com',
-      added_at: '2024-01-01T00:00:00Z',
+  it('shows a "Request sent" confirmation and does not navigate away on success', async () => {
+    mockedSendContactRequest.mockResolvedValueOnce({
+      id: 'r1',
+      requester_user_id: 'u1',
+      recipient_user_id: 'u2',
+      status: 'pending',
+      created_at: '2024-01-01T00:00:00Z',
     });
     const { navigation, user } = await renderAddContactScreen();
 
     await user.type(screen.getByPlaceholderText('Email'), 'a@example.com');
-    await user.press(screen.getByRole('button', { name: 'Add' }));
+    await user.press(screen.getByRole('button', { name: 'Send request' }));
 
     await waitFor(() => {
-      expect(mockedAddContact).toHaveBeenCalledWith('a@example.com');
-      expect(navigation.navigate).toHaveBeenCalledWith('Main');
+      expect(mockedSendContactRequest).toHaveBeenCalledWith('a@example.com');
+      expect(screen.getByText('Request sent')).toBeTruthy();
     });
+    expect(navigation.navigate).not.toHaveBeenCalled();
   });
 
   it.each([
     ['user_not_found', 'No user with that email'],
-    ['already_added', 'Already in your contacts'],
+    ['already_pending', 'You already sent this person a request'],
+    ['already_contact', 'Already in your contacts'],
     ['cannot_add_self', "You can't add yourself"],
   ])('shows "%s" as "%s" and does not navigate away', async (code, expectedMessage) => {
     const { ApiError } = jest.requireMock('../src/api/client');
-    mockedAddContact.mockRejectedValueOnce(new ApiError(code, 400));
+    mockedSendContactRequest.mockRejectedValueOnce(new ApiError(code, 400));
     const { navigation, user } = await renderAddContactScreen();
 
     await user.type(screen.getByPlaceholderText('Email'), 'a@example.com');
-    await user.press(screen.getByRole('button', { name: 'Add' }));
+    await user.press(screen.getByRole('button', { name: 'Send request' }));
 
     await waitFor(() => {
       expect(screen.getByText(expectedMessage)).toBeTruthy();
@@ -99,11 +114,11 @@ describe('AddContactScreen', () => {
 
   it('shows a generic message for any other error, including network failure, and does not navigate away', async () => {
     const { ApiError } = jest.requireMock('../src/api/client');
-    mockedAddContact.mockRejectedValueOnce(new ApiError('network_error', 0));
+    mockedSendContactRequest.mockRejectedValueOnce(new ApiError('network_error', 0));
     const { navigation, user } = await renderAddContactScreen();
 
     await user.type(screen.getByPlaceholderText('Email'), 'a@example.com');
-    await user.press(screen.getByRole('button', { name: 'Add' }));
+    await user.press(screen.getByRole('button', { name: 'Send request' }));
 
     await waitFor(() => {
       expect(screen.getByText('Something went wrong')).toBeTruthy();
@@ -112,15 +127,75 @@ describe('AddContactScreen', () => {
   });
 
   it('shows a generic message for a real network failure (rejection that is not an ApiError) and does not navigate away', async () => {
-    mockedAddContact.mockRejectedValueOnce(new TypeError('Network request failed'));
+    mockedSendContactRequest.mockRejectedValueOnce(new TypeError('Network request failed'));
     const { navigation, user } = await renderAddContactScreen();
 
     await user.type(screen.getByPlaceholderText('Email'), 'a@example.com');
-    await user.press(screen.getByRole('button', { name: 'Add' }));
+    await user.press(screen.getByRole('button', { name: 'Send request' }));
 
     await waitFor(() => {
       expect(screen.getByText('Something went wrong')).toBeTruthy();
     });
     expect(navigation.navigate).not.toHaveBeenCalled();
+  });
+
+  describe('crossed-request prompt', () => {
+    function crossedRequestError(requestId: string) {
+      const { IncomingRequestExistsError } = jest.requireMock('../src/api/client');
+      return new IncomingRequestExistsError(requestId);
+    }
+
+    it('shows an accept prompt with the target email on 409 incoming_request_exists', async () => {
+      mockedSendContactRequest.mockRejectedValueOnce(crossedRequestError('r1'));
+      const { user } = await renderAddContactScreen();
+
+      await user.type(screen.getByPlaceholderText('Email'), 'a@example.com');
+      await user.press(screen.getByRole('button', { name: 'Send request' }));
+
+      await waitFor(() => {
+        expect(screen.getByText('a@example.com already sent you a request')).toBeTruthy();
+      });
+      expect(screen.getByRole('button', { name: 'Accept' })).toBeTruthy();
+    });
+
+    it('calls acceptContactRequest with the carried request id and shows a confirmation on success', async () => {
+      mockedSendContactRequest.mockRejectedValueOnce(crossedRequestError('r1'));
+      mockedAcceptContactRequest.mockResolvedValueOnce(undefined);
+      const { user } = await renderAddContactScreen();
+
+      await user.type(screen.getByPlaceholderText('Email'), 'a@example.com');
+      await user.press(screen.getByRole('button', { name: 'Send request' }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Accept' })).toBeTruthy();
+      });
+      await user.press(screen.getByRole('button', { name: 'Accept' }));
+
+      expect(mockedAcceptContactRequest).toHaveBeenCalledWith('r1');
+      await waitFor(() => {
+        expect(screen.getByText('Request accepted')).toBeTruthy();
+      });
+    });
+
+    it('leaves the accept prompt in place with an inline error when accept fails', async () => {
+      const { ApiError } = jest.requireMock('../src/api/client');
+      mockedSendContactRequest.mockRejectedValueOnce(crossedRequestError('r1'));
+      mockedAcceptContactRequest.mockRejectedValueOnce(new ApiError('request_not_found', 404));
+      const { user } = await renderAddContactScreen();
+
+      await user.type(screen.getByPlaceholderText('Email'), 'a@example.com');
+      await user.press(screen.getByRole('button', { name: 'Send request' }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Accept' })).toBeTruthy();
+      });
+      await user.press(screen.getByRole('button', { name: 'Accept' }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Something went wrong')).toBeTruthy();
+      });
+      expect(screen.getByText('a@example.com already sent you a request')).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Accept' })).toBeTruthy();
+    });
   });
 });

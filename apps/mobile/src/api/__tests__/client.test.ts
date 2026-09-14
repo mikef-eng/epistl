@@ -1,10 +1,11 @@
 import * as session from '../session';
 import {
   ApiError,
+  IncomingRequestExistsError,
   signup,
   login,
   listContacts,
-  addContact,
+  sendContactRequest,
   registerKeys,
   removeContact,
   deleteAccount,
@@ -195,20 +196,22 @@ describe('client', () => {
     });
   });
 
-  describe('addContact', () => {
-    it('POSTs to /api/contacts with the email body and Authorization header', async () => {
+  describe('sendContactRequest', () => {
+    it('POSTs to /api/contacts/requests with the email body and Authorization header', async () => {
       mockSession.getToken.mockResolvedValueOnce('tok-4');
       fetchMock.mockResolvedValueOnce(
         jsonResponse(201, {
-          user_id: 'u5',
-          email: 'c@example.com',
-          added_at: '2026-01-01T00:00:00Z',
+          id: 'r5',
+          requester_user_id: 'u4',
+          recipient_user_id: 'u5',
+          status: 'pending',
+          created_at: '2026-01-01T00:00:00Z',
         }),
       );
 
-      const result = await addContact('c@example.com');
+      const result = await sendContactRequest('c@example.com');
 
-      expect(fetchMock).toHaveBeenCalledWith('http://localhost:3000/api/contacts', {
+      expect(fetchMock).toHaveBeenCalledWith('http://localhost:3000/api/contacts/requests', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -217,16 +220,20 @@ describe('client', () => {
         body: JSON.stringify({ email: 'c@example.com' }),
       });
       expect(result).toEqual({
-        user_id: 'u5',
-        email: 'c@example.com',
-        added_at: '2026-01-01T00:00:00Z',
+        id: 'r5',
+        requester_user_id: 'u4',
+        recipient_user_id: 'u5',
+        status: 'pending',
+        created_at: '2026-01-01T00:00:00Z',
       });
     });
 
     it('throws an ApiError with code "no_session" when no token is stored', async () => {
       mockSession.getToken.mockResolvedValueOnce(null);
 
-      await expect(addContact('c@example.com')).rejects.toMatchObject({ code: 'no_session' });
+      await expect(sendContactRequest('c@example.com')).rejects.toMatchObject({
+        code: 'no_session',
+      });
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
@@ -234,7 +241,7 @@ describe('client', () => {
       mockSession.getToken.mockResolvedValueOnce('tok-4');
       fetchMock.mockResolvedValueOnce(jsonResponse(400, { error: 'cannot_add_self' }));
 
-      await expect(addContact('me@example.com')).rejects.toMatchObject({
+      await expect(sendContactRequest('me@example.com')).rejects.toMatchObject({
         code: 'cannot_add_self',
         status: 400,
       });
@@ -244,20 +251,55 @@ describe('client', () => {
       mockSession.getToken.mockResolvedValueOnce('tok-4');
       fetchMock.mockResolvedValueOnce(jsonResponse(404, { error: 'user_not_found' }));
 
-      await expect(addContact('nobody@example.com')).rejects.toMatchObject({
+      await expect(sendContactRequest('nobody@example.com')).rejects.toMatchObject({
         code: 'user_not_found',
         status: 404,
       });
     });
 
-    it('throws an ApiError with code "already_added" on 409', async () => {
+    it('throws an ApiError with code "already_contact" on 409', async () => {
       mockSession.getToken.mockResolvedValueOnce('tok-4');
-      fetchMock.mockResolvedValueOnce(jsonResponse(409, { error: 'already_added' }));
+      fetchMock.mockResolvedValueOnce(jsonResponse(409, { error: 'already_contact' }));
 
-      await expect(addContact('c@example.com')).rejects.toMatchObject({
-        code: 'already_added',
+      await expect(sendContactRequest('c@example.com')).rejects.toMatchObject({
+        code: 'already_contact',
         status: 409,
       });
+    });
+
+    it('throws an ApiError with code "already_pending" on 409', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-4');
+      fetchMock.mockResolvedValueOnce(jsonResponse(409, { error: 'already_pending' }));
+
+      await expect(sendContactRequest('c@example.com')).rejects.toMatchObject({
+        code: 'already_pending',
+        status: 409,
+      });
+    });
+
+    it('throws an IncomingRequestExistsError carrying the request id on 409 incoming_request_exists', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-4');
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(409, { error: 'incoming_request_exists', request_id: 'r9' }),
+      );
+
+      const rejection = await sendContactRequest('c@example.com').catch((err) => err);
+      expect(rejection).toBeInstanceOf(IncomingRequestExistsError);
+      expect(rejection).toMatchObject({
+        code: 'incoming_request_exists',
+        status: 409,
+        requestId: 'r9',
+      });
+    });
+
+    it('falls back to a plain ApiError when the 409 incoming_request_exists body is missing request_id', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-4');
+      fetchMock.mockResolvedValueOnce(jsonResponse(409, { error: 'incoming_request_exists' }));
+
+      const rejection = await sendContactRequest('c@example.com').catch((err) => err);
+      expect(rejection).toBeInstanceOf(ApiError);
+      expect(rejection).not.toBeInstanceOf(IncomingRequestExistsError);
+      expect(rejection).toMatchObject({ code: 'incoming_request_exists', status: 409 });
     });
   });
 
