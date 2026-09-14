@@ -22,3 +22,9 @@ tasks:
       persistent: true
       cache: false
       runInCI: false
+  db-generate:
+    command: "npm"
+    args: ["run", "db:generate"]
+    options:
+      cache: false
+      runInCI: false

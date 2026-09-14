@@ -1,8 +1,11 @@
 /**
  * `expo-sqlite`'s native module isn't available under Jest, so this mocks it
  * with a real SQLite engine (Node's built-in `node:sqlite`) rather than a
- * hand-rolled JS stand-in. That way `getConversationSummaries`'s window-
- * function SQL is exercised against genuine SQLite semantics, not a fake.
+ * hand-rolled JS stand-in. That way both `getConversationSummaries`'
+ * window-function SQL and `drizzle-orm`'s expo-sqlite driver (which drives
+ * the mock through the same synchronous `prepareSync`/`execSync` surface
+ * real `expo-sqlite` exposes) are exercised against genuine SQLite
+ * semantics, not a fake.
  */
 jest.mock('expo-sqlite', () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports -- inside a jest.mock factory, which must be synchronous.
@@ -18,6 +21,16 @@ jest.mock('expo-sqlite', () => {
   globalScope.__mockSqliteDatabases ??= new Map();
   const databases = globalScope.__mockSqliteDatabases;
 
+  // Classifies a SQL statement as read-only (SELECT/PRAGMA/WITH/EXPLAIN) vs.
+  // mutating, since node:sqlite's `Statement.run()`/`.all()` don't
+  // distinguish the two the way real expo-sqlite's `executeSync()` result
+  // does (changes/lastInsertRowId for writes, row data for reads).
+  function isReadStatement(source: string): boolean {
+    const match = /^\s*([a-zA-Z]+)/.exec(source);
+    const keyword = (match?.[1] ?? '').toUpperCase();
+    return ['SELECT', 'PRAGMA', 'WITH', 'EXPLAIN'].includes(keyword);
+  }
+
   function wrap(raw: InstanceType<typeof RealDatabaseSync>) {
     return {
       execSync: (source: string) => {
@@ -26,13 +39,36 @@ jest.mock('expo-sqlite', () => {
       getAllSync: (source: string, params: unknown[] = []) => {
         return raw.prepare(source).all(...params);
       },
-      runAsync: async (source: string, params: unknown[] = []) => {
-        const info = raw.prepare(source).run(...params);
-        return { lastInsertRowId: Number(info.lastInsertRowid), changes: info.changes };
+      // Mirrors real expo-sqlite's synchronous prepared-statement API,
+      // which is what drizzle-orm's expo-sqlite driver calls directly.
+      prepareSync: (source: string) => {
+        const stmt = raw.prepare(source);
+        return {
+          executeSync: (params: unknown[] = []) => {
+            if (isReadStatement(source)) {
+              const rows = stmt.all(...params);
+              return {
+                changes: 0,
+                lastInsertRowId: 0,
+                getAllSync: () => rows,
+                getFirstSync: () => rows[0],
+              };
+            }
+            const info = stmt.run(...params);
+            return {
+              changes: info.changes,
+              lastInsertRowId: Number(info.lastInsertRowid),
+              getAllSync: () => [],
+              getFirstSync: () => undefined,
+            };
+          },
+          executeForRawResultSync: (params: unknown[] = []) => {
+            const rows = stmt.all(...params) as Record<string, unknown>[];
+            return { getAllSync: () => rows.map((row) => Object.values(row)) };
+          },
+        };
       },
-      getAllAsync: async (source: string, params: unknown[] = []) => {
-        return raw.prepare(source).all(...params);
-      },
+      closeSync: () => {},
     };
   }
 
@@ -269,65 +305,49 @@ describe('getConversationSummaries', () => {
   });
 });
 
-describe('read_at migration', () => {
-  it('adds a read_at column to an already-created messages table without erroring', async () => {
-    jest.resetModules();
-    clearMockDatabases();
-    // eslint-disable-next-line @typescript-eslint/no-require-imports -- re-require after jest.resetModules() to pick up a fresh module instance.
+describe('drizzle-kit migrations', () => {
+  it('applies the baseline migration once, creating the messages table', async () => {
+    const messages = loadMessagesModule();
+
+    await expect(
+      messages.saveMessage({
+        contactUserId: 'carol',
+        direction: 'incoming',
+        bodyB64: 'hi',
+        createdAt: '2024-01-01T00:00:00.000Z',
+      })
+    ).resolves.toBeUndefined();
+
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- reaching past the module under test to assert on drizzle's own bookkeeping table.
     const SQLite = require('expo-sqlite');
-    // Matches messages.ts's exported DATABASE_NAME constant.
     const raw = SQLite.openDatabaseSync('epistl.db') as unknown as {
-      execSync: (sql: string) => void;
-      getAllSync: <T>(sql: string, params?: unknown[]) => T[];
+      getAllSync: <T>(sql: string) => T[];
     };
-
-    // Simulate the pre-existing schema, from before this migration existed.
-    raw.execSync(`
-      CREATE TABLE IF NOT EXISTS messages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        contact_user_id TEXT NOT NULL,
-        direction TEXT NOT NULL,
-        body_b64 TEXT NOT NULL,
-        created_at TEXT NOT NULL
-      );
-    `);
-    raw.execSync(
-      "INSERT INTO messages (contact_user_id, direction, body_b64, created_at) VALUES ('carol', 'incoming', 'hi', '2024-01-01T00:00:00.000Z')"
-    );
-
-    // Loading the module (without an intervening resetModules) must migrate
-    // the existing table in place rather than erroring on a duplicate column
-    // or a missing one.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports -- re-require after jest.resetModules() to pick up a fresh module instance.
-    const messages: typeof import('../messages') = require('../messages');
-
-    const columns = raw.getAllSync<{ name: string }>('PRAGMA table_info(messages)');
-    expect(columns.some((c) => c.name === 'read_at')).toBe(true);
-
-    await expect(messages.markContactMessagesRead('carol')).resolves.toBeUndefined();
-
-    const rows = raw.getAllSync<{ read_at: string | null }>(
-      'SELECT read_at FROM messages WHERE contact_user_id = ?',
-      ['carol']
-    );
-    expect(rows[0].read_at).not.toBeNull();
+    const migrationRows = raw.getAllSync<{ hash: string }>('SELECT hash FROM __drizzle_migrations');
+    expect(migrationRows.length).toBeGreaterThan(0);
   });
 
-  it('is safe to run again against a table that already has read_at', () => {
-    // First load creates the table (with read_at) against a fresh database.
-    jest.resetModules();
-    clearMockDatabases();
-    // eslint-disable-next-line @typescript-eslint/no-require-imports -- re-require after jest.resetModules() to pick up a fresh module instance.
-    require('../messages');
+  it('is safe to reload the module against an already-migrated database (simulated app restart)', async () => {
+    // First load creates the table and applies the baseline migration
+    // against a fresh database.
+    const firstLoad = loadMessagesModule();
+    await firstLoad.saveMessage({
+      contactUserId: 'carol',
+      direction: 'incoming',
+      bodyB64: 'hi',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    });
 
     // Reload the module against that *same* underlying database (no
     // clearMockDatabases in between), simulating an app restart reopening
-    // an existing on-disk database that already has the column. The guard
-    // must not error on a duplicate `ALTER TABLE ... ADD COLUMN`.
-    expect(() => {
-      jest.resetModules();
-      // eslint-disable-next-line @typescript-eslint/no-require-imports -- re-require after jest.resetModules() to pick up a fresh module instance.
-      require('../messages');
-    }).not.toThrow();
+    // an existing on-disk database that has already been migrated. Must not
+    // error, and must not lose the previously-saved row.
+    jest.resetModules();
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- re-require after jest.resetModules() to pick up a fresh module instance.
+    const secondLoad: typeof import('../messages') = require('../messages');
+
+    const rows = await secondLoad.getMessages('carol');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].bodyB64).toBe('hi');
   });
 });

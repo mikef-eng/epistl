@@ -2,102 +2,98 @@
  * Tests for the on-device message history store (src/storage/messages.ts).
  *
  * `expo-sqlite` is a native module with no real SQLite engine available in
- * the Jest/Node environment, so it is mocked here with a minimal in-memory
- * SQL engine that understands exactly the statements messages.ts issues.
- * The mock's row storage lives on `globalThis` (not module scope) so that
- * it survives `jest.resetModules()` — this is what lets the "persists
- * across restart" test simulate a real app restart by re-importing the
- * module in a fresh module registry while keeping the "on-disk" data.
+ * the Jest/Node environment, so it is mocked here with Node's built-in
+ * `node:sqlite` standing in for it, wrapped in the same synchronous
+ * `prepareSync`/`execSync` surface real expo-sqlite exposes — this is what
+ * `drizzle-orm`'s expo-sqlite driver (and its migrator) actually calls, so a
+ * hand-rolled string-matching mock of specific SQL statements (the previous
+ * approach, back when this module issued hand-written SQL directly) can't
+ * stand in for it anymore. The mock's "on-disk" database lives on
+ * `globalThis` (not module scope) so that it survives `jest.resetModules()`
+ * — this is what lets the "persists across restart" test simulate a real
+ * app restart by re-importing the module in a fresh module registry while
+ * keeping the same underlying database.
  */
 
 const MOCK_GLOBAL_STORE_KEY = '__epistlMockSqliteDatabases__';
 
-interface MockRow {
-  id: number;
-  contact_user_id: string;
-  direction: string;
-  body_b64: string;
-  created_at: string;
-}
-
-interface MockDatabaseState {
-  rows: MockRow[];
-  nextId: number;
-}
-
-/** Resets all mock "on-disk" SQLite state between test files/isolation. */
-function mockResetSqliteDatabases(): void {
-  const globalWithStore = globalThis as unknown as {
-    [MOCK_GLOBAL_STORE_KEY]?: Map<string, MockDatabaseState>;
-  };
-  globalWithStore[MOCK_GLOBAL_STORE_KEY]?.clear();
-}
-
 jest.mock('expo-sqlite', () => {
-  function mockGetDatabases(): Map<string, MockDatabaseState> {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- inside a jest.mock factory, which must be synchronous.
+  const { DatabaseSync } = require('node:sqlite');
+
+  function mockGetDatabases(): Map<string, InstanceType<typeof DatabaseSync>> {
     const globalWithStore = globalThis as unknown as {
-      [MOCK_GLOBAL_STORE_KEY]?: Map<string, MockDatabaseState>;
+      [MOCK_GLOBAL_STORE_KEY]?: Map<string, InstanceType<typeof DatabaseSync>>;
     };
-    if (!globalWithStore[MOCK_GLOBAL_STORE_KEY]) {
-      globalWithStore[MOCK_GLOBAL_STORE_KEY] = new Map();
-    }
+    globalWithStore[MOCK_GLOBAL_STORE_KEY] ??= new Map();
     return globalWithStore[MOCK_GLOBAL_STORE_KEY];
+  }
+
+  // Classifies a SQL statement as read-only (SELECT/PRAGMA/WITH/EXPLAIN) vs.
+  // mutating, since node:sqlite's `Statement.run()`/`.all()` don't
+  // distinguish the two the way real expo-sqlite's `executeSync()` result
+  // does (changes/lastInsertRowId for writes, row data for reads).
+  function isReadStatement(source: string): boolean {
+    const match = /^\s*([a-zA-Z]+)/.exec(source);
+    const keyword = (match?.[1] ?? '').toUpperCase();
+    return ['SELECT', 'PRAGMA', 'WITH', 'EXPLAIN'].includes(keyword);
+  }
+
+  function wrap(raw: InstanceType<typeof DatabaseSync>) {
+    return {
+      execSync: (source: string) => {
+        raw.exec(source);
+      },
+      prepareSync: (source: string) => {
+        const stmt = raw.prepare(source);
+        return {
+          executeSync: (params: unknown[] = []) => {
+            if (isReadStatement(source)) {
+              const rows = stmt.all(...params);
+              return {
+                changes: 0,
+                lastInsertRowId: 0,
+                getAllSync: () => rows,
+                getFirstSync: () => rows[0],
+              };
+            }
+            const info = stmt.run(...params);
+            return {
+              changes: info.changes,
+              lastInsertRowId: Number(info.lastInsertRowid),
+              getAllSync: () => [],
+              getFirstSync: () => undefined,
+            };
+          },
+          executeForRawResultSync: (params: unknown[] = []) => {
+            const rows = stmt.all(...params) as Record<string, unknown>[];
+            return { getAllSync: () => rows.map((row) => Object.values(row)) };
+          },
+        };
+      },
+      closeSync: () => {},
+    };
   }
 
   function openDatabaseSync(name: string) {
     const databases = mockGetDatabases();
-    if (!databases.has(name)) {
-      databases.set(name, { rows: [], nextId: 1 });
+    let raw = databases.get(name);
+    if (!raw) {
+      raw = new DatabaseSync(':memory:');
+      databases.set(name, raw);
     }
-    const state = databases.get(name)!;
-
-    return {
-      execSync(_source: string) {
-        // Statements issued here are CREATE TABLE IF NOT EXISTS and (since
-        // messages.ts's read_at migration) ALTER TABLE ... ADD COLUMN
-        // read_at; the table already implicitly exists once `state` is
-        // created above, and this mock doesn't model columns at all, so
-        // both are no-ops.
-      },
-      getAllSync(source: string, _params?: unknown[]) {
-        if (source.startsWith('PRAGMA table_info')) {
-          // Reported as columnless so messages.ts's read_at migration guard
-          // always (harmlessly) issues its ALTER TABLE, since this mock
-          // doesn't track columns. See detailed migration coverage in
-          // src/storage/__tests__/messages.test.ts.
-          return [];
-        }
-        throw new Error(`unsupported mock getAllSync source: ${source}`);
-      },
-      async runAsync(source: string, params: unknown[]) {
-        if (source.startsWith('INSERT INTO messages')) {
-          const [contactUserId, direction, bodyB64, createdAt] = params as string[];
-          state.rows.push({
-            id: state.nextId++,
-            contact_user_id: contactUserId,
-            direction,
-            body_b64: bodyB64,
-            created_at: createdAt,
-          });
-          return { lastInsertRowId: state.nextId - 1, changes: 1 };
-        }
-        throw new Error(`unsupported mock runAsync source: ${source}`);
-      },
-      async getAllAsync(source: string, params: unknown[]) {
-        if (source.startsWith('SELECT') && source.includes('FROM messages')) {
-          const [contactUserId] = params as string[];
-          return state.rows
-            .filter((row) => row.contact_user_id === contactUserId)
-            .slice()
-            .sort((a, b) => a.created_at.localeCompare(b.created_at));
-        }
-        throw new Error(`unsupported mock getAllAsync source: ${source}`);
-      },
-    };
+    return wrap(raw);
   }
 
   return { openDatabaseSync };
 });
+
+function mockResetSqliteDatabases(): void {
+  const globalWithStore = globalThis as unknown as {
+    [MOCK_GLOBAL_STORE_KEY]?: Map<string, unknown>;
+  };
+  globalWithStore[MOCK_GLOBAL_STORE_KEY]?.clear();
+}
 
 describe('messages storage', () => {
   beforeEach(() => {
