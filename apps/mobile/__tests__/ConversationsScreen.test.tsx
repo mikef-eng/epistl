@@ -2,7 +2,7 @@ import { act, render, screen, userEvent, waitFor } from '@testing-library/react-
 
 import ConversationsScreen from '../src/screens/ConversationsScreen';
 import { listContacts } from '../src/api/client';
-import { getConversationSummaries } from '../src/storage/messages';
+import { getConversationSummaries, searchMessages } from '../src/storage/messages';
 
 jest.mock('../src/api/client', () => {
   class ApiError extends Error {
@@ -23,10 +23,12 @@ jest.mock('../src/api/client', () => {
 
 jest.mock('../src/storage/messages', () => ({
   getConversationSummaries: jest.fn(),
+  searchMessages: jest.fn(),
 }));
 
 const mockedListContacts = listContacts as jest.Mock;
 const mockedGetConversationSummaries = getConversationSummaries as jest.Mock;
+const mockedSearchMessages = searchMessages as jest.Mock;
 
 // CI runs each test file in its own worker process, and this file's first
 // render pays the one-time cost of registering RN/Reanimated native-module
@@ -297,5 +299,89 @@ describe('ConversationsScreen', () => {
       expect(screen.getByText('alice@example.com')).toBeTruthy();
     });
     expect(mockedListContacts).toHaveBeenCalledTimes(2);
+  });
+
+  describe('search', () => {
+    beforeEach(() => {
+      mockedGetConversationSummaries.mockResolvedValueOnce([
+        summary({ contactUserId: 'u1', lastBody: 'hi alice' }),
+        summary({ contactUserId: 'u2', lastBody: 'lunch tomorrow?' }),
+      ]);
+      mockedListContacts.mockResolvedValueOnce({
+        contacts: [
+          contact({ user_id: 'u1', email: 'alice@example.com' }),
+          contact({ user_id: 'u2', email: 'bob@example.com' }),
+        ],
+      });
+    });
+
+    it('shows the full, unfiltered conversation list for an empty query', async () => {
+      mockedSearchMessages.mockResolvedValue([]);
+      const { user } = await renderConversationsScreen();
+
+      await waitFor(() => {
+        expect(screen.getByText('alice@example.com')).toBeTruthy();
+        expect(screen.getByText('bob@example.com')).toBeTruthy();
+      });
+
+      expect(mockedSearchMessages).not.toHaveBeenCalled();
+
+      await user.type(screen.getByTestId('conversations-search-input'), 'x');
+      await user.clear(screen.getByTestId('conversations-search-input'));
+
+      await waitFor(() => {
+        expect(screen.getByText('alice@example.com')).toBeTruthy();
+        expect(screen.getByText('bob@example.com')).toBeTruthy();
+      });
+    });
+
+    it('includes a conversation matching only by contact email substring', async () => {
+      mockedSearchMessages.mockResolvedValue([]);
+      const { user } = await renderConversationsScreen();
+
+      await waitFor(() => {
+        expect(screen.getByText('alice@example.com')).toBeTruthy();
+      });
+
+      await user.type(screen.getByTestId('conversations-search-input'), 'alice');
+
+      await waitFor(() => {
+        expect(screen.getByText('alice@example.com')).toBeTruthy();
+      });
+      expect(screen.queryByText('bob@example.com')).toBeNull();
+    });
+
+    it('includes a conversation matching only by message content (searchMessages)', async () => {
+      mockedSearchMessages.mockResolvedValue([{ contactUserId: 'u2' }]);
+      const { user } = await renderConversationsScreen();
+
+      await waitFor(() => {
+        expect(screen.getByText('alice@example.com')).toBeTruthy();
+      });
+
+      await user.type(screen.getByTestId('conversations-search-input'), 'lunch');
+
+      await waitFor(() => {
+        expect(screen.getByText('bob@example.com')).toBeTruthy();
+      });
+      expect(screen.queryByText('alice@example.com')).toBeNull();
+      expect(mockedSearchMessages).toHaveBeenCalledWith('lunch');
+    });
+
+    it('does not duplicate a conversation matching both email and message content', async () => {
+      mockedSearchMessages.mockResolvedValue([{ contactUserId: 'u1' }]);
+      const { user } = await renderConversationsScreen();
+
+      await waitFor(() => {
+        expect(screen.getByText('alice@example.com')).toBeTruthy();
+      });
+
+      await user.type(screen.getByTestId('conversations-search-input'), 'alice');
+
+      await waitFor(() => {
+        expect(screen.getAllByText('alice@example.com')).toHaveLength(1);
+      });
+      expect(screen.queryByText('bob@example.com')).toBeNull();
+    });
   });
 });

@@ -2,11 +2,23 @@ import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import type { CompositeScreenProps } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, RefreshControl, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  FlatList,
+  Pressable,
+  RefreshControl,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 
 import { ApiError, listContacts, type Contact } from '../api/client';
 import type { MainTabParamList, RootStackParamList } from '../navigation/types';
-import { getConversationSummaries, type ConversationSummary } from '../storage/messages';
+import {
+  getConversationSummaries,
+  searchMessages,
+  type ConversationSummary,
+} from '../storage/messages';
 
 /**
  * Real `Conversations` tab, replacing issue #94's placeholder. Merges the
@@ -109,6 +121,15 @@ export default function ConversationsScreen({ navigation }: Props) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  // Holds the union of contact_user_ids matching the last non-empty query,
+  // by email substring (from `rows`, already in memory) or by message
+  // content (`searchMessages()`, issue #102) -- see
+  // docs/superpowers/specs/2026-09-13-search-design.md, "Conversation
+  // full-text search". Only ever read once `query` is non-empty (see
+  // `displayedRows` below), so a stale value here from a since-cleared
+  // query is harmless.
+  const [searchMatches, setSearchMatches] = useState<Set<string>>(new Set());
 
   // Initial fetch on mount. The effect only reads the response of an
   // already-in-flight promise and updates state in `.then`/`.catch`/
@@ -176,6 +197,54 @@ export default function ConversationsScreen({ navigation }: Props) {
     return unsubscribe;
   }, [navigation, refetch]);
 
+  // As-you-typed search (issue #103): a blank query never fires a query --
+  // `displayedRows` below falls back to the unfiltered `rows` in that case
+  // ("empty search query shows the full, unfiltered conversation list").
+  // Otherwise the email-substring check (synchronous, over the already
+  // in-memory `rows`) and `searchMessages()` (async, hits SQLite) run
+  // together and their results are unioned into one `Set` -- a contact
+  // matching both isn't duplicated since it's still just one entry in the
+  // `Set`, and `rows` already has at most one row per contact.
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (trimmed === '') {
+      return;
+    }
+
+    let cancelled = false;
+    const lowerQuery = trimmed.toLowerCase();
+    const emailMatchIds = rows
+      .filter((row) => row.email.toLowerCase().includes(lowerQuery))
+      .map((row) => row.contactUserId);
+
+    Promise.all([Promise.resolve(emailMatchIds), searchMessages(trimmed)])
+      .then(([emailIds, contentMatches]) => {
+        if (cancelled) {
+          return;
+        }
+        const union = new Set<string>(emailIds);
+        for (const match of contentMatches) {
+          union.add(match.contactUserId);
+        }
+        setSearchMatches(union);
+      })
+      .catch(() => {
+        // Falls back to the (already-available) email matches rather than
+        // clearing the search entirely if the content search fails.
+        if (!cancelled) {
+          setSearchMatches(new Set(emailMatchIds));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [query, rows]);
+
+  const trimmedQuery = query.trim();
+  const displayedRows =
+    trimmedQuery === '' ? rows : rows.filter((row) => searchMatches.has(row.contactUserId));
+
   function handleRefresh() {
     refetch(true);
   }
@@ -205,6 +274,18 @@ export default function ConversationsScreen({ navigation }: Props) {
         </Pressable>
       </View>
 
+      <TextInput
+        testID="conversations-search-input"
+        accessibilityLabel="Search"
+        className="mx-4 mt-3 rounded-lg border border-gray-300 px-4 py-2 text-base text-black dark:border-gray-700 dark:text-white"
+        placeholder="Search"
+        placeholderTextColor="#9CA3AF"
+        autoCapitalize="none"
+        autoCorrect={false}
+        value={query}
+        onChangeText={setQuery}
+      />
+
       {loading ? (
         <View className="flex-1 items-center justify-center">
           <ActivityIndicator testID="conversations-loading" size="large" />
@@ -222,7 +303,7 @@ export default function ConversationsScreen({ navigation }: Props) {
         </View>
       ) : (
         <FlatList
-          data={rows}
+          data={displayedRows}
           keyExtractor={(item) => item.contactUserId}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
           ListEmptyComponent={
