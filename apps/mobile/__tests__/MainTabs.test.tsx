@@ -3,7 +3,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { render, screen, userEvent, waitFor, within } from '@testing-library/react-native';
 import { Text } from 'react-native';
 
-import { listContacts } from '../src/api/client';
+import { listContactRequests, listContacts } from '../src/api/client';
 import MainTabs from '../src/navigation/MainTabs';
 import { getConversationSummaries } from '../src/storage/messages';
 import type { RootStackParamList } from '../src/navigation/types';
@@ -30,6 +30,7 @@ jest.mock('../src/api/client', () => {
   return {
     ApiError,
     listContacts: jest.fn(),
+    listContactRequests: jest.fn(),
   };
 });
 
@@ -42,6 +43,7 @@ jest.mock('../src/storage/messages', () => ({
 }));
 
 const mockedListContacts = listContacts as jest.Mock;
+const mockedListContactRequests = listContactRequests as jest.Mock;
 const mockedGetConversationSummaries = getConversationSummaries as jest.Mock;
 
 jest.setTimeout(15000);
@@ -77,6 +79,7 @@ describe('Main tab navigator (issue #94)', () => {
   beforeEach(() => {
     jest.resetAllMocks();
     mockedListContacts.mockResolvedValue({ contacts: [] });
+    mockedListContactRequests.mockResolvedValue({ incoming: [], outgoing: [] });
     mockedGetConversationSummaries.mockResolvedValue([]);
   });
 

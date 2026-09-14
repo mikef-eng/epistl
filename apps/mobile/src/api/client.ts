@@ -53,6 +53,21 @@ export interface ContactsResponse {
   contacts: Contact[];
 }
 
+/** One pending contact request as returned by `GET /api/contacts/requests`
+ * (either side of the pair -- `FriendsScreen`'s Requests section renders
+ * `incoming` with Accept/Decline actions and `outgoing` read-only). */
+export interface ContactRequestParty {
+  id: string;
+  user_id: string;
+  email: string;
+  created_at: string;
+}
+
+export interface ContactRequestsResponse {
+  incoming: ContactRequestParty[];
+  outgoing: ContactRequestParty[];
+}
+
 async function parseJson(response: Response): Promise<unknown> {
   try {
     return await response.json();
@@ -189,6 +204,64 @@ export async function registerKeys(
       prekey_signature_b64: prekeySignatureB64,
     }),
   });
+
+  if (!response.ok) {
+    await throwApiError(response);
+  }
+}
+
+/** Lists the caller's pending contact requests, both directions (issue
+ * #79's `GET /api/contacts/requests`). Backs `FriendsScreen`'s Requests
+ * section. */
+export async function listContactRequests(): Promise<ContactRequestsResponse> {
+  const token = await requireToken();
+
+  const response = await fetch(`${API_BASE_URL}/api/contacts/requests`, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!response.ok) {
+    await throwApiError(response);
+  }
+
+  return (await response.json()) as ContactRequestsResponse;
+}
+
+/** Accepts an incoming pending contact request (issue #80's
+ * `POST /api/contacts/requests/{id}/accept`). Resolves on `204`; the caller
+ * is responsible for removing the request from local state only after this
+ * resolves. */
+export async function acceptContactRequest(requestId: string): Promise<void> {
+  const token = await requireToken();
+
+  const response = await fetch(
+    `${API_BASE_URL}/api/contacts/requests/${encodeURIComponent(requestId)}/accept`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    }
+  );
+
+  if (!response.ok) {
+    await throwApiError(response);
+  }
+}
+
+/** Declines an incoming pending contact request (issue #80's
+ * `POST /api/contacts/requests/{id}/decline`). Resolves on `204`; the
+ * caller is responsible for removing the request from local state only
+ * after this resolves. */
+export async function declineContactRequest(requestId: string): Promise<void> {
+  const token = await requireToken();
+
+  const response = await fetch(
+    `${API_BASE_URL}/api/contacts/requests/${encodeURIComponent(requestId)}/decline`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    }
+  );
 
   if (!response.ok) {
     await throwApiError(response);
