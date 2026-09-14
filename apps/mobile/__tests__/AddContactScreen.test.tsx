@@ -62,7 +62,7 @@ describe('AddContactScreen', () => {
     expect(mockedAddContact).not.toHaveBeenCalled();
   });
 
-  it('navigates back to Contacts when addContact succeeds', async () => {
+  it('navigates back to Main when addContact succeeds', async () => {
     mockedAddContact.mockResolvedValueOnce({
       user_id: 'u1',
       email: 'a@example.com',
@@ -75,7 +75,7 @@ describe('AddContactScreen', () => {
 
     await waitFor(() => {
       expect(mockedAddContact).toHaveBeenCalledWith('a@example.com');
-      expect(navigation.navigate).toHaveBeenCalledWith('Contacts');
+      expect(navigation.navigate).toHaveBeenCalledWith('Main');
     });
   });
 

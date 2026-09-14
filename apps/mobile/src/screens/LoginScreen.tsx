@@ -53,7 +53,7 @@ export default function LoginScreen({ navigation }: Props) {
         // contract is ever violated.
         await ensureKeysRegistered(userId).catch(() => undefined);
       }
-      navigation.replace('Contacts');
+      navigation.replace('Main');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Something went wrong');
     } finally {
