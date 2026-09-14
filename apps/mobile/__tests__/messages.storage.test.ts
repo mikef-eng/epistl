@@ -53,8 +53,21 @@ jest.mock('expo-sqlite', () => {
 
     return {
       execSync(_source: string) {
-        // Only statement issued is CREATE TABLE IF NOT EXISTS; the table
-        // already implicitly exists once `state` is created above.
+        // Statements issued here are CREATE TABLE IF NOT EXISTS and (since
+        // messages.ts's read_at migration) ALTER TABLE ... ADD COLUMN
+        // read_at; the table already implicitly exists once `state` is
+        // created above, and this mock doesn't model columns at all, so
+        // both are no-ops.
+      },
+      getAllSync(source: string, _params?: unknown[]) {
+        if (source.startsWith('PRAGMA table_info')) {
+          // Reported as columnless so messages.ts's read_at migration guard
+          // always (harmlessly) issues its ALTER TABLE, since this mock
+          // doesn't track columns. See detailed migration coverage in
+          // src/storage/__tests__/messages.test.ts.
+          return [];
+        }
+        throw new Error(`unsupported mock getAllSync source: ${source}`);
       },
       async runAsync(source: string, params: unknown[]) {
         if (source.startsWith('INSERT INTO messages')) {
