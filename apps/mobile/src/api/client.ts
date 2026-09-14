@@ -9,7 +9,7 @@
  * for the chat WebSocket relay) can derive their URL from it instead of
  * introducing a second, independent env var.
  */
-import { getToken, saveToken } from './session';
+import { getToken, saveEmail, saveToken } from './session';
 
 export const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000';
 
@@ -78,6 +78,14 @@ async function throwApiError(response: Response): Promise<never> {
   throw new ApiError(errorCodeFrom(body), response.status);
 }
 
+/** Extracts the authenticated user's email from an `AuthResponse.user`,
+ * whose shape is otherwise opaque to this app (it passes through
+ * better-auth's user object as-is) -- mirrors `LoginScreen.tsx`'s
+ * `userIdOf` for the same object. */
+function emailOf(user: AuthUser): string | null {
+  return typeof user.email === 'string' ? user.email : null;
+}
+
 async function requireToken(): Promise<string> {
   const token = await getToken();
   if (!token) {
@@ -99,6 +107,10 @@ export async function signup(email: string, password: string): Promise<AuthRespo
 
   const data = (await response.json()) as AuthResponse;
   await saveToken(data.token);
+  const signupEmail = emailOf(data.user);
+  if (signupEmail !== null) {
+    await saveEmail(signupEmail);
+  }
   return data;
 }
 
@@ -115,6 +127,10 @@ export async function login(email: string, password: string): Promise<AuthRespon
 
   const data = (await response.json()) as AuthResponse;
   await saveToken(data.token);
+  const loginEmail = emailOf(data.user);
+  if (loginEmail !== null) {
+    await saveEmail(loginEmail);
+  }
   return data;
 }
 

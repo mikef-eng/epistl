@@ -34,6 +34,13 @@ describe('AddContactScreen', () => {
     jest.clearAllMocks();
   });
 
+  it('renders dark: variants on its title and input field', async () => {
+    await renderAddContactScreen();
+
+    expect(screen.getByText('Add contact').props.className).toContain('dark:text-white');
+    expect(screen.getByPlaceholderText('Email').props.className).toContain('dark:text-white');
+  });
+
   it('disables the submit button when the email field is empty or does not contain an @', async () => {
     const { user } = await renderAddContactScreen();
 

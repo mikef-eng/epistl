@@ -153,6 +153,31 @@ describe('ContactsScreen', () => {
     expect(navigation.navigate).toHaveBeenCalledWith('AddContact');
   });
 
+  it('navigates to Settings when the gear icon is pressed', async () => {
+    mockedListContacts.mockResolvedValueOnce({ contacts: [] });
+    const { navigation, user } = await renderContactsScreen();
+
+    await waitFor(() => {
+      expect(screen.getByText('No contacts yet')).toBeTruthy();
+    });
+
+    await user.press(screen.getByRole('button', { name: 'Settings' }));
+
+    expect(navigation.navigate).toHaveBeenCalledWith('Settings');
+  });
+
+  it('renders dark: variants on its background, header, and empty-state text', async () => {
+    mockedListContacts.mockResolvedValueOnce({ contacts: [] });
+    await renderContactsScreen();
+
+    await waitFor(() => {
+      expect(screen.getByText('No contacts yet')).toBeTruthy();
+    });
+
+    expect(screen.getByText('Contacts').props.className).toContain('dark:text-white');
+    expect(screen.getByText('No contacts yet').props.className).toContain('dark:text-gray-400');
+  });
+
   it('navigates to Chat with the contact userId and email when a fully-keyed row is tapped', async () => {
     mockedListContacts.mockResolvedValueOnce({
       contacts: [fullyKeyedContact({ user_id: 'u1', email: 'alice@example.com' })],

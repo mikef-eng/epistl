@@ -46,12 +46,13 @@ export default function AddContactScreen({ navigation }: Props) {
   }
 
   return (
-    <View className="flex-1 bg-white px-6 pt-6">
-      <Text className="mb-6 text-lg font-semibold">Add contact</Text>
+    <View className="flex-1 bg-white px-6 pt-6 dark:bg-black">
+      <Text className="mb-6 text-lg font-semibold text-black dark:text-white">Add contact</Text>
 
       <TextInput
-        className="mb-3 rounded-lg border border-gray-300 px-4 py-3 text-base"
+        className="mb-3 rounded-lg border border-gray-300 px-4 py-3 text-base text-black dark:border-gray-700 dark:text-white"
         placeholder="Email"
+        placeholderTextColor="#9CA3AF"
         autoCapitalize="none"
         autoCorrect={false}
         keyboardType="email-address"
