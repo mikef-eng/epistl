@@ -1,16 +1,30 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useState } from 'react';
-import { Pressable, Text, TextInput, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
 
 import {
   acceptContactRequest,
   ApiError,
   IncomingRequestExistsError,
+  searchUsers,
   sendContactRequest,
+  type SearchUser,
 } from '../api/client';
 import type { RootStackParamList } from '../navigation/types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'AddContact'>;
+
+/** Mirrors `apps/api/src/search.rs`'s `MIN_QUERY_LEN` (issue #99) so this
+ * screen never fires a request the server would just turn around and
+ * answer with an empty list -- duplicated rather than shared since the two
+ * live in separate language runtimes/packages. */
+const MIN_QUERY_LENGTH = 3;
+
+/** How long to wait after the last keystroke before firing a search --
+ * generous enough to avoid a request per keystroke from a fast typist,
+ * short enough to still feel instant. Exact value is the Coder's choice
+ * per issue #100's acceptance criteria. */
+const SEARCH_DEBOUNCE_MS = 300;
 
 /** Maps `POST /api/contacts/requests` (issue #79) error codes to
  * user-facing copy reflecting request semantics -- `incoming_request_exists`
@@ -35,50 +49,130 @@ interface CrossedRequest {
   email: string;
 }
 
+/** Removes a key from a `Record` by producing a fresh object -- mirrors
+ * `FriendsScreen`'s `withoutKey`, used the same way here for the per-row
+ * add-error map. */
+function withoutKey<T>(map: Record<string, T>, key: string): Record<string, T> {
+  if (!(key in map)) {
+    return map;
+  }
+  const next = { ...map };
+  delete next[key];
+  return next;
+}
+
 /**
- * "Send a contact request by email" screen (issue #84), replacing the
- * former "add by email" immediate-add flow. On `201` it shows an inline
- * "Request sent" confirmation instead of silently navigating away. On the
- * crossed-request case (`409 incoming_request_exists`, issue #79) it shows
- * an inline "Accept" prompt that calls issue #80's accept endpoint with the
- * request id carried in the error response.
+ * Discover-search flow (issue #100), replacing issue #84's single
+ * exact-email "Send request" input with a search-as-you-type field wired
+ * to issue #99's `GET /api/users/search`. Each result row keeps two
+ * independent tap targets: an explicit "+" button that sends a contact
+ * request directly (issue #84's `sendContactRequest`, unchanged in
+ * behavior), and tapping the row itself navigates to `UserProfileScreen`
+ * (issue #101, a separate follow-up) rather than sending anything. On the
+ * crossed-request case (`409 incoming_request_exists`, issue #79) this
+ * still shows the inline "Accept" prompt issue #150 added, now triggered
+ * from a row's add button instead of a single freeform submit.
+ * See `docs/superpowers/specs/2026-09-13-search-design.md`, "Discover
+ * search", `AddContactScreen` paragraph.
  */
-export default function AddContactScreen(_props: Props) {
-  const [email, setEmail] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [sent, setSent] = useState(false);
+export default function AddContactScreen({ navigation }: Props) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<SearchUser[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [rateLimited, setRateLimited] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+
+  const [addingIds, setAddingIds] = useState<Set<string>>(new Set());
+  const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
+  const [addErrors, setAddErrors] = useState<Record<string, string>>({});
 
   const [crossedRequest, setCrossedRequest] = useState<CrossedRequest | null>(null);
   const [accepting, setAccepting] = useState(false);
   const [acceptError, setAcceptError] = useState<string | null>(null);
   const [accepted, setAccepted] = useState(false);
 
-  const isEmailValid = email.length > 0 && email.includes('@');
-  const isSubmitDisabled = !isEmailValid || submitting;
-
-  async function handleSubmit() {
-    if (isSubmitDisabled) {
+  // Debounced search-as-you-type, wired to issue #99's
+  // GET /api/users/search. Below MIN_QUERY_LENGTH, results are cleared
+  // synchronously and no request is ever fired -- an empty/hidden list,
+  // not an error state.
+  useEffect(() => {
+    if (query.length < MIN_QUERY_LENGTH) {
+      setResults([]);
+      setSearchError(null);
+      setRateLimited(false);
+      setSearching(false);
       return;
     }
 
-    setError(null);
-    setSent(false);
+    let cancelled = false;
+    setSearching(true);
+    const timer = setTimeout(() => {
+      searchUsers(query)
+        .then((response) => {
+          if (cancelled) {
+            return;
+          }
+          setResults(response.users);
+          setSearchError(null);
+          setRateLimited(false);
+        })
+        .catch((err) => {
+          if (cancelled) {
+            return;
+          }
+          setResults([]);
+          if (err instanceof ApiError && err.status === 429) {
+            setRateLimited(true);
+            setSearchError(null);
+          } else {
+            setRateLimited(false);
+            setSearchError('Something went wrong');
+          }
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setSearching(false);
+          }
+        });
+    }, SEARCH_DEBOUNCE_MS);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [query]);
+
+  function handleViewProfile(result: SearchUser) {
+    navigation.navigate('UserProfile', { userId: result.user_id, email: result.email });
+  }
+
+  /** Sends a contact request directly from a result row's "+" button --
+   * distinct from `handleViewProfile` above, which never sends anything. */
+  async function handleAdd(result: SearchUser) {
+    if (addingIds.has(result.user_id)) {
+      return;
+    }
+
+    setAddErrors((prev) => withoutKey(prev, result.user_id));
+    setAddingIds((prev) => new Set(prev).add(result.user_id));
     setCrossedRequest(null);
     setAcceptError(null);
     setAccepted(false);
-    setSubmitting(true);
     try {
-      await sendContactRequest(email);
-      setSent(true);
+      await sendContactRequest(result.email);
+      setAddedIds((prev) => new Set(prev).add(result.user_id));
     } catch (err) {
       if (err instanceof IncomingRequestExistsError) {
-        setCrossedRequest({ requestId: err.requestId, email });
+        setCrossedRequest({ requestId: err.requestId, email: result.email });
       } else {
-        setError(messageFor(err));
+        setAddErrors((prev) => ({ ...prev, [result.user_id]: messageFor(err) }));
       }
     } finally {
-      setSubmitting(false);
+      setAddingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(result.user_id);
+        return next;
+      });
     }
   }
 
@@ -109,18 +203,20 @@ export default function AddContactScreen(_props: Props) {
 
       <TextInput
         className="mb-3 rounded-lg border border-gray-300 px-4 py-3 text-base text-black dark:border-gray-700 dark:text-white"
-        placeholder="Email"
+        placeholder="Search by email"
         placeholderTextColor="#9CA3AF"
         autoCapitalize="none"
         autoCorrect={false}
         keyboardType="email-address"
-        value={email}
-        onChangeText={setEmail}
+        value={query}
+        onChangeText={setQuery}
       />
 
-      {error !== null ? <Text className="mb-4 text-center text-red-500">{error}</Text> : null}
-
-      {sent ? <Text className="mb-4 text-center text-green-600">Request sent</Text> : null}
+      {rateLimited ? (
+        <Text className="mb-4 text-center text-red-500">Try again in a moment</Text>
+      ) : searchError !== null ? (
+        <Text className="mb-4 text-center text-red-500">{searchError}</Text>
+      ) : null}
 
       {crossedRequest !== null ? (
         <View className="mb-4">
@@ -147,14 +243,43 @@ export default function AddContactScreen(_props: Props) {
         </View>
       ) : null}
 
-      <Pressable
-        accessibilityRole="button"
-        disabled={isSubmitDisabled}
-        onPress={handleSubmit}
-        className={`items-center rounded-lg py-3 ${isSubmitDisabled ? 'bg-blue-200' : 'bg-blue-500'}`}
-      >
-        <Text className="text-base font-semibold text-white">Send request</Text>
-      </Pressable>
+      {searching ? <ActivityIndicator testID="search-loading" /> : null}
+
+      {results.map((result) => (
+        <View
+          key={result.user_id}
+          testID={`search-result-${result.user_id}`}
+          className="border-b border-gray-100 py-3 dark:border-gray-800"
+        >
+          <View className="flex-row items-center justify-between">
+            <Pressable
+              accessibilityRole="button"
+              className="flex-1 pr-3"
+              onPress={() => handleViewProfile(result)}
+            >
+              <Text className="text-base text-black dark:text-white">{result.email}</Text>
+            </Pressable>
+            {addedIds.has(result.user_id) ? (
+              <Text className="text-sm font-semibold text-green-600">Sent</Text>
+            ) : (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Add ${result.email}`}
+                disabled={addingIds.has(result.user_id)}
+                onPress={() => handleAdd(result)}
+                className={`rounded-full px-3 py-1 ${
+                  addingIds.has(result.user_id) ? 'bg-blue-200' : 'bg-blue-500'
+                }`}
+              >
+                <Text className="text-base font-semibold text-white">+</Text>
+              </Pressable>
+            )}
+          </View>
+          {addErrors[result.user_id] !== undefined ? (
+            <Text className="mt-1 text-sm text-red-500">{addErrors[result.user_id]}</Text>
+          ) : null}
+        </View>
+      ))}
     </View>
   );
 }

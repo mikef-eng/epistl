@@ -12,6 +12,7 @@ import {
   listContactRequests,
   acceptContactRequest,
   declineContactRequest,
+  searchUsers,
 } from '../client';
 
 jest.mock('../session', () => ({
@@ -192,6 +193,52 @@ describe('client', () => {
       await expect(listContacts()).rejects.toMatchObject({
         code: 'unauthorized',
         status: 401,
+      });
+    });
+  });
+
+  describe('searchUsers', () => {
+    it('throws an ApiError with code "no_session" when no token is stored', async () => {
+      mockSession.getToken.mockResolvedValueOnce(null);
+
+      await expect(searchUsers('ali')).rejects.toMatchObject({ code: 'no_session' });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('GETs /api/users/search with the query string and Authorization header', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-9');
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(200, { users: [{ user_id: 'u1', email: 'alice@example.com' }] }),
+      );
+
+      const result = await searchUsers('ali');
+
+      expect(fetchMock).toHaveBeenCalledWith('http://localhost:3000/api/users/search?q=ali', {
+        method: 'GET',
+        headers: { Authorization: 'Bearer tok-9' },
+      });
+      expect(result).toEqual({ users: [{ user_id: 'u1', email: 'alice@example.com' }] });
+    });
+
+    it('URL-encodes the query string', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-9');
+      fetchMock.mockResolvedValueOnce(jsonResponse(200, { users: [] }));
+
+      await searchUsers('a b&c');
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://localhost:3000/api/users/search?q=a%20b%26c',
+        { method: 'GET', headers: { Authorization: 'Bearer tok-9' } },
+      );
+    });
+
+    it('throws an ApiError with code "rate_limited" on 429', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-9');
+      fetchMock.mockResolvedValueOnce(jsonResponse(429, { error: 'rate_limited' }));
+
+      await expect(searchUsers('ali')).rejects.toMatchObject({
+        code: 'rate_limited',
+        status: 429,
       });
     });
   });
