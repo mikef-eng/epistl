@@ -1,6 +1,6 @@
 import { render, screen, userEvent, waitFor } from '@testing-library/react-native';
 
-import ContactsScreen from '../src/screens/ContactsScreen';
+import FriendsScreen from '../src/screens/FriendsScreen';
 import { listContacts } from '../src/api/client';
 
 jest.mock('../src/api/client', () => {
@@ -41,10 +41,10 @@ function makeDeferred<T>() {
   return { promise, resolve, reject };
 }
 
-async function renderContactsScreen() {
+async function renderFriendsScreen() {
   const navigation = { navigate: jest.fn() };
   const user = userEvent.setup();
-  await render(<ContactsScreen navigation={navigation as never} route={{} as never} />);
+  await render(<FriendsScreen navigation={navigation as never} route={{} as never} />);
   return { navigation, user };
 }
 
@@ -74,7 +74,7 @@ function unkeyedContact(overrides: { user_id: string; email: string; added_at?: 
   };
 }
 
-describe('ContactsScreen', () => {
+describe('FriendsScreen', () => {
   beforeEach(() => {
     jest.resetAllMocks();
   });
@@ -83,13 +83,13 @@ describe('ContactsScreen', () => {
     const deferred = makeDeferred<{ contacts: never[] }>();
     mockedListContacts.mockReturnValueOnce(deferred.promise);
 
-    await renderContactsScreen();
+    await renderFriendsScreen();
 
-    expect(screen.getByTestId('contacts-loading')).toBeTruthy();
+    expect(screen.getByTestId('friends-loading')).toBeTruthy();
 
     deferred.resolve({ contacts: [] });
     await waitFor(() => {
-      expect(screen.queryByTestId('contacts-loading')).toBeNull();
+      expect(screen.queryByTestId('friends-loading')).toBeNull();
     });
   });
 
@@ -101,7 +101,7 @@ describe('ContactsScreen', () => {
       ],
     });
 
-    await renderContactsScreen();
+    await renderFriendsScreen();
 
     await waitFor(() => {
       expect(screen.getByText('alice@example.com')).toBeTruthy();
@@ -112,7 +112,7 @@ describe('ContactsScreen', () => {
   it('shows a "No contacts yet" message when the list is empty', async () => {
     mockedListContacts.mockResolvedValueOnce({ contacts: [] });
 
-    await renderContactsScreen();
+    await renderFriendsScreen();
 
     await waitFor(() => {
       expect(screen.getByText('No contacts yet')).toBeTruthy();
@@ -122,7 +122,7 @@ describe('ContactsScreen', () => {
   it('shows an error message with a retry control that re-calls listContacts', async () => {
     const { ApiError } = jest.requireMock('../src/api/client');
     mockedListContacts.mockRejectedValueOnce(new ApiError('network_error', 0));
-    const { user } = await renderContactsScreen();
+    const { user } = await renderFriendsScreen();
 
     await waitFor(() => {
       expect(screen.getByText('network_error')).toBeTruthy();
@@ -142,7 +142,7 @@ describe('ContactsScreen', () => {
 
   it('navigates to AddContact when "Add contact" is pressed', async () => {
     mockedListContacts.mockResolvedValueOnce({ contacts: [] });
-    const { navigation, user } = await renderContactsScreen();
+    const { navigation, user } = await renderFriendsScreen();
 
     await waitFor(() => {
       expect(screen.getByText('No contacts yet')).toBeTruthy();
@@ -155,7 +155,7 @@ describe('ContactsScreen', () => {
 
   it('navigates to Settings when the gear icon is pressed', async () => {
     mockedListContacts.mockResolvedValueOnce({ contacts: [] });
-    const { navigation, user } = await renderContactsScreen();
+    const { navigation, user } = await renderFriendsScreen();
 
     await waitFor(() => {
       expect(screen.getByText('No contacts yet')).toBeTruthy();
@@ -168,13 +168,13 @@ describe('ContactsScreen', () => {
 
   it('renders dark: variants on its background, header, and empty-state text', async () => {
     mockedListContacts.mockResolvedValueOnce({ contacts: [] });
-    await renderContactsScreen();
+    await renderFriendsScreen();
 
     await waitFor(() => {
       expect(screen.getByText('No contacts yet')).toBeTruthy();
     });
 
-    expect(screen.getByText('Contacts').props.className).toContain('dark:text-white');
+    expect(screen.getByText('Friends').props.className).toContain('dark:text-white');
     expect(screen.getByText('No contacts yet').props.className).toContain('dark:text-gray-400');
   });
 
@@ -182,7 +182,7 @@ describe('ContactsScreen', () => {
     mockedListContacts.mockResolvedValueOnce({
       contacts: [fullyKeyedContact({ user_id: 'u1', email: 'alice@example.com' })],
     });
-    const { navigation, user } = await renderContactsScreen();
+    const { navigation, user } = await renderFriendsScreen();
 
     await waitFor(() => {
       expect(screen.getByText('alice@example.com')).toBeTruthy();
@@ -200,7 +200,7 @@ describe('ContactsScreen', () => {
     mockedListContacts.mockResolvedValueOnce({
       contacts: [unkeyedContact({ user_id: 'u1', email: 'carol@example.com' })],
     });
-    const { navigation, user } = await renderContactsScreen();
+    const { navigation, user } = await renderFriendsScreen();
 
     await waitFor(() => {
       expect(screen.getByText('carol@example.com')).toBeTruthy();
@@ -223,7 +223,7 @@ describe('ContactsScreen', () => {
         },
       ],
     });
-    const { navigation, user } = await renderContactsScreen();
+    const { navigation, user } = await renderFriendsScreen();
 
     await waitFor(() => {
       expect(screen.getByText('dave@example.com')).toBeTruthy();

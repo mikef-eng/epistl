@@ -37,7 +37,11 @@ export default function AddContactScreen({ navigation }: Props) {
     setSubmitting(true);
     try {
       await addContact(email);
-      navigation.navigate('Contacts');
+      // `Main` (issue #94) is the tab navigator hosting the `Friends` tab
+      // this screen was pushed from; navigating there (rather than
+      // `goBack()`) matches this screen's pre-#94 "back to the contacts
+      // list" behavior even if it's ever reached by another route.
+      navigation.navigate('Main');
     } catch (err) {
       setError(messageFor(err));
     } finally {
