@@ -36,6 +36,15 @@
 //! the row in place as an audit trail (and to keep the pending-uniqueness
 //! index from blocking a fresh request, since it's scoped to
 //! `WHERE status = 'pending'`).
+//!
+//! Issue #82 adds a best-effort live push (see `push_frame`) on each of the
+//! three actions above (create/accept/mutual-remove) to the other party's
+//! live connection, if they're currently connected -- mirroring the
+//! existing best-effort delivery pattern `crate::relay` uses for chat
+//! messages, via the same `AppState::registry` connection lookup. Nothing
+//! is surfaced to the caller either way: a missed push is always fully
+//! recovered by the recipient's next `GET` (see issue #82's own "Out of
+//! scope").
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -46,10 +55,27 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::auth::{AppState, AuthenticatedUser};
+use crate::registry::Frame;
+
+/// Best-effort push of `frame` to `user_id`'s live connection, if any (issue
+/// #82's "Live push" -- see
+/// `docs/superpowers/specs/2026-09-13-mutual-contacts-design.md`). Uses the
+/// same [`crate::registry::ConnectionRegistry`] lookup `relay::handle_send`/
+/// `deliver_queued_messages` already use in `ws.rs` -- no new connection
+/// registry. Nothing is surfaced to the caller if `user_id` isn't currently
+/// connected: per issue #82's own "Out of scope", a missed push is always
+/// fully recovered by the caller's next `GET` (pull-to-refresh / re-fetch on
+/// screen focus), so this is purely a best-effort latency improvement, never
+/// a correctness requirement.
+async fn push_frame(state: &AppState, user_id: Uuid, frame: Value) {
+    if let Some(tx) = state.registry.get(&user_id).await {
+        let _ = tx.send(Frame::Text(frame.to_string()));
+    }
+}
 
 pub fn router(state: AppState) -> Router {
     Router::new()
@@ -266,7 +292,21 @@ async fn remove_contact(
     }
 
     match tx.commit().await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => {
+            // Best-effort live push (issue #82) to the other party, if
+            // they're currently connected -- see `push_frame`'s doc comment.
+            push_frame(
+                &state,
+                contact_user_id,
+                json!({
+                    "type": "contact_removed",
+                    "user_id": user.user.id,
+                    "email": user.user.email,
+                }),
+            )
+            .await;
+            StatusCode::NO_CONTENT.into_response()
+        }
         Err(_) => internal_error(),
     }
 }
@@ -379,7 +419,22 @@ async fn create_contact_request(
     .await;
 
     match inserted {
-        Ok(Some(row)) => (StatusCode::CREATED, Json(json!(row))).into_response(),
+        Ok(Some(row)) => {
+            // Best-effort live push (issue #82) to the recipient, if they're
+            // currently connected -- see `push_frame`'s doc comment.
+            push_frame(
+                &state,
+                target_id,
+                json!({
+                    "type": "contact_request",
+                    "request_id": row.id,
+                    "requester_user_id": user.user.id,
+                    "requester_email": user.user.email,
+                }),
+            )
+            .await;
+            (StatusCode::CREATED, Json(json!(row))).into_response()
+        }
         Ok(None) => (
             StatusCode::CONFLICT,
             Json(json!({ "error": "already_pending" })),
@@ -572,7 +627,24 @@ async fn accept_contact_request(
     }
 
     match tx.commit().await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => {
+            // Best-effort live push (issue #82) to the *other* party -- the
+            // original requester -- if they're currently connected. The
+            // acceptor (this caller) already knows synchronously via this
+            // response, so no push is sent to them.
+            push_frame(
+                &state,
+                requester_id,
+                json!({
+                    "type": "contact_accepted",
+                    "request_id": request_id,
+                    "acceptor_user_id": user.user.id,
+                    "acceptor_email": user.user.email,
+                }),
+            )
+            .await;
+            StatusCode::NO_CONTENT.into_response()
+        }
         Err(_) => internal_error(),
     }
 }
