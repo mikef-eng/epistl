@@ -523,4 +523,33 @@ describe('searchMessages', () => {
 
     await expect(messages.searchMessages('coffee-shop "quote')).resolves.toEqual([]);
   });
+
+  // TESTER-ADDED: per docs/decisions/0007-local-history-stores-plaintext.md,
+  // `bodyB64` is always UTF-8 plaintext *base64-encoded* by the real
+  // production caller (ChatScreen.tsx), via
+  // `utf8ToBase64`/`bytesToBase64(utf8ToBytes(plaintext))` — never raw
+  // plaintext bytes. Every other test in this file (including the sync-
+  // trigger tests above) instead stores literal plaintext strings directly
+  // in `bodyB64` (e.g. `bodyB64: 'let us meet for coffee tomorrow'`), which
+  // does not reflect what's actually persisted at rest and makes FTS5
+  // matching trivially succeed regardless of whether the index is built
+  // over decoded content or the base64 form. This test uses the real
+  // encoding a user's typed message would go through, then searches for an
+  // ordinary word straight out of that plaintext, the way a real user would
+  // type it into a search box.
+  it('finds a plaintext word a user actually typed, given realistically base64-encoded content', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- avoids adding a new top-level import purely for this one diagnostic test.
+    const { utf8ToBase64 } = require('../../utils/base64');
+
+    await messages.saveMessage({
+      contactUserId: 'alice',
+      direction: 'incoming',
+      bodyB64: utf8ToBase64('the quick brown fox'),
+      createdAt: '2024-01-01T00:00:00.000Z',
+    });
+
+    const results = await messages.searchMessages('quick');
+
+    expect(results).toEqual([{ contactUserId: 'alice' }]);
+  });
 });
