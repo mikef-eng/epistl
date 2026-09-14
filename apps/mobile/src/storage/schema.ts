@@ -12,7 +12,7 @@ export const messages = sqliteTable('messages', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   contactUserId: text('contact_user_id').notNull(),
   direction: text('direction').notNull().$type<'outgoing' | 'incoming'>(),
-  bodyB64: text('body_b64').notNull(),
+  body: text('body').notNull(),
   createdAt: text('created_at').notNull(),
   // Nullable: unset for outgoing messages and for incoming messages that
   // haven't been read yet.

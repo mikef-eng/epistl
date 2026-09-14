@@ -9,8 +9,10 @@
  * why the backend never persists it). Independent of any screen so it can
  * be unit tested in isolation.
  *
- * `bodyB64` is opaque base64 ciphertext with the same shape as the WS relay
- * payload — this module never inspects or transforms it.
+ * `body` is plaintext UTF-8 text (per
+ * docs/decisions/0007-local-history-stores-plaintext.md) — a plain SQLite
+ * `TEXT` column, not base64-wrapped. This module never inspects or
+ * transforms it beyond that.
  */
 import * as SQLite from 'expo-sqlite';
 import { drizzle } from 'drizzle-orm/expo-sqlite';
@@ -29,14 +31,14 @@ export interface StoredMessage {
   id: number;
   contactUserId: string;
   direction: MessageDirection;
-  bodyB64: string;
+  body: string;
   createdAt: string;
 }
 
 export interface SaveMessageInput {
   contactUserId: string;
   direction: MessageDirection;
-  bodyB64: string;
+  body: string;
   createdAt: string;
 }
 
@@ -47,7 +49,7 @@ export interface SaveMessageInput {
  */
 export interface ConversationSummary {
   contactUserId: string;
-  lastBodyB64: string;
+  lastBody: string;
   lastDirection: MessageDirection;
   lastCreatedAt: string;
   hasUnread: boolean;
@@ -55,7 +57,7 @@ export interface ConversationSummary {
 
 interface ConversationSummaryRow {
   contact_user_id: string;
-  body_b64: string;
+  body: string;
   direction: MessageDirection;
   created_at: string;
   has_unread: number;
@@ -71,7 +73,7 @@ const GET_CONVERSATION_SUMMARIES_SQL = sql<ConversationSummaryRow>`
 WITH ranked AS (
   SELECT
     contact_user_id,
-    body_b64,
+    body,
     direction,
     created_at,
     ROW_NUMBER() OVER (
@@ -87,7 +89,7 @@ unread AS (
 )
 SELECT
   ranked.contact_user_id AS contact_user_id,
-  ranked.body_b64 AS body_b64,
+  ranked.body AS body,
   ranked.direction AS direction,
   ranked.created_at AS created_at,
   CASE WHEN unread.contact_user_id IS NOT NULL THEN 1 ELSE 0 END AS has_unread
@@ -96,6 +98,28 @@ LEFT JOIN unread ON unread.contact_user_id = ranked.contact_user_id
 WHERE ranked.rn = 1
 ORDER BY ranked.created_at DESC
 `;
+
+interface SearchMessagesRow {
+  contact_user_id: string;
+}
+
+/**
+ * Builds a `messages_fts` `MATCH` argument from a free-text search query,
+ * per SQLite's FTS5 query syntax
+ * (https://sqlite.org/fts5.html#full_text_query_syntax): each whitespace-
+ * separated term is double-quoted (escaping any embedded `"`) so bareword
+ * FTS5 query-syntax operators typed by the user (`-foo`, `foo*`, `NEAR`,
+ * unbalanced `"`, etc.) are treated as literal text to search for rather
+ * than parsed as FTS5 syntax, and ANDed together (FTS5's default when
+ * multiple quoted strings are juxtaposed).
+ */
+function toFtsMatchQuery(query: string): string {
+  return query
+    .split(/\s+/)
+    .filter((term) => term.length > 0)
+    .map((term) => `"${term.replace(/"/g, '""')}"`)
+    .join(' AND ');
+}
 
 const sqliteDb = SQLite.openDatabaseSync(DATABASE_NAME);
 const db = drizzle(sqliteDb, { schema: { messages: messagesTable } });
@@ -112,7 +136,7 @@ function rowToMessage(row: typeof messagesTable.$inferSelect): StoredMessage {
     id: row.id,
     contactUserId: row.contactUserId,
     direction: row.direction,
-    bodyB64: row.bodyB64,
+    body: row.body,
     createdAt: row.createdAt,
   };
 }
@@ -120,7 +144,7 @@ function rowToMessage(row: typeof messagesTable.$inferSelect): StoredMessage {
 function rowToConversationSummary(row: ConversationSummaryRow): ConversationSummary {
   return {
     contactUserId: row.contact_user_id,
-    lastBodyB64: row.body_b64,
+    lastBody: row.body,
     lastDirection: row.direction,
     lastCreatedAt: row.created_at,
     hasUnread: row.has_unread === 1,
@@ -133,7 +157,7 @@ export async function saveMessage(input: SaveMessageInput): Promise<void> {
   await db.insert(messagesTable).values({
     contactUserId: input.contactUserId,
     direction: input.direction,
-    bodyB64: input.bodyB64,
+    body: input.body,
     createdAt: input.createdAt,
   });
 }
@@ -178,4 +202,27 @@ export async function getConversationSummaries(): Promise<ConversationSummary[]>
   await migrationsReady;
   const rows = await db.all<ConversationSummaryRow>(GET_CONVERSATION_SUMMARIES_SQL);
   return rows.map(rowToConversationSummary);
+}
+
+/**
+ * Full-text searches message content via the `messages_fts` FTS5 virtual
+ * table (see `drizzle/0001_messages_fts.sql` and
+ * `drizzle/0002_light_karnak.sql`, which re-points it at the plaintext
+ * `body` column), returning the distinct contacts with at least one
+ * matching message. Returns `[]` for a blank (empty/whitespace-only) query
+ * rather than running a query FTS5 would reject.
+ */
+export async function searchMessages(query: string): Promise<{ contactUserId: string }[]> {
+  await migrationsReady;
+  const matchQuery = toFtsMatchQuery(query.trim());
+  if (matchQuery === '') {
+    return [];
+  }
+  const rows = await db.all<SearchMessagesRow>(sql<SearchMessagesRow>`
+    SELECT DISTINCT m.contact_user_id AS contact_user_id
+    FROM messages_fts
+    JOIN messages m ON m.id = messages_fts.rowid
+    WHERE messages_fts MATCH ${matchQuery}
+  `);
+  return rows.map((row) => ({ contactUserId: row.contact_user_id }));
 }

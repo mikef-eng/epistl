@@ -107,7 +107,7 @@ describe('messages storage', () => {
     await saveMessage({
       contactUserId: 'contact-1',
       direction: 'outgoing',
-      bodyB64: 'Ym9keQ==',
+      body: 'body',
       createdAt: '2026-01-01T00:00:00.000Z',
     });
 
@@ -117,7 +117,7 @@ describe('messages storage', () => {
     expect(messages[0]).toMatchObject({
       contactUserId: 'contact-1',
       direction: 'outgoing',
-      bodyB64: 'Ym9keQ==',
+      body: 'body',
       createdAt: '2026-01-01T00:00:00.000Z',
     });
     expect(typeof messages[0].id).toBe('number');
@@ -129,25 +129,25 @@ describe('messages storage', () => {
     await saveMessage({
       contactUserId: 'contact-1',
       direction: 'incoming',
-      bodyB64: 'Yw==',
+      body: 'c',
       createdAt: '2026-01-03T00:00:00.000Z',
     });
     await saveMessage({
       contactUserId: 'contact-1',
       direction: 'outgoing',
-      bodyB64: 'YQ==',
+      body: 'a',
       createdAt: '2026-01-01T00:00:00.000Z',
     });
     await saveMessage({
       contactUserId: 'contact-1',
       direction: 'incoming',
-      bodyB64: 'Yg==',
+      body: 'b',
       createdAt: '2026-01-02T00:00:00.000Z',
     });
 
     const messages = await getMessages('contact-1');
 
-    expect(messages.map((message) => message.bodyB64)).toEqual(['YQ==', 'Yg==', 'Yw==']);
+    expect(messages.map((message) => message.body)).toEqual(['a', 'b', 'c']);
   });
 
   it('isolates messages between different contacts', async () => {
@@ -156,13 +156,13 @@ describe('messages storage', () => {
     await saveMessage({
       contactUserId: 'contact-1',
       direction: 'outgoing',
-      bodyB64: 'Zm9yLWNvbnRhY3Qx',
+      body: 'for-contact1',
       createdAt: '2026-01-01T00:00:00.000Z',
     });
     await saveMessage({
       contactUserId: 'contact-2',
       direction: 'incoming',
-      bodyB64: 'Zm9yLWNvbnRhY3Qy',
+      body: 'for-contact2',
       createdAt: '2026-01-01T00:00:01.000Z',
     });
 
@@ -170,9 +170,9 @@ describe('messages storage', () => {
     const contact2Messages = await getMessages('contact-2');
 
     expect(contact1Messages).toHaveLength(1);
-    expect(contact1Messages[0].bodyB64).toBe('Zm9yLWNvbnRhY3Qx');
+    expect(contact1Messages[0].body).toBe('for-contact1');
     expect(contact2Messages).toHaveLength(1);
-    expect(contact2Messages[0].bodyB64).toBe('Zm9yLWNvbnRhY3Qy');
+    expect(contact2Messages[0].body).toBe('for-contact2');
   });
 
   it('persists messages across a simulated app restart', async () => {
@@ -180,7 +180,7 @@ describe('messages storage', () => {
     await firstImport.saveMessage({
       contactUserId: 'contact-1',
       direction: 'outgoing',
-      bodyB64: 'cGVyc2lzdGVudA==',
+      body: 'persistent',
       createdAt: '2026-01-01T00:00:00.000Z',
     });
 
@@ -191,6 +191,6 @@ describe('messages storage', () => {
     const messages = await secondImport.getMessages('contact-1');
 
     expect(messages).toHaveLength(1);
-    expect(messages[0].bodyB64).toBe('cGVyc2lzdGVudA==');
+    expect(messages[0].body).toBe('persistent');
   });
 });

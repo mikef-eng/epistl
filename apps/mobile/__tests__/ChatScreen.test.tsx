@@ -187,14 +187,14 @@ describe('ChatScreen', () => {
         id: 1,
         contactUserId: CONTACT_USER_ID,
         direction: 'outgoing',
-        bodyB64: 'aGk=',
+        body: 'hi',
         createdAt: '2026-01-01T00:00:00.000Z',
       },
       {
         id: 2,
         contactUserId: CONTACT_USER_ID,
         direction: 'incoming',
-        bodyB64: 'aGVsbG8=',
+        body: 'hello',
         createdAt: '2026-01-01T00:00:01.000Z',
       },
     ]);
@@ -235,7 +235,7 @@ describe('ChatScreen', () => {
         expect.objectContaining({
           contactUserId: CONTACT_USER_ID,
           direction: 'outgoing',
-          bodyB64: bytesToBase64(utf8ToBytes('hey there')),
+          body: 'hey there',
         })
       );
     });
@@ -279,7 +279,7 @@ describe('ChatScreen', () => {
       expect.objectContaining({
         contactUserId: CONTACT_USER_ID,
         direction: 'incoming',
-        bodyB64: bytesToBase64(utf8ToBytes('hello alice, this is bob')),
+        body: 'hello alice, this is bob',
       })
     );
   });

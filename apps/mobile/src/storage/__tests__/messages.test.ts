@@ -110,19 +110,19 @@ describe('markContactMessagesRead', () => {
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'incoming',
-      bodyB64: 'a1',
+      body: 'a1',
       createdAt: '2024-01-01T00:00:00.000Z',
     });
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'outgoing',
-      bodyB64: 'a2',
+      body: 'a2',
       createdAt: '2024-01-01T00:01:00.000Z',
     });
     await messages.saveMessage({
       contactUserId: 'bob',
       direction: 'incoming',
-      bodyB64: 'b1',
+      body: 'b1',
       createdAt: '2024-01-01T00:02:00.000Z',
     });
 
@@ -140,13 +140,13 @@ describe('markContactMessagesRead', () => {
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'incoming',
-      bodyB64: 'a1',
+      body: 'a1',
       createdAt: '2024-01-01T00:00:00.000Z',
     });
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'outgoing',
-      bodyB64: 'a2',
+      body: 'a2',
       createdAt: '2024-01-01T00:01:00.000Z',
     });
 
@@ -164,13 +164,13 @@ describe('markContactMessagesRead', () => {
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'incoming',
-      bodyB64: 'a1',
+      body: 'a1',
       createdAt: '2024-01-01T00:00:00.000Z',
     });
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'outgoing',
-      bodyB64: 'a2',
+      body: 'a2',
       createdAt: '2024-01-01T00:01:00.000Z',
     });
 
@@ -206,13 +206,13 @@ describe('getConversationSummaries', () => {
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'incoming',
-      bodyB64: 'old',
+      body: 'old',
       createdAt: '2024-01-01T00:00:00.000Z',
     });
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'outgoing',
-      bodyB64: 'new',
+      body: 'new',
       createdAt: '2024-01-02T00:00:00.000Z',
     });
 
@@ -221,7 +221,7 @@ describe('getConversationSummaries', () => {
     expect(summaries).toHaveLength(1);
     expect(summaries[0]).toMatchObject({
       contactUserId: 'alice',
-      lastBodyB64: 'new',
+      lastBody: 'new',
       lastDirection: 'outgoing',
       lastCreatedAt: '2024-01-02T00:00:00.000Z',
     });
@@ -231,19 +231,19 @@ describe('getConversationSummaries', () => {
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'incoming',
-      bodyB64: 'a1',
+      body: 'a1',
       createdAt: '2024-01-01T00:00:00.000Z',
     });
     await messages.saveMessage({
       contactUserId: 'bob',
       direction: 'incoming',
-      bodyB64: 'b1',
+      body: 'b1',
       createdAt: '2024-01-03T00:00:00.000Z',
     });
     await messages.saveMessage({
       contactUserId: 'carol',
       direction: 'incoming',
-      bodyB64: 'c1',
+      body: 'c1',
       createdAt: '2024-01-02T00:00:00.000Z',
     });
 
@@ -256,13 +256,13 @@ describe('getConversationSummaries', () => {
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'incoming',
-      bodyB64: 'a1',
+      body: 'a1',
       createdAt: '2024-01-01T00:00:00.000Z',
     });
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'outgoing',
-      bodyB64: 'a2',
+      body: 'a2',
       createdAt: '2024-01-02T00:00:00.000Z',
     });
 
@@ -275,7 +275,7 @@ describe('getConversationSummaries', () => {
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'outgoing',
-      bodyB64: 'a1',
+      body: 'a1',
       createdAt: '2024-01-01T00:00:00.000Z',
     });
 
@@ -288,7 +288,7 @@ describe('getConversationSummaries', () => {
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'incoming',
-      bodyB64: 'a1',
+      body: 'a1',
       createdAt: '2024-01-01T00:00:00.000Z',
     });
 
@@ -313,7 +313,7 @@ describe('drizzle-kit migrations', () => {
       messages.saveMessage({
         contactUserId: 'carol',
         direction: 'incoming',
-        bodyB64: 'hi',
+        body: 'hi',
         createdAt: '2024-01-01T00:00:00.000Z',
       })
     ).resolves.toBeUndefined();
@@ -334,7 +334,7 @@ describe('drizzle-kit migrations', () => {
     await firstLoad.saveMessage({
       contactUserId: 'carol',
       direction: 'incoming',
-      bodyB64: 'hi',
+      body: 'hi',
       createdAt: '2024-01-01T00:00:00.000Z',
     });
 
@@ -348,6 +348,201 @@ describe('drizzle-kit migrations', () => {
 
     const rows = await secondLoad.getMessages('carol');
     expect(rows).toHaveLength(1);
-    expect(rows[0].bodyB64).toBe('hi');
+    expect(rows[0].body).toBe('hi');
+  });
+});
+
+/** Reaches past the module under test to query/mutate the raw tables the
+ * `messages_fts` migration created, the same way other tests in this file
+ * reach past the module to assert on raw columns. */
+function openRawDb() {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- reaching past the module under test to exercise the FTS5 sync triggers directly.
+  const SQLite = require('expo-sqlite');
+  return SQLite.openDatabaseSync('epistl.db') as unknown as {
+    getAllSync: <T>(sql: string, params?: unknown[]) => T[];
+    execSync: (sql: string) => void;
+  };
+}
+
+describe('messages_fts sync triggers', () => {
+  let messages: typeof import('../messages');
+
+  beforeEach(() => {
+    messages = loadMessagesModule();
+  });
+
+  it('reflects an INSERT on messages in messages_fts', async () => {
+    await messages.saveMessage({
+      contactUserId: 'alice',
+      direction: 'incoming',
+      body: 'let us meet for coffee tomorrow',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    });
+
+    const rows = openRawDb().getAllSync<{ rowid: number }>(
+      "SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'coffee'"
+    );
+
+    expect(rows).toHaveLength(1);
+  });
+
+  it('reflects an UPDATE on messages in messages_fts', async () => {
+    await messages.saveMessage({
+      contactUserId: 'alice',
+      direction: 'incoming',
+      body: 'original content',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    });
+
+    const raw = openRawDb();
+    raw.execSync("UPDATE messages SET body = 'updated content' WHERE contact_user_id = 'alice'");
+
+    const oldMatches = raw.getAllSync(
+      "SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'original'"
+    );
+    const newMatches = raw.getAllSync(
+      "SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'updated'"
+    );
+
+    expect(oldMatches).toHaveLength(0);
+    expect(newMatches).toHaveLength(1);
+  });
+
+  it('reflects a DELETE on messages in messages_fts', async () => {
+    await messages.saveMessage({
+      contactUserId: 'alice',
+      direction: 'incoming',
+      body: 'ephemeral content',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    });
+
+    const raw = openRawDb();
+    raw.execSync("DELETE FROM messages WHERE contact_user_id = 'alice'");
+
+    const rows = raw.getAllSync(
+      "SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'ephemeral'"
+    );
+
+    expect(rows).toHaveLength(0);
+  });
+});
+
+describe('searchMessages', () => {
+  let messages: typeof import('../messages');
+
+  beforeEach(() => {
+    messages = loadMessagesModule();
+  });
+
+  it('returns the contact_user_id for a content match', async () => {
+    await messages.saveMessage({
+      contactUserId: 'alice',
+      direction: 'incoming',
+      body: 'let us meet for coffee tomorrow',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    });
+
+    const results = await messages.searchMessages('coffee');
+
+    expect(results).toEqual([{ contactUserId: 'alice' }]);
+  });
+
+  it('returns no results for non-matching content (no false positives)', async () => {
+    await messages.saveMessage({
+      contactUserId: 'alice',
+      direction: 'incoming',
+      body: 'let us meet for coffee tomorrow',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    });
+
+    const results = await messages.searchMessages('brunch');
+
+    expect(results).toEqual([]);
+  });
+
+  it('deduplicates contact_user_id when multiple of their messages match', async () => {
+    await messages.saveMessage({
+      contactUserId: 'alice',
+      direction: 'incoming',
+      body: 'coffee at noon',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    });
+    await messages.saveMessage({
+      contactUserId: 'alice',
+      direction: 'outgoing',
+      body: 'coffee sounds great',
+      createdAt: '2024-01-01T00:01:00.000Z',
+    });
+
+    const results = await messages.searchMessages('coffee');
+
+    expect(results).toEqual([{ contactUserId: 'alice' }]);
+  });
+
+  it('only returns contacts whose own messages match', async () => {
+    await messages.saveMessage({
+      contactUserId: 'alice',
+      direction: 'incoming',
+      body: 'coffee at noon',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    });
+    await messages.saveMessage({
+      contactUserId: 'bob',
+      direction: 'incoming',
+      body: 'lunch at noon',
+      createdAt: '2024-01-01T00:01:00.000Z',
+    });
+
+    const results = await messages.searchMessages('coffee');
+
+    expect(results).toEqual([{ contactUserId: 'alice' }]);
+  });
+
+  it('returns an empty array for a blank query', async () => {
+    await messages.saveMessage({
+      contactUserId: 'alice',
+      direction: 'incoming',
+      body: 'coffee at noon',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    });
+
+    const results = await messages.searchMessages('   ');
+
+    expect(results).toEqual([]);
+  });
+
+  it('does not throw and finds no match for a query containing FTS5 operator syntax', async () => {
+    await messages.saveMessage({
+      contactUserId: 'alice',
+      direction: 'incoming',
+      body: 'coffee at noon',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    });
+
+    await expect(messages.searchMessages('coffee-shop "quote')).resolves.toEqual([]);
+  });
+
+  // TESTER-ADDED (originally proved the pre-fix bug: FTS5 indexed
+  // `body_b64`, a base64-encoded wrapper around plaintext, so a search for
+  // an ordinary word straight out of the plaintext did not match — FTS5
+  // tokenizes the base64 *form*, which doesn't preserve substring alignment
+  // with the decoded text). Root-caused per issue #102: the `messages`
+  // table's `body` column (renamed from `bodyB64`/`body_b64`) is now plain
+  // UTF-8 plaintext with no base64 wrapper at all (see
+  // docs/decisions/0007-local-history-stores-plaintext.md and this module's
+  // doc comment), so this test now saves plaintext directly, the same way
+  // the real production caller (ChatScreen.tsx) does post-fix, and confirms
+  // an ordinary word a user actually typed is found.
+  it('finds a plaintext word a user actually typed', async () => {
+    await messages.saveMessage({
+      contactUserId: 'alice',
+      direction: 'incoming',
+      body: 'the quick brown fox',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    });
+
+    const results = await messages.searchMessages('quick');
+
+    expect(results).toEqual([{ contactUserId: 'alice' }]);
   });
 });
