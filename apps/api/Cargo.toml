@@ -6,7 +6,15 @@ edition = "2021"
 [dependencies]
 axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "io-util"] }
-tower = { version = "0.5", features = ["util"] }
+# `limit` (issue #99, `/api/users/search`'s rate limit) enables
+# `tower::limit`. See `apps/api/src/search.rs`'s module docs for why that
+# route's actual rate limiter is a small custom `tower`/`axum` middleware
+# rather than `tower::limit::RateLimitLayer` directly -- that type's
+# backpressure semantics (callers wait out the window instead of getting an
+# error) and its non-`Clone` `RateLimit<S>` service don't fit this route's
+# "exceeding the limit returns 429" contract or axum's `Router::layer`
+# bound.
+tower = { version = "0.5", features = ["util", "limit"] }
 base64 = "0.22"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 sqlx = { version = "0.9", default-features = false, features = [
