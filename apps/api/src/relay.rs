@@ -352,6 +352,7 @@ fn send_error(tx: &Sender, code: &str, message: &str) -> Result<(), ()> {
 mod tests {
     use super::*;
     use crate::auth;
+    use async_nats::jetstream::stream::Stream;
     use serial_test::serial;
     use sqlx::postgres::PgPoolOptions;
     use tokio::sync::mpsc;
@@ -412,6 +413,42 @@ mod tests {
             result.is_err(),
             "expected no further frame, but got one: {result:?}"
         );
+    }
+
+    /// Returns the exact set of consumer names currently registered on
+    /// `stream`, via JetStream's `CONSUMER.NAMES` API (`Stream::consumer_names`)
+    /// -- a direct listing, not the aggregate `state.consumer_count` counter
+    /// `stream.info()` returns.
+    ///
+    /// Issue #118's investigation found `state.consumer_count` compared
+    /// across two points in time (the shape the test originally used) flakes
+    /// even in complete process isolation (`cargo test --lib`, no other test
+    /// binary running -- ruling out cross-binary interference): a bounded
+    /// poll-until-two-reads-agree retry on that counter (an earlier attempt
+    /// at this fix) *also* still flaked at essentially the same rate, which
+    /// means the counter itself doesn't settle to a value that stays
+    /// comparable across a short wall-clock gap -- other ephemeral consumers
+    /// created by earlier tests in the same run linger for "several
+    /// seconds" (see `redeliver_if_now_connected`'s doc comment) and can be
+    /// independently expired by the server, on the server's own timer, at
+    /// any point, nudging the aggregate counter up or down for reasons
+    /// unrelated to anything this test does. Comparing two snapshots of that
+    /// counter is thus inherently racy regardless of how long either
+    /// snapshot is retried/polled for.
+    ///
+    /// Comparing the actual *set of names* sidesteps that: this test's own
+    /// invariant is "the delete didn't create a new consumer", which a
+    /// before/after subset check on names verifies directly and correctly
+    /// even if unrelated pre-existing consumers independently vanish (their
+    /// names simply drop out of both sets, which is fine) -- it only fails
+    /// if a name appears in the "after" set that wasn't in the "before" set.
+    async fn consumer_name_set(stream: &Stream) -> std::collections::HashSet<String> {
+        use futures_util::TryStreamExt;
+        stream
+            .consumer_names()
+            .try_collect()
+            .await
+            .expect("failed to list consumer names")
     }
 
     /// Publishes directly to `to`'s offline subject (mirroring what
@@ -493,21 +530,17 @@ mod tests {
         deliver_queued_messages(&state, to, &recipient_tx).await;
         assert_no_further_message(&mut recipient_rx).await;
 
-        let mut stream = jetstream
+        let stream = jetstream
             .get_stream(crate::nats::OFFLINE_STREAM_NAME)
             .await
             .expect("failed to fetch the offline-delivery stream");
-        let consumer_count_before_delete = stream
-            .info()
-            .await
-            .expect("failed to fetch stream info")
-            .state
-            .consumer_count;
+        let consumer_names_before_delete = consumer_name_set(&stream).await;
         assert!(
-            consumer_count_before_delete >= 1,
+            !consumer_names_before_delete.is_empty(),
             "expected the recipient's own connect-time consumer to still be \
              registered immediately after their fetch, proving this test \
-             actually drives the lingering-consumer condition -- got {consumer_count_before_delete}"
+             actually drives the lingering-consumer condition -- got no \
+             registered consumers"
         );
 
         // Step 2: the sender's message is published, as if
@@ -533,18 +566,22 @@ mod tests {
         assert_no_further_message(&mut recipient_rx).await;
 
         // The delete succeeded without creating (or needing) any consumer
-        // of its own: the consumer count is unchanged from immediately
-        // before the delete, even though the recipient's own consumer from
-        // step 1 was still registered at that point.
-        let consumer_count_after_delete = stream
-            .info()
-            .await
-            .expect("failed to fetch stream info")
-            .state
-            .consumer_count;
-        assert_eq!(
-            consumer_count_after_delete, consumer_count_before_delete,
-            "delete_message must not create (or require) a consumer"
+        // of its own: every consumer name present after the delete was
+        // already present before it, even though the recipient's own
+        // consumer from step 1 was still registered at that point. (Not a
+        // strict equality check: an unrelated pre-existing consumer, from
+        // an earlier test in this same run, could legitimately expire on
+        // the server's own timer in between -- that's fine and expected,
+        // and is exactly the false-flake source issue #118 found in the
+        // aggregate-count comparison this replaced.)
+        let consumer_names_after_delete = consumer_name_set(&stream).await;
+        assert!(
+            consumer_names_after_delete.is_subset(&consumer_names_before_delete),
+            "delete_message must not create (or require) a consumer -- new \
+             consumer name(s) appeared: {:?}",
+            consumer_names_after_delete
+                .difference(&consumer_names_before_delete)
+                .collect::<Vec<_>>()
         );
 
         // A subsequent reconnect's own catch-up fetch sees nothing further
