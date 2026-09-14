@@ -78,6 +78,7 @@ async fn main() {
         pool,
         registry: api::registry::ConnectionRegistry::new(),
         nats: nats_client,
+        search_rate_limiter: api::search::SearchRateLimiter::new(),
     };
 
     // On by default (issue #114): starts a real QUIC listener alongside

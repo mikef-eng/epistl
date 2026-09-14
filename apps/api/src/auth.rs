@@ -627,6 +627,12 @@ pub struct AppState {
     /// itself a cheap `Clone` (an internal `Arc`-backed handle), the same
     /// way `pool` is a `sqlx::PgPool`.
     pub nats: async_nats::Client,
+    /// Shared rate limiter for `GET /api/users/search` only -- see
+    /// `crate::search`. `Clone`-cheap (`Arc`-backed) the same way the
+    /// fields above are, so its count survives being carried across
+    /// further `AppState` clones (e.g. this crate's own integration tests
+    /// rebuilding a `Router` per request from the same `AppState`).
+    pub search_rate_limiter: crate::search::SearchRateLimiter,
 }
 
 /// The axum router for `/signup`, `/login`, and (by composition with other
