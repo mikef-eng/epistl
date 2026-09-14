@@ -68,6 +68,30 @@ export interface ContactRequestsResponse {
   outgoing: ContactRequestParty[];
 }
 
+/** The row returned by issue #79's `POST /api/contacts/requests` on success
+ * (`201`). */
+export interface ContactRequestCreated {
+  id: string;
+  requester_user_id: string;
+  recipient_user_id: string;
+  status: string;
+  created_at: string;
+}
+
+/** Thrown by `sendContactRequest` specifically for the `409
+ * incoming_request_exists` crossed-request case, carrying the pending
+ * incoming request's id so the caller can offer to accept it (issue #80's
+ * `POST /api/contacts/requests/{id}/accept`) without a second round trip. */
+export class IncomingRequestExistsError extends ApiError {
+  readonly requestId: string;
+
+  constructor(requestId: string) {
+    super('incoming_request_exists', 409);
+    this.name = 'IncomingRequestExistsError';
+    this.requestId = requestId;
+  }
+}
+
 async function parseJson(response: Response): Promise<unknown> {
   try {
     return await response.json();
@@ -164,10 +188,17 @@ export async function listContacts(): Promise<ContactsResponse> {
   return (await response.json()) as ContactsResponse;
 }
 
-export async function addContact(email: string): Promise<Contact> {
+/** Sends a contact request by email (issue #79's
+ * `POST /api/contacts/requests`), replacing the former `addContact`'s
+ * exact-match immediate-add call. Resolves with the created request row on
+ * `201`. On the crossed-request case (`409 incoming_request_exists` -- the
+ * target already sent the caller a pending request) rejects with an
+ * `IncomingRequestExistsError` carrying that request's id instead of a
+ * plain `ApiError`, so the caller can offer to accept it directly. */
+export async function sendContactRequest(email: string): Promise<ContactRequestCreated> {
   const token = await requireToken();
 
-  const response = await fetch(`${API_BASE_URL}/api/contacts`, {
+  const response = await fetch(`${API_BASE_URL}/api/contacts/requests`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -177,10 +208,21 @@ export async function addContact(email: string): Promise<Contact> {
   });
 
   if (!response.ok) {
-    await throwApiError(response);
+    const body = await parseJson(response);
+    const code = errorCodeFrom(body);
+    if (
+      code === 'incoming_request_exists' &&
+      body !== null &&
+      typeof body === 'object' &&
+      'request_id' in body &&
+      typeof (body as { request_id: unknown }).request_id === 'string'
+    ) {
+      throw new IncomingRequestExistsError((body as { request_id: string }).request_id);
+    }
+    throw new ApiError(code, response.status);
   }
 
-  return (await response.json()) as Contact;
+  return (await response.json()) as ContactRequestCreated;
 }
 
 export async function registerKeys(
