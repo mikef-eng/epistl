@@ -323,6 +323,44 @@ export async function removeContact(userId: string): Promise<void> {
   }
 }
 
+/** One row returned by `GET /api/users/search` (issue #99) -- deliberately
+ * just `user_id`/`email`, no relationship status (see that issue's module
+ * docs for why). */
+export interface SearchUser {
+  user_id: string;
+  email: string;
+}
+
+export interface SearchUsersResponse {
+  users: SearchUser[];
+}
+
+/** Discover-search (issue #99's `GET /api/users/search`), backing
+ * `AddContactScreen`'s search-as-you-type field (issue #100). The caller is
+ * responsible for enforcing the minimum query length client-side (this
+ * function fires the request regardless of `query`'s length) and for
+ * distinguishing a `429 rate_limited` `ApiError` from other failures --
+ * this function surfaces both as a plain `ApiError` rather than a
+ * dedicated subclass, since the two are otherwise no different from any
+ * other endpoint's error shape. */
+export async function searchUsers(query: string): Promise<SearchUsersResponse> {
+  const token = await requireToken();
+
+  const response = await fetch(
+    `${API_BASE_URL}/api/users/search?q=${encodeURIComponent(query)}`,
+    {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` },
+    }
+  );
+
+  if (!response.ok) {
+    await throwApiError(response);
+  }
+
+  return (await response.json()) as SearchUsersResponse;
+}
+
 /** Deletes the caller's own account server-side (issue #91's endpoint).
  * Resolves on `204`; the caller (`SettingsScreen`'s delete-account flow,
  * issue #92) is responsible for performing the local wipe only after this

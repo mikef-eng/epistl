@@ -15,6 +15,15 @@ export type RootStackParamList = {
   Main: undefined;
   AddContact: undefined;
   Chat: { userId: string; email: string };
+  /**
+   * Reached from `AddContactScreen`'s search results (issue #100) by
+   * tapping a result row (as opposed to its separate "+" add button, which
+   * sends a contact request directly and does not navigate). The screen
+   * itself is issue #101's separate follow-up -- not yet registered on
+   * this stack, so this route is navigable in type but not yet reachable
+   * at runtime until that issue lands.
+   */
+  UserProfile: { userId: string; email: string };
   /** Reached via a gear icon in both `MainTabs` tabs' headers (issue #125,
    * moved from the retired `ContactsScreen` to both tabs in issue #94). */
   Settings: undefined;
