@@ -5,6 +5,7 @@ import { Text } from 'react-native';
 
 import { listContacts } from '../src/api/client';
 import MainTabs from '../src/navigation/MainTabs';
+import { getConversationSummaries } from '../src/storage/messages';
 import type { RootStackParamList } from '../src/navigation/types';
 
 // Integration test for issue #94's tab-navigator restructure: a real
@@ -32,7 +33,16 @@ jest.mock('../src/api/client', () => {
   };
 });
 
+// `ConversationsScreen` (issue #95) pulls in `storage/messages.ts`, which
+// imports the real `expo-sqlite` -- mocked wholesale here (as
+// `ChatScreen.test.tsx` already does) so this file stays focused on
+// navigation composition rather than exercising real on-device storage.
+jest.mock('../src/storage/messages', () => ({
+  getConversationSummaries: jest.fn(),
+}));
+
 const mockedListContacts = listContacts as jest.Mock;
+const mockedGetConversationSummaries = getConversationSummaries as jest.Mock;
 
 jest.setTimeout(15000);
 
@@ -67,14 +77,19 @@ describe('Main tab navigator (issue #94)', () => {
   beforeEach(() => {
     jest.resetAllMocks();
     mockedListContacts.mockResolvedValue({ contacts: [] });
+    mockedGetConversationSummaries.mockResolvedValue([]);
   });
 
   it('renders Main with the Conversations tab active and the Friends tab reachable', async () => {
     const { user } = await renderMainStack();
 
-    // Conversations is the first-defined tab, so its placeholder content is
-    // visible without any tab press.
-    expect(within(screen.getByTestId('conversations-screen')).getByText('No conversations yet')).toBeTruthy();
+    // Conversations is the first-defined tab, so its empty state is visible
+    // once the initial (mocked) fetch resolves, without any tab press.
+    await waitFor(() => {
+      expect(
+        within(screen.getByTestId('conversations-screen')).getByText('No conversations yet')
+      ).toBeTruthy();
+    });
 
     await user.press(screen.getAllByText('Friends')[0]);
 
