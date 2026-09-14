@@ -34,7 +34,7 @@ Flow: `planning` → `ready` → `in-progress` → (`blocked` \| `needs-review`)
 ## Planner playbook
 
 1. Intake the goal (MVP slice, bug cluster, or newly discovered work). Do not implement anything.
-2. Break the goal into small, independent-ish tasks (aim for under a day of work each).
+2. Break the goal into small, independent-ish tasks (aim for under a day of work each). **Bundling**: related, low-risk changes to the same screen/user-facing surface may be combined into one issue — multiple separable, testable acceptance-criteria bullets, still one PR — rather than one issue per change (e.g. a settings screen's dark-mode toggle, nav scaffold, visual pass, log-out flow, and delete-account flow can be one issue if each piece is independently low-risk). **Hard exclusions — always stay atomic regardless of size or how related they look**: anything touching `apps/api/src/crypto/**`, `apps/api/src/auth/**`, `apps/mobile/src/crypto/**`; any database migration or data-model change; any new dependency; anything that would warrant a `docs/decisions/` entry per this file's "Architecture decisions" section. There's no fixed time-budget cap layered on top of the same-screen/low-risk gate — if a bundle grows large enough that it no longer reads as one coherent day-or-so of work, split along a natural sub-boundary rather than reverting to one-issue-per-tiny-change.
 3. For each task, open a GitHub issue using the Task template via the `open-task-issue` skill. Required sections: Goal, Acceptance criteria, Out of scope, Notes.
 4. Label each new issue `planning`.
 5. Self-review every acceptance criterion: it must be concrete and testable. "Add login" is bad. "User can log in with email/password; invalid credentials show an error; session persists on refresh" is good.
@@ -54,16 +54,16 @@ Flow: `planning` → `ready` → `in-progress` → (`blocked` \| `needs-review`)
 
 ## Tester playbook
 
-1. Confirm CI is green (lint, build, test) for the PR.
-2. Run the local suite if needed, via moon (matching CI exactly — see README's "Local commands" section): `moon run mobile:lint`, `moon run mobile:typecheck`, `moon run mobile:test` for `apps/mobile`; `moon run api:check`, `moon run api:lint`, `moon run api:test` for `apps/api`. Do not substitute raw `cargo`/`npm` invocations, and do not manually `source .env`/`set -o allexport` before them — moon's task definitions are the actual source of truth CI runs against (a raw command can silently diverge from it), and moon already loads `.env` for every task, so manual sourcing is redundant. Need a filtered or repeated run (e.g. one test name, looped N times to chase a flake)? Use moon's `--` passthrough rather than dropping to raw `cargo`/`npm`: `moon run api:test -- <test_name_filter>` runs as `cargo test <test_name_filter>` with env already loaded, and that can be wrapped in a shell loop the same way a raw command could.
-3. Verify **each** acceptance criterion on the linked issue line by line — not just "does it run."
-4. Add tests for acceptance criteria when none exist and they are reasonably testable in this PR.
+1. Confirm CI is green (lint, build, test) for the PR — this is the authoritative "does it pass" signal. `moon`/CI parity is guaranteed by convention (see README's "Local commands" section), so do **not** re-run the full local suite just to reconfirm what a green CI already tells you. If CI hasn't finished, wait for it (or check/re-trigger via `gh run watch`) rather than substituting a local run.
+2. Verify **each** acceptance criterion on the linked issue line by line — not just "does it run." Audit coverage: confirm a real test exists for each criterion and actually exercises the claimed behavior — read the test, don't just trust the PR description's claims.
+3. Add or fix tests for acceptance criteria when coverage is missing or wrong, and reasonably testable in this PR. Run anything you add or change yourself, via moon (matching CI exactly — see README's "Local commands" section): `moon run mobile:lint`, `moon run mobile:typecheck`, `moon run mobile:test` for `apps/mobile`; `moon run api:check`, `moon run api:lint`, `moon run api:test` for `apps/api`. Do not substitute raw `cargo`/`npm` invocations — moon's task definitions are the actual source of truth CI runs against (a raw command can silently diverge from it), and moon already loads `.env` for every task, so manually running `source .env`/`set -o allexport` beforehand is redundant and should also be avoided. This is new verification you're adding, not a re-check of what CI already confirmed.
+4. **Exception — repeated/probabilistic verification criteria** (e.g. a flake-reproduction loop the PR claims to have closed): CI's single pass structurally can't confirm this. Always fully independently re-run the stated N yourself, using moon's `--` passthrough (e.g. `for i in $(seq 1 40); do moon run api:test -- --lib || echo "FAILED on iteration $i"; done`) — never just audit the Coder's reported numbers or methodology. This is the one case where full duplication of the Coder's own check is intentional and required.
 5. On failure: comment on the PR with specifics and set the issue label to `blocked`.
 6. On pass: set the issue label to `needs-review`.
 
 ## Reviewer playbook
 
-1. Confirm CI is green and the Tester has set `needs-review`.
+1. Confirm CI is green and the Tester has set `needs-review`. Trust CI-green plus the Tester's `needs-review` label entirely for correctness — never re-run test suites yourself; spend your review effort on the diff, not on re-verifying "does it pass."
 2. Re-read the issue acceptance criteria against the PR diff.
 3. Check scope: nothing beyond the issue landed; discoveries should already be separate issues.
 4. Check conventions against this file and the repo's existing patterns.
@@ -80,6 +80,10 @@ Flow: `planning` → `ready` → `in-progress` → (`blocked` \| `needs-review`)
 - An architectural constraint (data flow, storage boundaries, protocol choices) → update the relevant section and, if it's a durable decision, add or update a file in `docs/decisions/`.
 
 Coder updates the docs in the same PR; Reviewer blocks merge if they're stale relative to the diff.
+
+## CI job scoping
+
+`.github/workflows/ci.yml`'s `api`, `mobile`, and `quic-relay-client` jobs only run on `pull_request` when their own paths (or the shared Cargo workspace files `Cargo.toml`/`Cargo.lock`, since `apps/api` and `packages/quic-relay-client` share one workspace) are touched — a `changes` job at the top of the workflow computes this via `git diff --name-only`, the same technique `crypto-review-notice` already uses. A change to `.github/workflows/ci.yml` itself or `.moon/**` always triggers all three jobs, since either can affect any project's build. If the `changes` job itself fails, all three jobs run anyway (fail open) rather than silently skip, since a skipped required check reads as satisfied by branch protection. A job showing as **skipped** on your PR is expected, not a problem — it means that project's paths weren't touched, not that verification was bypassed. `push` to `main` always runs all three jobs unconditionally, as a full post-merge safety net.
 
 ## Architecture decisions
 
