@@ -49,6 +49,13 @@ describe('LoginScreen', () => {
     mockedSaveUserId.mockResolvedValue(undefined);
   });
 
+  it('renders dark: variants on its background and input fields', async () => {
+    await renderLoginScreen();
+
+    expect(screen.getByPlaceholderText('Email').props.className).toContain('dark:text-white');
+    expect(screen.getByPlaceholderText('Password').props.className).toContain('dark:text-white');
+  });
+
   it('disables the submit button when the email or password field is empty', async () => {
     const { user } = await renderLoginScreen();
 

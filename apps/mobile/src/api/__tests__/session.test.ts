@@ -6,8 +6,12 @@ import {
   clearToken,
   saveUserId,
   getUserId,
+  saveEmail,
+  getEmail,
+  clearSession,
   SESSION_TOKEN_KEY,
   SESSION_USER_ID_KEY,
+  SESSION_EMAIL_KEY,
 } from '../session';
 
 jest.mock('expo-secure-store', () => ({
@@ -65,5 +69,33 @@ describe('session', () => {
     mockSecureStore.getItemAsync.mockResolvedValueOnce(null);
 
     await expect(getUserId()).resolves.toBeNull();
+  });
+
+  it('saveEmail persists the email under its own session key', async () => {
+    await saveEmail('a@example.com');
+
+    expect(mockSecureStore.setItemAsync).toHaveBeenCalledWith(SESSION_EMAIL_KEY, 'a@example.com');
+  });
+
+  it('getEmail reads the email from secure storage', async () => {
+    mockSecureStore.getItemAsync.mockResolvedValueOnce('a@example.com');
+
+    await expect(getEmail()).resolves.toBe('a@example.com');
+    expect(mockSecureStore.getItemAsync).toHaveBeenCalledWith(SESSION_EMAIL_KEY);
+  });
+
+  it('getEmail resolves null when no email is stored', async () => {
+    mockSecureStore.getItemAsync.mockResolvedValueOnce(null);
+
+    await expect(getEmail()).resolves.toBeNull();
+  });
+
+  it('clearSession clears the token, user id, and email keys together', async () => {
+    await clearSession();
+
+    expect(mockSecureStore.deleteItemAsync).toHaveBeenCalledWith(SESSION_TOKEN_KEY);
+    expect(mockSecureStore.deleteItemAsync).toHaveBeenCalledWith(SESSION_USER_ID_KEY);
+    expect(mockSecureStore.deleteItemAsync).toHaveBeenCalledWith(SESSION_EMAIL_KEY);
+    expect(mockSecureStore.deleteItemAsync).toHaveBeenCalledTimes(3);
   });
 });

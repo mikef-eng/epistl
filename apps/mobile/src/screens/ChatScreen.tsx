@@ -349,9 +349,9 @@ export default function ChatScreen({ route }: Props) {
   }
 
   return (
-    <View className="flex-1 bg-white">
-      <View className="border-b border-gray-200 px-4 py-3">
-        <Text className="text-lg font-semibold">{email}</Text>
+    <View className="flex-1 bg-white dark:bg-black">
+      <View className="border-b border-gray-200 px-4 py-3 dark:border-gray-700">
+        <Text className="text-lg font-semibold text-black dark:text-white">{email}</Text>
       </View>
 
       {status === 'reconnecting' || status === 'disconnected' ? (
@@ -376,12 +376,16 @@ export default function ChatScreen({ route }: Props) {
                 item.verified
                   ? item.direction === 'outgoing'
                     ? 'bg-blue-500'
-                    : 'bg-gray-200'
-                  : 'bg-red-50'
+                    : 'bg-gray-200 dark:bg-gray-700'
+                  : 'bg-red-50 dark:bg-red-950'
               }`}
             >
               {item.verified && item.text !== null ? (
-                <Text className={item.direction === 'outgoing' ? 'text-white' : 'text-black'}>
+                <Text
+                  className={
+                    item.direction === 'outgoing' ? 'text-white' : 'text-black dark:text-white'
+                  }
+                >
                   {item.text}
                 </Text>
               ) : (
@@ -407,10 +411,11 @@ export default function ChatScreen({ route }: Props) {
         </View>
       ) : null}
 
-      <View className="flex-row items-center border-t border-gray-200 px-4 py-3">
+      <View className="flex-row items-center border-t border-gray-200 px-4 py-3 dark:border-gray-700">
         <TextInput
-          className="mr-3 flex-1 rounded-lg border border-gray-300 px-4 py-2 text-base"
+          className="mr-3 flex-1 rounded-lg border border-gray-300 px-4 py-2 text-base text-black dark:border-gray-700 dark:text-white"
           placeholder="Message"
+          placeholderTextColor="#9CA3AF"
           value={draft}
           onChangeText={setDraft}
         />
