@@ -33,7 +33,7 @@
   ],
   "scripts": {
     "clean": "del-cli android/build lib",
-    "prepare": "bob build",
+    "prepare": "node scripts/ensure-built.js",
     "typecheck": "tsc",
     "lint": "eslint \"**/*.{js,ts,tsx}\"",
     "ubrn:ios": "ubrn build ios --and-generate",
