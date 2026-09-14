@@ -8,6 +8,7 @@ import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { PREKEY_SIGNATURE_CONTEXT } from '../identity';
 import {
+  clearAllSessions,
   deriveNextReceivingMessageKey,
   deriveNextSendingMessageKey,
   initiateSession,
@@ -38,6 +39,7 @@ const mockSecureStore = SecureStore as unknown as {
   __store: Map<string, string>;
   setItemAsync: jest.Mock;
   getItemAsync: jest.Mock;
+  deleteItemAsync: jest.Mock;
 };
 
 function generateStaticKeys() {
@@ -404,5 +406,61 @@ describe('loadSession / saveSession', () => {
     const loaded = await loadSession(contactUserId);
 
     expect(loaded).toEqual(state);
+  });
+});
+
+describe('clearAllSessions', () => {
+  beforeEach(() => {
+    mockSecureStore.__store.clear();
+    jest.clearAllMocks();
+  });
+
+  it('deletes every saved session, leaving loadSession returning null for each', async () => {
+    const bobKeys = generateStaticKeys();
+    const { state: aliceState } = initiateSession({
+      contactUserId: 'alice',
+      selfUserId: 'self-user-id',
+      contactBundle: {
+        x25519PublicKey: bobKeys.x25519.publicKey,
+        kyberPublicKey: bobKeys.kyber.publicKey,
+      },
+    });
+    const carolKeys = generateStaticKeys();
+    const { state: carolState } = initiateSession({
+      contactUserId: 'carol',
+      selfUserId: 'self-user-id',
+      contactBundle: {
+        x25519PublicKey: carolKeys.x25519.publicKey,
+        kyberPublicKey: carolKeys.kyber.publicKey,
+      },
+    });
+    await saveSession('alice', aliceState);
+    await saveSession('carol', carolState);
+
+    await clearAllSessions();
+
+    expect(await loadSession('alice')).toBeNull();
+    expect(await loadSession('carol')).toBeNull();
+  });
+
+  it('is a no-op when no session has ever been saved', async () => {
+    await expect(clearAllSessions()).resolves.toBeUndefined();
+  });
+
+  it('leaves the store fully empty afterward (no leftover index or session keys)', async () => {
+    const bobKeys = generateStaticKeys();
+    const { state } = initiateSession({
+      contactUserId: 'alice',
+      selfUserId: 'self-user-id',
+      contactBundle: {
+        x25519PublicKey: bobKeys.x25519.publicKey,
+        kyberPublicKey: bobKeys.kyber.publicKey,
+      },
+    });
+    await saveSession('alice', state);
+
+    await clearAllSessions();
+
+    expect(mockSecureStore.__store.size).toBe(0);
   });
 });

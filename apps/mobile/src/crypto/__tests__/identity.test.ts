@@ -4,7 +4,7 @@ import * as SecureStore from 'expo-secure-store';
 import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';
 import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 
-import { ensureLocalIdentity, generateIdentity, PREKEY_SIGNATURE_CONTEXT } from '../identity';
+import { clearIdentity, ensureLocalIdentity, generateIdentity, PREKEY_SIGNATURE_CONTEXT } from '../identity';
 
 jest.mock('expo-secure-store', () => {
   const store = new Map<string, string>();
@@ -159,5 +159,34 @@ describe('ensureLocalIdentity', () => {
 
     expect(identity.kyberPublicKey.length).toBe(1184);
     expect(mockSecureStore.setItemAsync).toHaveBeenCalled();
+  });
+});
+
+describe('clearIdentity', () => {
+  beforeEach(() => {
+    mockSecureStore.__store.clear();
+    jest.clearAllMocks();
+  });
+
+  it('deletes all six stored key fields', async () => {
+    await ensureLocalIdentity();
+
+    await clearIdentity();
+
+    expect(mockSecureStore.__store.has('epistl.kyber_secret_key')).toBe(false);
+    expect(mockSecureStore.__store.has('epistl.kyber_public_key')).toBe(false);
+    expect(mockSecureStore.__store.has('epistl.dilithium_secret_key')).toBe(false);
+    expect(mockSecureStore.__store.has('epistl.dilithium_public_key')).toBe(false);
+    expect(mockSecureStore.__store.has('epistl.x25519_secret_key')).toBe(false);
+    expect(mockSecureStore.__store.has('epistl.x25519_public_key')).toBe(false);
+  });
+
+  it('leaves no stored identity behind, so a later call generates a brand-new one', async () => {
+    const first = await ensureLocalIdentity();
+
+    await clearIdentity();
+    const second = await ensureLocalIdentity();
+
+    expect(second.kyberPublicKey).not.toEqual(first.kyberPublicKey);
   });
 });
