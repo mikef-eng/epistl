@@ -332,6 +332,71 @@ async fn delete_contact_nonexistent_returns_404() {
     assert_eq!(body, json!({ "error": "not_found" }));
 }
 
+/// Acceptance criterion (issue #126, part A): removal is mutual -- deleting
+/// a contact removes both directed rows, not just the caller's own.
+#[tokio::test]
+async fn delete_contact_removes_mutual_relationship() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (owner_token, owner_id, _owner_email) =
+        signup_user(&pool, state.clone(), "delete-mutual-owner").await;
+    let (contact_token, contact_id, contact_email) =
+        signup_user(&pool, state.clone(), "delete-mutual-contact").await;
+
+    sqlx::query("INSERT INTO contacts (owner_user_id, contact_user_id) VALUES ($1, $2), ($2, $1)")
+        .bind(owner_id)
+        .bind(contact_id)
+        .execute(&pool)
+        .await
+        .expect("failed to seed mutual contact rows");
+
+    let (status, body) = request(
+        api::app(state.clone()),
+        "DELETE",
+        &format!("/api/contacts/{contact_id}"),
+        Some(&owner_token),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(body, Value::Null);
+
+    let (owner_list_status, owner_list_body) = request(
+        api::app(state.clone()),
+        "GET",
+        "/api/contacts",
+        Some(&owner_token),
+        None,
+    )
+    .await;
+    assert_eq!(owner_list_status, StatusCode::OK);
+    assert_eq!(owner_list_body, json!({ "contacts": [] }));
+
+    let (contact_list_status, contact_list_body) = request(
+        api::app(state.clone()),
+        "GET",
+        "/api/contacts",
+        Some(&contact_token),
+        None,
+    )
+    .await;
+    assert_eq!(contact_list_status, StatusCode::OK);
+    assert_eq!(contact_list_body, json!({ "contacts": [] }));
+
+    // Re-establishing the relationship afterward requires a fresh
+    // request/accept cycle -- a plain re-`POST /api/contacts/requests`
+    // succeeds, not blocked by leftover state.
+    let (re_request_status, _) = request(
+        api::app(state),
+        "POST",
+        "/api/contacts/requests",
+        Some(&owner_token),
+        Some(json!({ "email": contact_email })),
+    )
+    .await;
+    assert_eq!(re_request_status, StatusCode::CREATED);
+}
+
 #[tokio::test]
 async fn list_contacts_without_token_returns_401() {
     let state = test_state().await;

@@ -703,6 +703,137 @@ async fn decline_after_accept_returns_404() {
     assert_eq!(body, json!({ "error": "request_not_found" }));
 }
 
+/// Acceptance criterion (issue #126, part B): a requester can cancel their
+/// own pending outgoing request, and the recipient can then no longer see
+/// it as incoming, and the same requester can send a fresh request to the
+/// same recipient afterward -- same as after a decline.
+#[tokio::test]
+async fn cancel_contact_request_removes_pending_state_and_allows_re_request() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (requester_token, _requester_id, _requester_email) =
+        signup_user(&pool, state.clone(), "cancel-success-requester").await;
+    let (recipient_token, _recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "cancel-success-recipient").await;
+
+    let (_, create_body) = send_request(state.clone(), &requester_token, &recipient_email).await;
+    let request_id = create_body["id"].as_str().unwrap().to_string();
+
+    let (status, body) =
+        resolve_request(state.clone(), &requester_token, &request_id, "cancel").await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(body, Value::Null);
+
+    let (_, list_body) = request(
+        api::app(state.clone()),
+        "GET",
+        "/api/contacts/requests",
+        Some(&recipient_token),
+        None,
+    )
+    .await;
+    assert_eq!(list_body["incoming"].as_array().unwrap().len(), 0);
+
+    let (_, list_body) = request(
+        api::app(state.clone()),
+        "GET",
+        "/api/contacts/requests",
+        Some(&requester_token),
+        None,
+    )
+    .await;
+    assert_eq!(list_body["outgoing"].as_array().unwrap().len(), 0);
+
+    // Fresh request afterward isn't blocked by the canceled row.
+    let (re_request_status, _) = send_request(state, &requester_token, &recipient_email).await;
+    assert_eq!(re_request_status, StatusCode::CREATED);
+}
+
+/// A non-requester (whether the recipient or an uninvolved bystander)
+/// calling cancel must get `403`/`not_requester`, not be able to cancel
+/// someone else's outgoing request.
+#[tokio::test]
+async fn cancel_contact_request_by_non_requester_returns_403() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (requester_token, _requester_id, _requester_email) =
+        signup_user(&pool, state.clone(), "cancel-403-requester").await;
+    let (recipient_token, _recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "cancel-403-recipient").await;
+    let (_, create_body) = send_request(state.clone(), &requester_token, &recipient_email).await;
+    let request_id = create_body["id"].as_str().unwrap().to_string();
+
+    let (status, body) =
+        resolve_request(state.clone(), &recipient_token, &request_id, "cancel").await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body, json!({ "error": "not_requester" }));
+
+    let (bystander_token, _bystander_id, _bystander_email) =
+        signup_user(&pool, state.clone(), "cancel-403-bystander").await;
+    let (status, body) = resolve_request(state, &bystander_token, &request_id, "cancel").await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body, json!({ "error": "not_requester" }));
+}
+
+/// Canceling a nonexistent id returns `404`.
+#[tokio::test]
+async fn cancel_contact_request_nonexistent_id_returns_404() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (token, _id, _email) = signup_user(&pool, state.clone(), "cancel-404").await;
+
+    let (status, body) =
+        resolve_request(state, &token, &Uuid::new_v4().to_string(), "cancel").await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, json!({ "error": "request_not_found" }));
+}
+
+/// Canceling an already-resolved (e.g. declined) request returns `404`.
+#[tokio::test]
+async fn cancel_already_resolved_request_returns_404() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (requester_token, _requester_id, _requester_email) =
+        signup_user(&pool, state.clone(), "cancel-resolved-requester").await;
+    let (recipient_token, _recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "cancel-resolved-recipient").await;
+    let (_, create_body) = send_request(state.clone(), &requester_token, &recipient_email).await;
+    let request_id = create_body["id"].as_str().unwrap().to_string();
+
+    let (decline_status, _) =
+        resolve_request(state.clone(), &recipient_token, &request_id, "decline").await;
+    assert_eq!(decline_status, StatusCode::NO_CONTENT);
+
+    let (status, body) = resolve_request(state, &requester_token, &request_id, "cancel").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, json!({ "error": "request_not_found" }));
+}
+
+#[tokio::test]
+async fn cancel_contact_request_without_token_returns_401() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (requester_token, _requester_id, _requester_email) =
+        signup_user(&pool, state.clone(), "cancel-401-requester").await;
+    let (_recipient_token, _recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "cancel-401-recipient").await;
+    let (_, create_body) = send_request(state.clone(), &requester_token, &recipient_email).await;
+    let request_id = create_body["id"].as_str().unwrap().to_string();
+
+    let (status, body) = request(
+        api::app(state),
+        "POST",
+        &format!("/api/contacts/requests/{request_id}/cancel"),
+        None,
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body, json!({ "error": "unauthorized" }));
+}
+
 /// Regression test for a race where two genuinely concurrent `accept` calls
 /// against the same pending request could both observe `status = 'pending'`
 /// before either resolved it, and both succeed with `204`. Only one of the
