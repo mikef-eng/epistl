@@ -1,11 +1,24 @@
+import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
+import type { CompositeScreenProps } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, RefreshControl, Text, View } from 'react-native';
 
 import { ApiError, listContacts, type Contact } from '../api/client';
-import type { RootStackParamList } from '../navigation/types';
+import type { MainTabParamList, RootStackParamList } from '../navigation/types';
 
-type Props = NativeStackScreenProps<RootStackParamList, 'Contacts'>;
+/**
+ * Placeholder for the `Friends` tab (issue #94's tab-navigator restructure),
+ * evolved from the retired `ContactsScreen` rather than written from
+ * scratch. Fully replaced (not extended) by the real `FriendsScreen` in a
+ * follow-up issue -- see
+ * docs/superpowers/specs/2026-09-13-friends-conversations-ux-design.md's
+ * "Friends screen, requests, and removal" section.
+ */
+type Props = CompositeScreenProps<
+  BottomTabScreenProps<MainTabParamList, 'Friends'>,
+  NativeStackScreenProps<RootStackParamList>
+>;
 
 function messageFor(err: unknown): string {
   return err instanceof ApiError ? err.message : 'Something went wrong';
@@ -25,7 +38,7 @@ function hasFullKeyBundle(contact: Contact): boolean {
   );
 }
 
-export default function ContactsScreen({ navigation }: Props) {
+export default function FriendsScreen({ navigation }: Props) {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -101,9 +114,9 @@ export default function ContactsScreen({ navigation }: Props) {
   }
 
   return (
-    <View className="flex-1 bg-white dark:bg-black">
+    <View testID="friends-screen" className="flex-1 bg-white dark:bg-black">
       <View className="flex-row items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-700">
-        <Text className="text-lg font-semibold text-black dark:text-white">Contacts</Text>
+        <Text className="text-lg font-semibold text-black dark:text-white">Friends</Text>
         <View className="flex-row items-center">
           <Pressable accessibilityRole="button" onPress={handleAddContact}>
             <Text className="text-base font-semibold text-blue-500">Add contact</Text>
@@ -121,7 +134,7 @@ export default function ContactsScreen({ navigation }: Props) {
 
       {loading ? (
         <View className="flex-1 items-center justify-center">
-          <ActivityIndicator testID="contacts-loading" size="large" />
+          <ActivityIndicator testID="friends-loading" size="large" />
         </View>
       ) : error !== null ? (
         <View className="flex-1 items-center justify-center px-6">

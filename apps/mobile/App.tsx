@@ -5,10 +5,10 @@ import { StatusBar } from "expo-status-bar";
 import { colorScheme } from "nativewind";
 import { useEffect, useState } from "react";
 
+import MainTabs from "./src/navigation/MainTabs";
 import type { RootStackParamList } from "./src/navigation/types";
 import AddContactScreen from "./src/screens/AddContactScreen";
 import ChatScreen from "./src/screens/ChatScreen";
-import ContactsScreen from "./src/screens/ContactsScreen";
 import LoginScreen from "./src/screens/LoginScreen";
 import QuicSpikeScreen from "./src/screens/QuicSpikeScreen";
 import SettingsScreen from "./src/screens/SettingsScreen";
@@ -45,7 +45,10 @@ export default function App() {
     <NavigationContainer>
       <Stack.Navigator initialRouteName="Login">
         <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="Contacts" component={ContactsScreen} />
+        {/* Its own tab headers provide Conversations/Friends' titles and
+            gear icons, so the root stack's default header is hidden here
+            (issue #94). */}
+        <Stack.Screen name="Main" component={MainTabs} options={{ headerShown: false }} />
         <Stack.Screen name="AddContact" component={AddContactScreen} />
         <Stack.Screen name="Chat" component={ChatScreen} />
         <Stack.Screen name="Settings" component={SettingsScreen} />

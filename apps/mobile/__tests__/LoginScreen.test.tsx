@@ -92,7 +92,7 @@ describe('LoginScreen', () => {
     expect(navigation.replace).not.toHaveBeenCalled();
   });
 
-  it('navigates to Contacts when login succeeds', async () => {
+  it('navigates to Main when login succeeds', async () => {
     mockedLogin.mockResolvedValueOnce({ token: 'tok-1', user: {} });
     const { navigation, user } = await renderLoginScreen();
 
@@ -101,7 +101,7 @@ describe('LoginScreen', () => {
     await user.press(screen.getByRole('button', { name: 'Log in' }));
 
     await waitFor(() => {
-      expect(navigation.replace).toHaveBeenCalledWith('Contacts');
+      expect(navigation.replace).toHaveBeenCalledWith('Main');
     });
   });
 
@@ -116,7 +116,7 @@ describe('LoginScreen', () => {
 
     await waitFor(() => {
       expect(mockedSignup).toHaveBeenCalledWith('a@example.com', 'hunter2');
-      expect(navigation.replace).toHaveBeenCalledWith('Contacts');
+      expect(navigation.replace).toHaveBeenCalledWith('Main');
     });
   });
 
@@ -169,13 +169,13 @@ describe('LoginScreen', () => {
     await user.press(screen.getByRole('button', { name: 'Log in' }));
 
     await waitFor(() => {
-      expect(navigation.replace).toHaveBeenCalledWith('Contacts');
+      expect(navigation.replace).toHaveBeenCalledWith('Main');
     });
     expect(mockedEnsureKeysRegistered).not.toHaveBeenCalled();
     expect(mockedSaveUserId).not.toHaveBeenCalled();
   });
 
-  it('still navigates to Contacts when ensureKeysRegistered rejects', async () => {
+  it('still navigates to Main when ensureKeysRegistered rejects', async () => {
     mockedLogin.mockResolvedValueOnce({ token: 'tok-1', user: { id: 'user-123' } });
     mockedEnsureKeysRegistered.mockRejectedValueOnce(new Error('network error'));
     const { navigation, user } = await renderLoginScreen();
@@ -185,7 +185,7 @@ describe('LoginScreen', () => {
     await user.press(screen.getByRole('button', { name: 'Log in' }));
 
     await waitFor(() => {
-      expect(navigation.replace).toHaveBeenCalledWith('Contacts');
+      expect(navigation.replace).toHaveBeenCalledWith('Main');
     });
   });
 });
