@@ -123,6 +123,40 @@ describe('markContactMessagesRead', () => {
     expect(first).toEqual(second);
     expect(second.find((s) => s.contactUserId === 'alice')?.hasUnread).toBe(false);
   });
+
+  it('does not set read_at on outgoing rows for the target contact', async () => {
+    await messages.saveMessage({
+      contactUserId: 'alice',
+      direction: 'incoming',
+      bodyB64: 'a1',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    });
+    await messages.saveMessage({
+      contactUserId: 'alice',
+      direction: 'outgoing',
+      bodyB64: 'a2',
+      createdAt: '2024-01-01T00:01:00.000Z',
+    });
+
+    await messages.markContactMessagesRead('alice');
+
+    // getConversationSummaries()'s hasUnread flag only ever looks at incoming
+    // rows, so it can't tell us whether the outgoing row was also (wrongly)
+    // touched. Go straight at the raw column via the same underlying
+    // database the module under test just wrote to.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- reaching past the module under test to assert on the raw column.
+    const SQLite = require('expo-sqlite');
+    const raw = SQLite.openDatabaseSync('epistl.db') as unknown as {
+      getAllSync: <T>(sql: string, params?: unknown[]) => T[];
+    };
+    const rows = raw.getAllSync<{ direction: string; read_at: string | null }>(
+      'SELECT direction, read_at FROM messages WHERE contact_user_id = ? ORDER BY created_at ASC',
+      ['alice']
+    );
+
+    expect(rows.find((r) => r.direction === 'incoming')?.read_at).not.toBeNull();
+    expect(rows.find((r) => r.direction === 'outgoing')?.read_at).toBeNull();
+  });
 });
 
 describe('getConversationSummaries', () => {
