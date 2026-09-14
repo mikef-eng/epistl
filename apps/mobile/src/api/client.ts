@@ -310,6 +310,28 @@ export async function declineContactRequest(requestId: string): Promise<void> {
   }
 }
 
+/** Cancels the caller's own pending outgoing contact request (issue #83's
+ * `POST /api/contacts/requests/{id}/cancel`, issue #126 part B server-side).
+ * Resolves on `204`; the caller is responsible for updating local state
+ * only after this resolves. Mirrors `acceptContactRequest`/
+ * `declineContactRequest` above verbatim, just against the requester's own
+ * outgoing request rather than the recipient's incoming one. */
+export async function cancelContactRequest(requestId: string): Promise<void> {
+  const token = await requireToken();
+
+  const response = await fetch(
+    `${API_BASE_URL}/api/contacts/requests/${encodeURIComponent(requestId)}/cancel`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    }
+  );
+
+  if (!response.ok) {
+    await throwApiError(response);
+  }
+}
+
 export async function removeContact(userId: string): Promise<void> {
   const token = await requireToken();
 
