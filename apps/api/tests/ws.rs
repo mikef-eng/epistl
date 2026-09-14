@@ -139,6 +139,48 @@ async fn add_contact(state: AppState, owner_token: &str, contact_email: &str) {
     assert_eq!(response.status(), StatusCode::CREATED);
 }
 
+/// Sends `method uri` with an optional bearer `token` and optional JSON
+/// `body` against a fresh `api::app(state)` (via `oneshot`, in-process --
+/// only `/ws` itself needs a real TCP server), returning the parsed
+/// `(status, body)`. Shared by the issue #82 live-push tests below, which
+/// need the response body (e.g. a freshly created request's `id`) in
+/// addition to the WebSocket side effects `tests/contact_requests.rs`'s own
+/// helper of the same shape doesn't need to observe.
+async fn api_request(
+    state: AppState,
+    method: &str,
+    uri: &str,
+    token: Option<&str>,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
+    let mut builder = Request::builder().method(method).uri(uri);
+    if let Some(token) = token {
+        builder = builder.header("authorization", format!("Bearer {token}"));
+    }
+    let body = match body {
+        Some(value) => {
+            builder = builder.header("content-type", "application/json");
+            Body::from(value.to_string())
+        }
+        None => Body::empty(),
+    };
+
+    let response = api::app(state)
+        .oneshot(builder.body(body).unwrap())
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: Value = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes).expect("response body was not valid JSON")
+    };
+    (status, json)
+}
+
 /// Every base table in the `public` schema, sorted, so tests can assert
 /// nothing anywhere was written during a relay.
 async fn table_row_counts(pool: &PgPool) -> Vec<(String, i64)> {
@@ -639,4 +681,116 @@ async fn malformed_frame_returns_invalid_payload_and_keeps_connection_open() {
     assert_eq!(relayed["type"], "message");
     let ack = recv_json(&mut sender_ws).await;
     assert_eq!(ack["type"], "ack");
+}
+
+/// Acceptance criterion (issue #82): on a successful
+/// `POST /api/contacts/requests`, a connected recipient receives a
+/// `contact_request` frame carrying (at minimum) the requester's
+/// `user_id`/`email` and the request's `id`.
+#[tokio::test]
+#[serial]
+async fn create_contact_request_pushes_frame_to_connected_recipient() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (requester_token, requester_id, requester_email) =
+        signup_user(&pool, state.clone(), "push-request-requester").await;
+    let (recipient_token, _recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "push-request-recipient").await;
+
+    let addr = spawn_server(state.clone()).await;
+    let mut recipient_ws = connect_ws(addr, &recipient_token).await;
+
+    let (status, body) = api_request(
+        state,
+        "POST",
+        "/api/contacts/requests",
+        Some(&requester_token),
+        Some(json!({ "email": recipient_email })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let request_id = body["id"].as_str().unwrap().to_string();
+
+    let pushed = recv_json(&mut recipient_ws).await;
+    assert_eq!(pushed["type"], "contact_request");
+    assert_eq!(pushed["request_id"], request_id);
+    assert_eq!(pushed["requester_user_id"], requester_id.to_string());
+    assert_eq!(pushed["requester_email"], requester_email);
+}
+
+/// Acceptance criterion (issue #82): on a successful accept, the *other*
+/// party -- the original requester -- receives a `contact_accepted` frame
+/// if connected. The acceptor's own connection (if any) gets nothing extra,
+/// since they already know synchronously via their own request's response.
+#[tokio::test]
+#[serial]
+async fn accept_contact_request_pushes_frame_to_original_requester() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (requester_token, _requester_id, _requester_email) =
+        signup_user(&pool, state.clone(), "push-accept-requester").await;
+    let (recipient_token, recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "push-accept-recipient").await;
+
+    let (_, create_body) = api_request(
+        state.clone(),
+        "POST",
+        "/api/contacts/requests",
+        Some(&requester_token),
+        Some(json!({ "email": recipient_email })),
+    )
+    .await;
+    let request_id = create_body["id"].as_str().unwrap().to_string();
+
+    let addr = spawn_server(state.clone()).await;
+    let mut requester_ws = connect_ws(addr, &requester_token).await;
+
+    let (status, _) = api_request(
+        state,
+        "POST",
+        &format!("/api/contacts/requests/{request_id}/accept"),
+        Some(&recipient_token),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let pushed = recv_json(&mut requester_ws).await;
+    assert_eq!(pushed["type"], "contact_accepted");
+    assert_eq!(pushed["request_id"], request_id);
+    assert_eq!(pushed["acceptor_user_id"], recipient_id.to_string());
+    assert_eq!(pushed["acceptor_email"], recipient_email);
+}
+
+/// Acceptance criterion (issue #82): on a successful mutual removal, the
+/// other party receives a `contact_removed` frame if connected.
+#[tokio::test]
+#[serial]
+async fn remove_contact_pushes_frame_to_other_party() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (owner_token, owner_id, owner_email) =
+        signup_user(&pool, state.clone(), "push-remove-owner").await;
+    let (other_token, other_id, other_email) =
+        signup_user(&pool, state.clone(), "push-remove-other").await;
+    add_contact(state.clone(), &owner_token, &other_email).await;
+    add_contact(state.clone(), &other_token, &owner_email).await;
+
+    let addr = spawn_server(state.clone()).await;
+    let mut other_ws = connect_ws(addr, &other_token).await;
+
+    let (status, _) = api_request(
+        state,
+        "DELETE",
+        &format!("/api/contacts/{other_id}"),
+        Some(&owner_token),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let pushed = recv_json(&mut other_ws).await;
+    assert_eq!(pushed["type"], "contact_removed");
+    assert_eq!(pushed["user_id"], owner_id.to_string());
+    assert_eq!(pushed["email"], owner_email);
 }
