@@ -5,6 +5,7 @@ jest.mock('../session', () => ({
   saveToken: jest.fn(),
   getToken: jest.fn(),
   clearToken: jest.fn(),
+  saveEmail: jest.fn(),
 }));
 
 const mockSession = session as jest.Mocked<typeof session>;
@@ -63,6 +64,24 @@ describe('client', () => {
       expect(mockSession.saveToken).not.toHaveBeenCalled();
     });
 
+    it('persists the authenticated user\'s email via the session module (issue #125)', async () => {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(201, { token: 'tok-1', user: { id: 'u1', email: 'a@example.com' } }),
+      );
+
+      await signup('a@example.com', 'hunter2');
+
+      expect(mockSession.saveEmail).toHaveBeenCalledWith('a@example.com');
+    });
+
+    it('does not persist an email when the user object has no email field', async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse(201, { token: 'tok-1', user: { id: 'u1' } }));
+
+      await signup('a@example.com', 'hunter2');
+
+      expect(mockSession.saveEmail).not.toHaveBeenCalled();
+    });
+
     it('throws an ApiError with the "invalid input" code on 400', async () => {
       fetchMock.mockResolvedValue(jsonResponse(400, { error: 'invalid input' }));
 
@@ -93,6 +112,24 @@ describe('client', () => {
       await login('a@example.com', 'hunter2');
 
       expect(mockSession.saveToken).toHaveBeenCalledWith('tok-2');
+    });
+
+    it('persists the authenticated user\'s email via the session module (issue #125)', async () => {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(200, { token: 'tok-2', user: { id: 'u1', email: 'a@example.com' } }),
+      );
+
+      await login('a@example.com', 'hunter2');
+
+      expect(mockSession.saveEmail).toHaveBeenCalledWith('a@example.com');
+    });
+
+    it('does not persist an email when the user object has no email field', async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse(200, { token: 'tok-2', user: {} }));
+
+      await login('a@example.com', 'hunter2');
+
+      expect(mockSession.saveEmail).not.toHaveBeenCalled();
     });
 
     it('throws an ApiError with the "invalid credentials" code on 401', async () => {

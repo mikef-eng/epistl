@@ -62,12 +62,13 @@ export default function LoginScreen({ navigation }: Props) {
   }
 
   return (
-    <View className="flex-1 justify-center bg-white px-6">
+    <View className="flex-1 justify-center bg-white px-6 dark:bg-black">
       <Text className="mb-6 text-center text-2xl font-bold text-blue-500">Epistl</Text>
 
       <TextInput
-        className="mb-3 rounded-lg border border-gray-300 px-4 py-3 text-base"
+        className="mb-3 rounded-lg border border-gray-300 px-4 py-3 text-base text-black dark:border-gray-700 dark:text-white"
         placeholder="Email"
+        placeholderTextColor="#9CA3AF"
         autoCapitalize="none"
         autoCorrect={false}
         keyboardType="email-address"
@@ -75,8 +76,9 @@ export default function LoginScreen({ navigation }: Props) {
         onChangeText={setEmail}
       />
       <TextInput
-        className="mb-4 rounded-lg border border-gray-300 px-4 py-3 text-base"
+        className="mb-4 rounded-lg border border-gray-300 px-4 py-3 text-base text-black dark:border-gray-700 dark:text-white"
         placeholder="Password"
+        placeholderTextColor="#9CA3AF"
         secureTextEntry
         value={password}
         onChangeText={setPassword}

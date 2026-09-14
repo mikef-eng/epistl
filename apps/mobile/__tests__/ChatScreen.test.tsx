@@ -181,6 +181,13 @@ describe('ChatScreen', () => {
     mockedListContacts.mockResolvedValue({ contacts: [bob.contact] });
   });
 
+  it('renders dark: variants on its header, message input, and container', async () => {
+    await renderChatScreen();
+
+    expect(screen.getByText(bob.contact.email).props.className).toContain('dark:text-white');
+    expect(screen.getByPlaceholderText('Message').props.className).toContain('dark:text-white');
+  });
+
   it('loads existing history on mount and renders it (plaintext, per ADR 0007)', async () => {
     mockedGetMessages.mockResolvedValueOnce([
       {

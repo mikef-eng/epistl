@@ -92,17 +92,31 @@ export default function ContactsScreen({ navigation }: Props) {
     navigation.navigate('AddContact');
   }
 
+  function handleOpenSettings() {
+    navigation.navigate('Settings');
+  }
+
   function handleOpenChat(contact: Contact) {
     navigation.navigate('Chat', { userId: contact.user_id, email: contact.email });
   }
 
   return (
-    <View className="flex-1 bg-white">
-      <View className="flex-row items-center justify-between border-b border-gray-200 px-4 py-3">
-        <Text className="text-lg font-semibold">Contacts</Text>
-        <Pressable accessibilityRole="button" onPress={handleAddContact}>
-          <Text className="text-base font-semibold text-blue-500">Add contact</Text>
-        </Pressable>
+    <View className="flex-1 bg-white dark:bg-black">
+      <View className="flex-row items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-700">
+        <Text className="text-lg font-semibold text-black dark:text-white">Contacts</Text>
+        <View className="flex-row items-center">
+          <Pressable accessibilityRole="button" onPress={handleAddContact}>
+            <Text className="text-base font-semibold text-blue-500">Add contact</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Settings"
+            onPress={handleOpenSettings}
+            className="ml-4"
+          >
+            <Text className="text-lg text-black dark:text-white">⚙</Text>
+          </Pressable>
+        </View>
       </View>
 
       {loading ? (
@@ -127,7 +141,7 @@ export default function ContactsScreen({ navigation }: Props) {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
           ListEmptyComponent={
             <View className="flex-1 items-center justify-center px-6 py-12">
-              <Text className="text-center text-gray-500">No contacts yet</Text>
+              <Text className="text-center text-gray-500 dark:text-gray-400">No contacts yet</Text>
             </View>
           }
           renderItem={({ item }) => {
@@ -142,11 +156,11 @@ export default function ContactsScreen({ navigation }: Props) {
                     handleOpenChat(item);
                   }
                 }}
-                className={`border-b border-gray-100 px-4 py-4 ${keysReady ? '' : 'opacity-50'}`}
+                className={`border-b border-gray-100 px-4 py-4 dark:border-gray-800 ${keysReady ? '' : 'opacity-50'}`}
               >
-                <Text className="text-base">{item.email}</Text>
+                <Text className="text-base text-black dark:text-white">{item.email}</Text>
                 {keysReady ? null : (
-                  <Text className="text-sm text-gray-400">
+                  <Text className="text-sm text-gray-400 dark:text-gray-500">
                     Waiting for {item.email} to finish setup
                   </Text>
                 )}

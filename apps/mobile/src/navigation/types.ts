@@ -9,6 +9,8 @@ export type RootStackParamList = {
   Contacts: undefined;
   AddContact: undefined;
   Chat: { userId: string; email: string };
+  /** Reached via a gear icon in `ContactsScreen`'s header (issue #125). */
+  Settings: undefined;
   /**
    * Dev-only (issue #67 spike, `__DEV__`-gated in App.tsx/LoginScreen.tsx):
    * proves `packages/quic-relay-client`'s generated TurboModule is callable
