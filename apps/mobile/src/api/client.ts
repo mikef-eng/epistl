@@ -207,3 +207,22 @@ export async function removeContact(userId: string): Promise<void> {
     await throwApiError(response);
   }
 }
+
+/** Deletes the caller's own account server-side (issue #91's endpoint).
+ * Resolves on `204`; the caller (`SettingsScreen`'s delete-account flow,
+ * issue #92) is responsible for performing the local wipe only after this
+ * resolves successfully -- this function itself has no local side effects
+ * beyond the `requireToken()` read every other authenticated call already
+ * does. */
+export async function deleteAccount(): Promise<void> {
+  const token = await requireToken();
+
+  const response = await fetch(`${API_BASE_URL}/api/account`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!response.ok) {
+    await throwApiError(response);
+  }
+}

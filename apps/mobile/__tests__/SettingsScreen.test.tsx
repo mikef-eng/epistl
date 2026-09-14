@@ -1,6 +1,7 @@
 import { render, screen, userEvent, waitFor } from '@testing-library/react-native';
 
 import SettingsScreen from '../src/screens/SettingsScreen';
+import { ApiError, deleteAccount } from '../src/api/client';
 import { clearSession, getEmail } from '../src/api/session';
 import {
   getNotificationsEnabled,
@@ -9,6 +10,22 @@ import {
   saveThemePreference,
 } from '../src/settings/preferences';
 import { colorScheme } from 'nativewind';
+
+jest.mock('../src/api/client', () => {
+  class MockApiError extends Error {
+    code: string;
+    status: number;
+    constructor(code: string, status: number) {
+      super(code);
+      this.code = code;
+      this.status = status;
+    }
+  }
+  return {
+    ApiError: MockApiError,
+    deleteAccount: jest.fn(),
+  };
+});
 
 jest.mock('../src/api/session', () => ({
   getEmail: jest.fn(),
@@ -29,21 +46,22 @@ jest.mock('nativewind', () => ({
 // Issue #125's log-out flow must never touch crypto identity, ratchet
 // sessions, or local chat history -- those are device-local and
 // session-independent, per `../src/api/session.ts`'s `clearSession` doc
-// comment. Mocked here (even though `SettingsScreen` never imports them)
-// so a future regression that *does* wire one of these in gets caught.
+// comment. Issue #92's delete-account flow, by contrast, must call all
+// three on success (and none of them on failure) -- both are exercised
+// below against these same mocks.
 jest.mock('../src/crypto/identity', () => ({
   ensureLocalIdentity: jest.fn(),
-  clearLocalIdentity: jest.fn(),
+  clearIdentity: jest.fn(),
 }));
 jest.mock('../src/crypto/session', () => ({
   loadSession: jest.fn(),
   saveSession: jest.fn(),
-  clearSession: jest.fn(),
+  clearAllSessions: jest.fn(),
 }));
 jest.mock('../src/storage/messages', () => ({
   getMessages: jest.fn(),
   saveMessage: jest.fn(),
-  clearMessages: jest.fn(),
+  clearAllMessages: jest.fn(),
 }));
 
 const mockedGetEmail = getEmail as jest.Mock;
@@ -53,6 +71,7 @@ const mockedSaveThemePreference = saveThemePreference as jest.Mock;
 const mockedGetNotificationsEnabled = getNotificationsEnabled as jest.Mock;
 const mockedSaveNotificationsEnabled = saveNotificationsEnabled as jest.Mock;
 const mockedColorSchemeSet = colorScheme.set as jest.Mock;
+const mockedDeleteAccount = deleteAccount as jest.Mock;
 
 function crypto() {
   return jest.requireMock('../src/crypto/identity') as { [key: string]: jest.Mock };
@@ -80,6 +99,10 @@ describe('SettingsScreen', () => {
     mockedSaveThemePreference.mockResolvedValue(undefined);
     mockedSaveNotificationsEnabled.mockResolvedValue(undefined);
     mockedClearSession.mockResolvedValue(undefined);
+    mockedDeleteAccount.mockResolvedValue(undefined);
+    crypto().clearIdentity.mockResolvedValue(undefined);
+    cryptoSession().clearAllSessions.mockResolvedValue(undefined);
+    storageMessages().clearAllMessages.mockResolvedValue(undefined);
   });
 
   it('renders dark: variants on its title, sections, and account email text', async () => {
@@ -200,6 +223,89 @@ describe('SettingsScreen', () => {
       for (const fn of Object.values(storageMessages())) {
         expect(fn).not.toHaveBeenCalled();
       }
+    });
+  });
+
+  describe('delete account', () => {
+    it('requires confirmation before calling the endpoint -- pressing "Delete account" alone does not call it', async () => {
+      const { user } = await renderSettingsScreen();
+
+      await user.press(screen.getByRole('button', { name: 'Delete account' }));
+
+      expect(mockedDeleteAccount).not.toHaveBeenCalled();
+      expect(screen.getByLabelText('Confirm account deletion')).toBeTruthy();
+    });
+
+    it('keeps "Confirm delete" disabled (and does not call the endpoint) until the typed text matches the account email', async () => {
+      mockedGetEmail.mockResolvedValue('a@example.com');
+      const { user } = await renderSettingsScreen();
+      await waitFor(() => expect(screen.getByText('a@example.com')).toBeTruthy());
+
+      await user.press(screen.getByRole('button', { name: 'Delete account' }));
+      await user.type(screen.getByLabelText('Confirm account deletion'), 'not-the-email');
+      await user.press(screen.getByRole('button', { name: 'Confirm delete' }));
+
+      expect(mockedDeleteAccount).not.toHaveBeenCalled();
+    });
+
+    it('cancels without calling the endpoint and hides the confirmation step', async () => {
+      const { user } = await renderSettingsScreen();
+
+      await user.press(screen.getByRole('button', { name: 'Delete account' }));
+      await user.press(screen.getByRole('button', { name: 'Cancel' }));
+
+      expect(mockedDeleteAccount).not.toHaveBeenCalled();
+      expect(screen.queryByLabelText('Confirm account deletion')).toBeNull();
+    });
+
+    it('on confirmed success: calls deleteAccount, wipes session/identity/sessions/messages, and resets nav to Login', async () => {
+      mockedGetEmail.mockResolvedValue('a@example.com');
+      const { navigation, user } = await renderSettingsScreen();
+      await waitFor(() => expect(screen.getByText('a@example.com')).toBeTruthy());
+
+      await user.press(screen.getByRole('button', { name: 'Delete account' }));
+      await user.type(screen.getByLabelText('Confirm account deletion'), 'a@example.com');
+      await user.press(screen.getByRole('button', { name: 'Confirm delete' }));
+
+      await waitFor(() => {
+        expect(mockedDeleteAccount).toHaveBeenCalledTimes(1);
+      });
+      await waitFor(() => {
+        expect(navigation.reset).toHaveBeenCalledWith({
+          index: 0,
+          routes: [{ name: 'Login' }],
+        });
+      });
+      expect(mockedClearSession).toHaveBeenCalledTimes(1);
+      expect(crypto().clearIdentity).toHaveBeenCalledTimes(1);
+      expect(cryptoSession().clearAllSessions).toHaveBeenCalledTimes(1);
+      expect(storageMessages().clearAllMessages).toHaveBeenCalledTimes(1);
+    });
+
+    it('on failure: shows an inline error and leaves session/identity/sessions/messages untouched, without resetting nav', async () => {
+      mockedGetEmail.mockResolvedValue('a@example.com');
+      mockedDeleteAccount.mockRejectedValueOnce(new ApiError('internal_error', 500));
+      const { navigation, user } = await renderSettingsScreen();
+      await waitFor(() => expect(screen.getByText('a@example.com')).toBeTruthy());
+
+      await user.press(screen.getByRole('button', { name: 'Delete account' }));
+      await user.type(screen.getByLabelText('Confirm account deletion'), 'a@example.com');
+      await user.press(screen.getByRole('button', { name: 'Confirm delete' }));
+
+      await waitFor(() => {
+        expect(screen.getByText('internal_error')).toBeTruthy();
+      });
+      expect(mockedClearSession).not.toHaveBeenCalled();
+      for (const fn of Object.values(crypto())) {
+        expect(fn).not.toHaveBeenCalled();
+      }
+      for (const fn of Object.values(cryptoSession())) {
+        expect(fn).not.toHaveBeenCalled();
+      }
+      for (const fn of Object.values(storageMessages())) {
+        expect(fn).not.toHaveBeenCalled();
+      }
+      expect(navigation.reset).not.toHaveBeenCalled();
     });
   });
 });

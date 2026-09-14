@@ -111,6 +111,25 @@ function sessionStorageKey(contactUserId: string): string {
   return `epistl.ratchet_session.${contactUserId}`;
 }
 
+/**
+ * Storage-only index of every `contactUserId` a ratchet session has ever
+ * been saved for. `expo-secure-store` has no key-enumeration API, so
+ * `clearAllSessions()` (issue #92's delete-account wipe) has no other way to
+ * discover which per-contact session keys exist to delete. Maintained
+ * exclusively by `saveSession`/`clearAllSessions` below; never read by any
+ * handshake/ratchet logic in this module.
+ */
+const SESSION_INDEX_KEY = 'epistl.ratchet_session_index';
+
+async function addToSessionIndex(contactUserId: string): Promise<void> {
+  const raw = await SecureStore.getItemAsync(SESSION_INDEX_KEY);
+  const index: string[] = raw === null ? [] : (JSON.parse(raw) as string[]);
+  if (!index.includes(contactUserId)) {
+    index.push(contactUserId);
+    await SecureStore.setItemAsync(SESSION_INDEX_KEY, JSON.stringify(index));
+  }
+}
+
 type SerializedRatchetState = {
   rootKey: string;
   dhsPublicKey: string;
@@ -167,6 +186,26 @@ export async function saveSession(contactUserId: string, state: RatchetState): P
   };
 
   await SecureStore.setItemAsync(sessionStorageKey(contactUserId), JSON.stringify(serialized));
+  await addToSessionIndex(contactUserId);
+}
+
+/**
+ * Deletes every persisted ratchet session (per `saveSession`'s index) plus
+ * the index itself, leaving no stored session state for any contact behind.
+ * Storage-only -- does not touch handshake or ratchet-step logic. Used by
+ * the delete-account flow (`SettingsScreen`, issue #92), which only calls
+ * this after the server has confirmed the account itself is gone; never by
+ * log-out (`api/session.ts`'s `clearSession`), which deliberately leaves
+ * per-contact sessions intact so logging back in as the same user finds
+ * them unchanged.
+ */
+export async function clearAllSessions(): Promise<void> {
+  const raw = await SecureStore.getItemAsync(SESSION_INDEX_KEY);
+  const index: string[] = raw === null ? [] : (JSON.parse(raw) as string[]);
+  await Promise.all(
+    index.map((contactUserId) => SecureStore.deleteItemAsync(sessionStorageKey(contactUserId)))
+  );
+  await SecureStore.deleteItemAsync(SESSION_INDEX_KEY);
 }
 
 /**

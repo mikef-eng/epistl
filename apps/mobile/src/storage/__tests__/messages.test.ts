@@ -427,6 +427,52 @@ describe('messages_fts sync triggers', () => {
   });
 });
 
+describe('clearAllMessages', () => {
+  let messages: typeof import('../messages');
+
+  beforeEach(() => {
+    messages = loadMessagesModule();
+  });
+
+  it('deletes every message row, across every contact', async () => {
+    await messages.saveMessage({
+      contactUserId: 'alice',
+      direction: 'incoming',
+      body: 'a1',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    });
+    await messages.saveMessage({
+      contactUserId: 'bob',
+      direction: 'outgoing',
+      body: 'b1',
+      createdAt: '2024-01-01T00:01:00.000Z',
+    });
+
+    await messages.clearAllMessages();
+
+    expect(await messages.getMessages('alice')).toEqual([]);
+    expect(await messages.getMessages('bob')).toEqual([]);
+    expect(await messages.getConversationSummaries()).toEqual([]);
+  });
+
+  it('also clears the messages_fts index via the DELETE trigger', async () => {
+    await messages.saveMessage({
+      contactUserId: 'alice',
+      direction: 'incoming',
+      body: 'let us meet for coffee tomorrow',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    });
+
+    await messages.clearAllMessages();
+
+    expect(await messages.searchMessages('coffee')).toEqual([]);
+  });
+
+  it('is a no-op when there are no messages', async () => {
+    await expect(messages.clearAllMessages()).resolves.toBeUndefined();
+  });
+});
+
 describe('searchMessages', () => {
   let messages: typeof import('../messages');
 
