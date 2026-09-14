@@ -61,10 +61,10 @@ jobs:
     # failure (fail open, never silently skip on a broken filter); or a
     # PR that actually touched api's paths per the changes job's output.
     if: >-
-      always() &&
+      !cancelled() &&
       (github.event_name != 'pull_request' ||
-       needs.changes.result != 'success' ||
-       needs.changes.outputs.api == 'true')
+      needs.changes.result != 'success' ||
+      needs.changes.outputs.api == 'true')
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -137,10 +137,10 @@ jobs:
     name: quic-relay-client
     needs: changes
     if: >-
-      always() &&
+      !cancelled() &&
       (github.event_name != 'pull_request' ||
-       needs.changes.result != 'success' ||
-       needs.changes.outputs.quic_relay_client == 'true')
+      needs.changes.result != 'success' ||
+      needs.changes.outputs.quic_relay_client == 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -177,10 +177,10 @@ jobs:
     name: mobile
     needs: changes
     if: >-
-      always() &&
+      !cancelled() &&
       (github.event_name != 'pull_request' ||
-       needs.changes.result != 'success' ||
-       needs.changes.outputs.mobile == 'true')
+      needs.changes.result != 'success' ||
+      needs.changes.outputs.mobile == 'true')
     runs-on: ubuntu-latest
     defaults:
       run:
