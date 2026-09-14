@@ -1,9 +1,12 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { colorScheme } from 'nativewind';
 import { useEffect, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, Text, TextInput, View } from 'react-native';
 
+import { ApiError, deleteAccount } from '../api/client';
 import { clearSession, getEmail } from '../api/session';
+import { clearIdentity } from '../crypto/identity';
+import { clearAllSessions } from '../crypto/session';
 import type { RootStackParamList } from '../navigation/types';
 import {
   getNotificationsEnabled,
@@ -12,6 +15,7 @@ import {
   saveThemePreference,
   type ThemePreference,
 } from '../settings/preferences';
+import { clearAllMessages } from '../storage/messages';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
 
@@ -25,6 +29,13 @@ export default function SettingsScreen({ navigation }: Props) {
   const [theme, setTheme] = useState<ThemePreference>('system');
   const [email, setEmail] = useState<string | null>(null);
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  // Explicit confirmation gate (issue #92): pressing "Delete account" only
+  // reveals this step -- it never sends the request itself. The request is
+  // only sent once the user has typed their own email back, matching
+  // exactly, into `deleteConfirmText`.
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Loads all three persisted values once on mount. Each is independent of
   // the others, so a single `Promise.all` keeps the initial render simple
@@ -69,6 +80,41 @@ export default function SettingsScreen({ navigation }: Props) {
     await clearSession();
     // A reset, not `navigate`, so the back gesture can't return to
     // authenticated screens afterward.
+    navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+  }
+
+  function handleStartDelete() {
+    setDeleteError(null);
+    setDeleteConfirmText('');
+    setConfirmingDelete(true);
+  }
+
+  function handleCancelDelete() {
+    setConfirmingDelete(false);
+    setDeleteConfirmText('');
+    setDeleteError(null);
+  }
+
+  async function handleConfirmDelete() {
+    setDeleteError(null);
+    try {
+      // Only sent once the confirmation gate above has been satisfied --
+      // the "Confirm delete" button below is disabled until then.
+      await deleteAccount();
+    } catch (err) {
+      // Failure: leave every local store untouched (no wipe, no nav reset)
+      // and surface an inline error, per issue #92 -- there is no point
+      // discarding local crypto/session/message state for an account that
+      // the server says still exists.
+      setDeleteError(err instanceof ApiError ? err.message : 'Something went wrong');
+      return;
+    }
+
+    // Success (`204`): a full local wipe, strictly more thorough than log
+    // out -- session (as log out does) plus crypto identity, ratchet
+    // sessions, and message history, since there is no server-side account
+    // left to log back into.
+    await Promise.all([clearSession(), clearIdentity(), clearAllSessions(), clearAllMessages()]);
     navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
   }
 
@@ -151,6 +197,61 @@ export default function SettingsScreen({ navigation }: Props) {
         >
           <Text className="text-base font-semibold text-white">Log out</Text>
         </Pressable>
+      </View>
+
+      <View className="border-t border-gray-200 px-4 py-4 dark:border-gray-700">
+        <Text className="mb-2 text-sm font-semibold text-gray-500 dark:text-gray-400">
+          Danger zone
+        </Text>
+
+        {deleteError !== null ? (
+          <Text className="mb-2 text-center text-red-500">{deleteError}</Text>
+        ) : null}
+
+        {confirmingDelete ? (
+          <View>
+            <Text className="mb-2 text-sm text-black dark:text-white">
+              This permanently deletes your account and all local data on this device. Type{' '}
+              {email ?? 'your email'} to confirm.
+            </Text>
+            <TextInput
+              accessibilityLabel="Confirm account deletion"
+              placeholder="Type your email to confirm"
+              autoCapitalize="none"
+              value={deleteConfirmText}
+              onChangeText={setDeleteConfirmText}
+              className="mb-3 rounded-lg border border-gray-300 px-3 py-2 text-black dark:border-gray-600 dark:text-white"
+            />
+            <View className="flex-row">
+              <Pressable
+                accessibilityRole="button"
+                onPress={handleCancelDelete}
+                className="mr-2 flex-1 items-center rounded-lg bg-gray-200 py-3 dark:bg-gray-700"
+              >
+                <Text className="text-base font-semibold text-black dark:text-white">Cancel</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ disabled: deleteConfirmText !== email }}
+                disabled={deleteConfirmText !== email}
+                onPress={handleConfirmDelete}
+                className={`flex-1 items-center rounded-lg py-3 ${
+                  deleteConfirmText === email ? 'bg-red-700' : 'bg-red-300'
+                }`}
+              >
+                <Text className="text-base font-semibold text-white">Confirm delete</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : (
+          <Pressable
+            accessibilityRole="button"
+            onPress={handleStartDelete}
+            className="items-center rounded-lg border border-red-700 py-3"
+          >
+            <Text className="text-base font-semibold text-red-700">Delete account</Text>
+          </Pressable>
+        )}
       </View>
     </View>
   );

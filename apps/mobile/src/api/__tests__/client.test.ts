@@ -1,5 +1,14 @@
 import * as session from '../session';
-import { ApiError, signup, login, listContacts, addContact, registerKeys, removeContact } from '../client';
+import {
+  ApiError,
+  signup,
+  login,
+  listContacts,
+  addContact,
+  registerKeys,
+  removeContact,
+  deleteAccount,
+} from '../client';
 
 jest.mock('../session', () => ({
   saveToken: jest.fn(),
@@ -333,6 +342,37 @@ describe('client', () => {
       await expect(removeContact('u9')).rejects.toMatchObject({
         code: 'not_found',
         status: 404,
+      });
+    });
+  });
+
+  describe('deleteAccount', () => {
+    it('DELETEs /api/account with the Authorization header', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-9');
+      fetchMock.mockResolvedValueOnce({ ok: true, status: 204, json: async () => null });
+
+      await deleteAccount();
+
+      expect(fetchMock).toHaveBeenCalledWith('http://localhost:3000/api/account', {
+        method: 'DELETE',
+        headers: { Authorization: 'Bearer tok-9' },
+      });
+    });
+
+    it('throws an ApiError with code "no_session" when no token is stored', async () => {
+      mockSession.getToken.mockResolvedValueOnce(null);
+
+      await expect(deleteAccount()).rejects.toMatchObject({ code: 'no_session' });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('throws an ApiError on a non-2xx response', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-9');
+      fetchMock.mockResolvedValueOnce(jsonResponse(500, { error: 'internal_error' }));
+
+      await expect(deleteAccount()).rejects.toMatchObject({
+        code: 'internal_error',
+        status: 500,
       });
     });
   });

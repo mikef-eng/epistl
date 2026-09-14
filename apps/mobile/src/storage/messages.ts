@@ -162,6 +162,20 @@ export async function saveMessage(input: SaveMessageInput): Promise<void> {
   });
 }
 
+/**
+ * Deletes every message row, across every contact. The `messages_ad`
+ * trigger (`drizzle/0001_messages_fts.sql`) keeps `messages_fts` in sync
+ * automatically, so no separate FTS cleanup is needed here. Used by the
+ * delete-account flow (`SettingsScreen`, issue #92), which only calls this
+ * after the server has confirmed the account itself is gone; never by
+ * log-out, which deliberately leaves local chat history intact so logging
+ * back in as the same user finds it unchanged.
+ */
+export async function clearAllMessages(): Promise<void> {
+  await migrationsReady;
+  await db.delete(messagesTable);
+}
+
 /** Returns all messages for a contact, ordered by `created_at` ascending. */
 export async function getMessages(contactUserId: string): Promise<StoredMessage[]> {
   await migrationsReady;

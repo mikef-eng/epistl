@@ -188,3 +188,23 @@ export function ensureLocalIdentity(): Promise<Identity> {
 
   return inFlight;
 }
+
+/**
+ * Deletes all six stored key fields, leaving no on-device identity behind.
+ * Storage-only -- does not touch key generation/derivation. Used by the
+ * delete-account flow (`SettingsScreen`, issue #92), which only calls this
+ * after the server has confirmed the account itself is gone; never by
+ * log-out (`api/session.ts`'s `clearSession`), which deliberately leaves
+ * this device's identity intact so logging back in as the same user finds
+ * it unchanged.
+ */
+export async function clearIdentity(): Promise<void> {
+  await Promise.all([
+    SecureStore.deleteItemAsync(KYBER_SECRET_KEY_STORAGE_KEY),
+    SecureStore.deleteItemAsync(KYBER_PUBLIC_KEY_STORAGE_KEY),
+    SecureStore.deleteItemAsync(DILITHIUM_SECRET_KEY_STORAGE_KEY),
+    SecureStore.deleteItemAsync(DILITHIUM_PUBLIC_KEY_STORAGE_KEY),
+    SecureStore.deleteItemAsync(X25519_SECRET_KEY_STORAGE_KEY),
+    SecureStore.deleteItemAsync(X25519_PUBLIC_KEY_STORAGE_KEY),
+  ]);
+}
