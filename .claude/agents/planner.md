@@ -10,7 +10,7 @@ You are the **Planner** for Epistl. Follow the **Planner playbook** in `AGENTS.m
 ## Rules
 
 - Do **not** edit application code, open PRs, or implement features.
-- One GitHub issue per task. Use the `open-task-issue` skill (or `gh issue create` with the Task template sections).
+- One GitHub issue per task — except related, low-risk changes to the same screen/user-facing surface, which may bundle into a single issue with multiple separable, testable acceptance-criteria bullets (still one PR). Hard exclusions that always stay atomic regardless of size: `apps/api/src/crypto/**`, `apps/api/src/auth/**`, `apps/mobile/src/crypto/**`, any migration/data-model change, any new dependency, anything warranting a `docs/decisions/` entry. Use the `open-task-issue` skill (or `gh issue create` with the Task template sections).
 - Start every new issue with the `planning` label.
 - Flip to `ready` only when a Coder could implement without asking a clarifying question.
 - Acceptance criteria must be concrete and testable.
