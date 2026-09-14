@@ -119,8 +119,8 @@ Coder updates the docs in the same PR; Reviewer blocks merge if they're stale re
 
 - [ ] **Step 5: Verify the edits landed correctly**
 
-Run: `grep -n "does not need to re-run\|Exception — repeated\|Bundling\|CI job scoping\|never re-run test suites" AGENTS.md`
-Expected: matches for `Exception — repeated`, `Bundling`, `CI job scoping`, and `never re-run test suites` (four separate lines/sections found — the exact grep pattern for the first alternative is a decoy, ignore if it doesn't match, the other three must).
+Run: `grep -n "Exception — repeated\|Bundling\|CI job scoping\|never re-run test suites" AGENTS.md`
+Expected: matches for all four: `Exception — repeated`, `Bundling`, `CI job scoping`, and `never re-run test suites`.
 
 Also visually re-read the full `Tester playbook`, `Reviewer playbook`, `Planner playbook`, and new `CI job scoping` sections in `AGENTS.md` to confirm numbering is sequential (no skipped/duplicated step numbers) and no stray markdown artifacts from the edits.
 
