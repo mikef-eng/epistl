@@ -73,6 +73,7 @@ pub async fn connect_with(database_url: &str) -> Result<PgPool, DbError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[tokio::test]
     async fn connect_with_invalid_url_fails_fast() {
@@ -81,9 +82,18 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn connect_reports_missing_database_url() {
-        // SAFETY: this test does not run concurrently with other tests that
-        // read/write DATABASE_URL; sqlx's own env access happens per-call.
+        // SAFETY: `#[serial]` (default, unnamed group -- shared with
+        // `relay::tests`' and `nats::tests`' `#[serial]` tests) ensures this
+        // test does not run concurrently with any other test in this binary
+        // that reads or writes DATABASE_URL. Confirmed mechanism (issue
+        // #122, mirroring #121's NATS_URL fix): without this,
+        // `relay::tests::test_state()`'s `dotenvy::dotenv()` call, running
+        // concurrently on another thread, can repopulate the just-removed
+        // DATABASE_URL from `.env` before this test's own `connect()` call
+        // reads it, flipping the expected `MissingDatabaseUrl` into a
+        // spurious `Ok(Pool)`.
         let previous = env::var(DATABASE_URL_VAR).ok();
         unsafe {
             env::remove_var(DATABASE_URL_VAR);
