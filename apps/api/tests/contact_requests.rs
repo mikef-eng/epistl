@@ -59,6 +59,7 @@ async fn test_state() -> AppState {
         pool,
         registry: api::registry::ConnectionRegistry::new(),
         nats,
+        search_rate_limiter: api::search::SearchRateLimiter::new(),
     }
 }
 

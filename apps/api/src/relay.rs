@@ -393,6 +393,7 @@ mod tests {
             pool,
             registry: crate::registry::ConnectionRegistry::new(),
             nats,
+            search_rate_limiter: crate::search::SearchRateLimiter::new(),
         }
     }
 

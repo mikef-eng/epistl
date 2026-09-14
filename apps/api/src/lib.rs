@@ -13,6 +13,7 @@ pub mod nats;
 pub mod quic;
 pub mod registry;
 pub mod relay;
+pub mod search;
 pub mod ws;
 
 use axum::routing::get;
@@ -23,7 +24,8 @@ pub use auth::{AppState, AuthenticatedUser};
 /// Build the full application router: `/health` plus the auth routes from
 /// [`auth::router`], the contacts routes from [`contacts::router`], the
 /// key-storage routes from [`keys::router`], the account routes from
-/// [`account::router`], and the `/ws` relay from [`ws::router`].
+/// [`account::router`], the discover-search route from [`search::router`],
+/// and the `/ws` relay from [`ws::router`].
 pub fn app(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
@@ -31,6 +33,7 @@ pub fn app(state: AppState) -> Router {
         .merge(contacts::router(state.clone()))
         .merge(keys::router(state.clone()))
         .merge(account::router(state.clone()))
+        .merge(search::router(state.clone()))
         .merge(ws::router(state))
 }
 
