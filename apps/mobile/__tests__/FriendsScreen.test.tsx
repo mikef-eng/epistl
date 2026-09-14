@@ -1,7 +1,15 @@
+import { Alert } from 'react-native';
+
 import { render, screen, userEvent, waitFor } from '@testing-library/react-native';
 
 import FriendsScreen from '../src/screens/FriendsScreen';
-import { listContacts } from '../src/api/client';
+import {
+  acceptContactRequest,
+  declineContactRequest,
+  listContactRequests,
+  listContacts,
+  removeContact,
+} from '../src/api/client';
 
 jest.mock('../src/api/client', () => {
   class ApiError extends Error {
@@ -17,10 +25,24 @@ jest.mock('../src/api/client', () => {
   return {
     ApiError,
     listContacts: jest.fn(),
+    listContactRequests: jest.fn(),
+    removeContact: jest.fn(),
+    acceptContactRequest: jest.fn(),
+    declineContactRequest: jest.fn(),
   };
 });
 
 const mockedListContacts = listContacts as jest.Mock;
+const mockedListContactRequests = listContactRequests as jest.Mock;
+const mockedRemoveContact = removeContact as jest.Mock;
+const mockedAcceptContactRequest = acceptContactRequest as jest.Mock;
+const mockedDeclineContactRequest = declineContactRequest as jest.Mock;
+
+const EMPTY_REQUESTS = { incoming: [], outgoing: [] };
+
+function requestParty(overrides: { id: string; user_id: string; email: string; created_at?: string }) {
+  return { created_at: '2024-01-01T00:00:00Z', ...overrides };
+}
 
 // CI runs each test file in its own worker process, and this file's first
 // render pays the one-time cost of registering RN/Reanimated native-module
@@ -77,6 +99,12 @@ function unkeyedContact(overrides: { user_id: string; email: string; added_at?: 
 describe('FriendsScreen', () => {
   beforeEach(() => {
     jest.resetAllMocks();
+    // Every test cares about `listContacts()`'s behavior specifically, not
+    // the Requests section, unless it overrides this with a `*Once` mock --
+    // this default keeps `Promise.all([listContacts(), listContactRequests()])`
+    // resolving without every existing Friends-section test having to know
+    // about the Requests fetch.
+    mockedListContactRequests.mockResolvedValue(EMPTY_REQUESTS);
   });
 
   it('shows a loading indicator while the initial fetch is in flight', async () => {
@@ -234,5 +262,208 @@ describe('FriendsScreen', () => {
     await user.press(screen.getByText('dave@example.com'));
 
     expect(navigation.navigate).not.toHaveBeenCalled();
+  });
+
+  describe('remove action', () => {
+    /** Simulates the user confirming the "Remove" destructive option of the
+     * long-press `Alert.alert` context menu -- see `FriendsScreen`'s
+     * `handleLongPressFriend`. */
+    function confirmRemoveOnNextAlert() {
+      return jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
+        const removeButton = buttons?.find((button) => button.text === 'Remove');
+        removeButton?.onPress?.();
+      });
+    }
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('calls removeContact and removes the row from the list on success', async () => {
+      mockedListContacts.mockResolvedValueOnce({
+        contacts: [fullyKeyedContact({ user_id: 'u1', email: 'alice@example.com' })],
+      });
+      mockedRemoveContact.mockResolvedValueOnce(undefined);
+      confirmRemoveOnNextAlert();
+      const { user } = await renderFriendsScreen();
+
+      await waitFor(() => {
+        expect(screen.getByText('alice@example.com')).toBeTruthy();
+      });
+
+      await user.longPress(screen.getByText('alice@example.com'));
+
+      expect(mockedRemoveContact).toHaveBeenCalledWith('u1');
+      await waitFor(() => {
+        expect(screen.queryByText('alice@example.com')).toBeNull();
+      });
+    });
+
+    it('leaves the row in place and shows an inline error on failure', async () => {
+      const { ApiError } = jest.requireMock('../src/api/client');
+      mockedListContacts.mockResolvedValueOnce({
+        contacts: [fullyKeyedContact({ user_id: 'u1', email: 'alice@example.com' })],
+      });
+      mockedRemoveContact.mockRejectedValueOnce(new ApiError('not_found', 404));
+      confirmRemoveOnNextAlert();
+      const { user } = await renderFriendsScreen();
+
+      await waitFor(() => {
+        expect(screen.getByText('alice@example.com')).toBeTruthy();
+      });
+
+      await user.longPress(screen.getByText('alice@example.com'));
+
+      await waitFor(() => {
+        expect(screen.getByText('not_found')).toBeTruthy();
+      });
+      expect(screen.getByText('alice@example.com')).toBeTruthy();
+    });
+  });
+
+  describe('Requests section', () => {
+    it('is not rendered when there are no pending requests', async () => {
+      mockedListContacts.mockResolvedValueOnce({ contacts: [] });
+      mockedListContactRequests.mockResolvedValueOnce(EMPTY_REQUESTS);
+
+      await renderFriendsScreen();
+
+      await waitFor(() => {
+        expect(screen.getByText('No contacts yet')).toBeTruthy();
+      });
+      expect(screen.queryByTestId('requests-section')).toBeNull();
+    });
+
+    it('is rendered when there is at least one incoming request', async () => {
+      mockedListContacts.mockResolvedValueOnce({ contacts: [] });
+      mockedListContactRequests.mockResolvedValueOnce({
+        incoming: [requestParty({ id: 'r1', user_id: 'u1', email: 'alice@example.com' })],
+        outgoing: [],
+      });
+
+      await renderFriendsScreen();
+
+      await waitFor(() => {
+        expect(screen.getByTestId('requests-section')).toBeTruthy();
+      });
+      expect(screen.getByText('alice@example.com')).toBeTruthy();
+    });
+
+    it('is rendered when there is at least one outgoing request', async () => {
+      mockedListContacts.mockResolvedValueOnce({ contacts: [] });
+      mockedListContactRequests.mockResolvedValueOnce({
+        incoming: [],
+        outgoing: [requestParty({ id: 'r2', user_id: 'u2', email: 'bob@example.com' })],
+      });
+
+      await renderFriendsScreen();
+
+      await waitFor(() => {
+        expect(screen.getByTestId('requests-section')).toBeTruthy();
+      });
+      expect(screen.getByText('bob@example.com')).toBeTruthy();
+    });
+
+    it('renders an outgoing request read-only as "Pending"', async () => {
+      mockedListContacts.mockResolvedValueOnce({ contacts: [] });
+      mockedListContactRequests.mockResolvedValueOnce({
+        incoming: [],
+        outgoing: [requestParty({ id: 'r2', user_id: 'u2', email: 'bob@example.com' })],
+      });
+
+      await renderFriendsScreen();
+
+      await waitFor(() => {
+        expect(screen.getByText('Pending')).toBeTruthy();
+      });
+      expect(screen.queryByRole('button', { name: 'Accept bob@example.com' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Decline bob@example.com' })).toBeNull();
+    });
+
+    it('accepts an incoming request, removing it from the section, on success', async () => {
+      mockedListContacts.mockResolvedValueOnce({ contacts: [] });
+      mockedListContactRequests.mockResolvedValueOnce({
+        incoming: [requestParty({ id: 'r1', user_id: 'u1', email: 'alice@example.com' })],
+        outgoing: [],
+      });
+      mockedAcceptContactRequest.mockResolvedValueOnce(undefined);
+      const { user } = await renderFriendsScreen();
+
+      await waitFor(() => {
+        expect(screen.getByText('alice@example.com')).toBeTruthy();
+      });
+
+      await user.press(screen.getByRole('button', { name: 'Accept alice@example.com' }));
+
+      expect(mockedAcceptContactRequest).toHaveBeenCalledWith('r1');
+      await waitFor(() => {
+        expect(screen.queryByTestId('requests-section')).toBeNull();
+      });
+    });
+
+    it('leaves an incoming request in place and shows an inline error when accept fails', async () => {
+      const { ApiError } = jest.requireMock('../src/api/client');
+      mockedListContacts.mockResolvedValueOnce({ contacts: [] });
+      mockedListContactRequests.mockResolvedValueOnce({
+        incoming: [requestParty({ id: 'r1', user_id: 'u1', email: 'alice@example.com' })],
+        outgoing: [],
+      });
+      mockedAcceptContactRequest.mockRejectedValueOnce(new ApiError('request_not_found', 404));
+      const { user } = await renderFriendsScreen();
+
+      await waitFor(() => {
+        expect(screen.getByText('alice@example.com')).toBeTruthy();
+      });
+
+      await user.press(screen.getByRole('button', { name: 'Accept alice@example.com' }));
+
+      await waitFor(() => {
+        expect(screen.getByText('request_not_found')).toBeTruthy();
+      });
+      expect(screen.getByText('alice@example.com')).toBeTruthy();
+    });
+
+    it('declines an incoming request, removing it from the section, on success', async () => {
+      mockedListContacts.mockResolvedValueOnce({ contacts: [] });
+      mockedListContactRequests.mockResolvedValueOnce({
+        incoming: [requestParty({ id: 'r1', user_id: 'u1', email: 'alice@example.com' })],
+        outgoing: [],
+      });
+      mockedDeclineContactRequest.mockResolvedValueOnce(undefined);
+      const { user } = await renderFriendsScreen();
+
+      await waitFor(() => {
+        expect(screen.getByText('alice@example.com')).toBeTruthy();
+      });
+
+      await user.press(screen.getByRole('button', { name: 'Decline alice@example.com' }));
+
+      expect(mockedDeclineContactRequest).toHaveBeenCalledWith('r1');
+      await waitFor(() => {
+        expect(screen.queryByTestId('requests-section')).toBeNull();
+      });
+    });
+
+    it('leaves an incoming request in place and shows an inline error when decline fails', async () => {
+      const { ApiError } = jest.requireMock('../src/api/client');
+      mockedListContacts.mockResolvedValueOnce({ contacts: [] });
+      mockedListContactRequests.mockResolvedValueOnce({
+        incoming: [requestParty({ id: 'r1', user_id: 'u1', email: 'alice@example.com' })],
+        outgoing: [],
+      });
+      mockedDeclineContactRequest.mockRejectedValueOnce(new ApiError('request_not_found', 404));
+      const { user } = await renderFriendsScreen();
+
+      await waitFor(() => {
+        expect(screen.getByText('alice@example.com')).toBeTruthy();
+      });
+
+      await user.press(screen.getByRole('button', { name: 'Decline alice@example.com' }));
+
+      await waitFor(() => {
+        expect(screen.getByText('request_not_found')).toBeTruthy();
+      });
+      expect(screen.getByText('alice@example.com')).toBeTruthy();
+    });
   });
 });

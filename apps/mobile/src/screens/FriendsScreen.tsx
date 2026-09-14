@@ -1,24 +1,55 @@
 import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import type { CompositeScreenProps } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, RefreshControl, Text, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Pressable,
+  RefreshControl,
+  Text,
+  View,
+} from 'react-native';
 
-import { ApiError, listContacts, type Contact } from '../api/client';
+import {
+  acceptContactRequest,
+  ApiError,
+  type Contact,
+  type ContactRequestParty,
+  declineContactRequest,
+  listContactRequests,
+  listContacts,
+  removeContact,
+} from '../api/client';
 import type { MainTabParamList, RootStackParamList } from '../navigation/types';
 
 /**
- * Placeholder for the `Friends` tab (issue #94's tab-navigator restructure),
- * evolved from the retired `ContactsScreen` rather than written from
- * scratch. Fully replaced (not extended) by the real `FriendsScreen` in a
- * follow-up issue -- see
- * docs/superpowers/specs/2026-09-13-friends-conversations-ux-design.md's
- * "Friends screen, requests, and removal" section.
+ * Real `Friends` tab (issue #127), replacing issue #94's placeholder and
+ * retiring the former `ContactsScreen.tsx` it evolved from (their reuse of
+ * `listContacts`/loading/error/refresh scaffolding and `hasFullKeyBundle`
+ * gating/tap-to-open-chat behavior stays verbatim). Adds:
+ * - a "Requests" section above "Friends" (pending incoming/outgoing contact
+ *   requests, issue #79/#80's `GET /api/contacts/requests` and
+ *   accept/decline endpoints), visible only when non-empty;
+ * - a remove action per friend row (issue #126 part A's mutual
+ *   `DELETE /api/contacts/{user_id}`), via long-press (no swipe-gesture
+ *   dependency is in this app yet -- see AGENTS.md's "extra work becomes a
+ *   new issue" guidance rather than adding one here).
+ * See docs/superpowers/specs/2026-09-13-friends-conversations-ux-design.md,
+ * "Friends screen, requests, and removal".
  */
 type Props = CompositeScreenProps<
   BottomTabScreenProps<MainTabParamList, 'Friends'>,
   NativeStackScreenProps<RootStackParamList>
 >;
+
+interface RequestsState {
+  incoming: ContactRequestParty[];
+  outgoing: ContactRequestParty[];
+}
+
+const EMPTY_REQUESTS: RequestsState = { incoming: [], outgoing: [] };
 
 function messageFor(err: unknown): string {
   return err instanceof ApiError ? err.message : 'Something went wrong';
@@ -38,23 +69,44 @@ function hasFullKeyBundle(contact: Contact): boolean {
   );
 }
 
+/** Removes a key from a `Record` map by producing a fresh object, used for
+ * both the remove-friend and request-accept/decline inline error maps
+ * below -- returns the same reference when the key is already absent, so
+ * callers can use it unconditionally without triggering an extra render. */
+function withoutKey<T>(map: Record<string, T>, key: string): Record<string, T> {
+  if (!(key in map)) {
+    return map;
+  }
+  const next = { ...map };
+  delete next[key];
+  return next;
+}
+
 export default function FriendsScreen({ navigation }: Props) {
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [requests, setRequests] = useState<RequestsState>(EMPTY_REQUESTS);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [removingIds, setRemovingIds] = useState<Set<string>>(new Set());
+  const [removeErrors, setRemoveErrors] = useState<Record<string, string>>({});
+  const [requestActionIds, setRequestActionIds] = useState<Set<string>>(new Set());
+  const [requestErrors, setRequestErrors] = useState<Record<string, string>>({});
 
   // Initial fetch on mount. The effect only reads the response of an
   // already-in-flight promise and updates state in `.then`/`.catch`/
   // `.finally` callbacks (never synchronously in the effect body itself),
   // so it relies on the initial state values above (loading = true,
-  // error = null) rather than resetting them up front.
+  // error = null) rather than resetting them up front -- mirrors
+  // `ConversationsScreen`'s two-source `Promise.all` pattern.
   useEffect(() => {
     let cancelled = false;
-    listContacts()
-      .then((data) => {
+    Promise.all([listContacts(), listContactRequests()])
+      .then(([contactsResponse, requestsResponse]) => {
         if (!cancelled) {
-          setContacts(data.contacts);
+          setContacts(contactsResponse.contacts);
+          setRequests(requestsResponse);
         }
       })
       .catch((err) => {
@@ -72,7 +124,7 @@ export default function FriendsScreen({ navigation }: Props) {
     };
   }, []);
 
-  async function refetch(isRefresh: boolean) {
+  const refetch = useCallback(async (isRefresh: boolean) => {
     if (isRefresh) {
       setRefreshing(true);
     } else {
@@ -80,8 +132,12 @@ export default function FriendsScreen({ navigation }: Props) {
     }
     setError(null);
     try {
-      const data = await listContacts();
-      setContacts(data.contacts);
+      const [contactsResponse, requestsResponse] = await Promise.all([
+        listContacts(),
+        listContactRequests(),
+      ]);
+      setContacts(contactsResponse.contacts);
+      setRequests(requestsResponse);
     } catch (err) {
       setError(messageFor(err));
     } finally {
@@ -91,7 +147,7 @@ export default function FriendsScreen({ navigation }: Props) {
         setLoading(false);
       }
     }
-  }
+  }, []);
 
   function handleRefresh() {
     refetch(true);
@@ -112,6 +168,90 @@ export default function FriendsScreen({ navigation }: Props) {
   function handleOpenChat(contact: Contact) {
     navigation.navigate('Chat', { userId: contact.user_id, email: contact.email });
   }
+
+  /** Failure leaves `contacts` untouched and surfaces a per-row inline
+   * error -- no optimistic removal that has to be rolled back, matching
+   * `ChatScreen`'s existing failure-doesn't-mutate convention. */
+  async function performRemove(contact: Contact) {
+    setRemoveErrors((prev) => withoutKey(prev, contact.user_id));
+    setRemovingIds((prev) => new Set(prev).add(contact.user_id));
+    try {
+      await removeContact(contact.user_id);
+      setContacts((prev) => prev.filter((c) => c.user_id !== contact.user_id));
+    } catch (err) {
+      setRemoveErrors((prev) => ({ ...prev, [contact.user_id]: messageFor(err) }));
+    } finally {
+      setRemovingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(contact.user_id);
+        return next;
+      });
+    }
+  }
+
+  /** Long-press context menu for the remove action (issue #127's "Coder's
+   * choice" between swipe-to-delete and long-press -- swipe would need a
+   * gesture-handler dependency this app doesn't have yet, so this uses
+   * React Native's built-in `Alert` instead). */
+  function handleLongPressFriend(contact: Contact) {
+    if (removingIds.has(contact.user_id)) {
+      // Already in flight for this row -- ignore a repeat long-press rather
+      // than opening a second confirmation on top of it.
+      return;
+    }
+    Alert.alert(contact.email, 'Remove this friend?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: () => {
+          performRemove(contact);
+        },
+      },
+    ]);
+  }
+
+  async function handleAccept(request: ContactRequestParty) {
+    setRequestErrors((prev) => withoutKey(prev, request.id));
+    setRequestActionIds((prev) => new Set(prev).add(request.id));
+    try {
+      await acceptContactRequest(request.id);
+      setRequests((prev) => ({
+        ...prev,
+        incoming: prev.incoming.filter((r) => r.id !== request.id),
+      }));
+    } catch (err) {
+      setRequestErrors((prev) => ({ ...prev, [request.id]: messageFor(err) }));
+    } finally {
+      setRequestActionIds((prev) => {
+        const next = new Set(prev);
+        next.delete(request.id);
+        return next;
+      });
+    }
+  }
+
+  async function handleDecline(request: ContactRequestParty) {
+    setRequestErrors((prev) => withoutKey(prev, request.id));
+    setRequestActionIds((prev) => new Set(prev).add(request.id));
+    try {
+      await declineContactRequest(request.id);
+      setRequests((prev) => ({
+        ...prev,
+        incoming: prev.incoming.filter((r) => r.id !== request.id),
+      }));
+    } catch (err) {
+      setRequestErrors((prev) => ({ ...prev, [request.id]: messageFor(err) }));
+    } finally {
+      setRequestActionIds((prev) => {
+        const next = new Set(prev);
+        next.delete(request.id);
+        return next;
+      });
+    }
+  }
+
+  const hasRequests = requests.incoming.length > 0 || requests.outgoing.length > 0;
 
   return (
     <View testID="friends-screen" className="flex-1 bg-white dark:bg-black">
@@ -152,6 +292,63 @@ export default function FriendsScreen({ navigation }: Props) {
           data={contacts}
           keyExtractor={(item) => item.user_id}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
+          ListHeaderComponent={
+            hasRequests ? (
+              <View testID="requests-section" className="border-b border-gray-200 dark:border-gray-700">
+                <Text className="px-4 pt-4 text-sm font-semibold text-gray-500 dark:text-gray-400">
+                  Requests
+                </Text>
+                {requests.incoming.map((request) => (
+                  <View
+                    key={request.id}
+                    testID={`request-incoming-${request.id}`}
+                    className="px-4 py-3"
+                  >
+                    <View className="flex-row items-center justify-between">
+                      <Text className="flex-1 pr-3 text-base text-black dark:text-white">
+                        {request.email}
+                      </Text>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`Accept ${request.email}`}
+                        disabled={requestActionIds.has(request.id)}
+                        onPress={() => handleAccept(request)}
+                        className="mr-2 rounded-lg bg-blue-500 px-3 py-1"
+                      >
+                        <Text className="text-sm font-semibold text-white">Accept</Text>
+                      </Pressable>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`Decline ${request.email}`}
+                        disabled={requestActionIds.has(request.id)}
+                        onPress={() => handleDecline(request)}
+                        className="rounded-lg bg-gray-200 px-3 py-1 dark:bg-gray-700"
+                      >
+                        <Text className="text-sm font-semibold text-black dark:text-white">
+                          Decline
+                        </Text>
+                      </Pressable>
+                    </View>
+                    {requestErrors[request.id] !== undefined ? (
+                      <Text className="mt-1 text-sm text-red-500">
+                        {requestErrors[request.id]}
+                      </Text>
+                    ) : null}
+                  </View>
+                ))}
+                {requests.outgoing.map((request) => (
+                  <View
+                    key={request.id}
+                    testID={`request-outgoing-${request.id}`}
+                    className="flex-row items-center justify-between px-4 py-3"
+                  >
+                    <Text className="text-base text-black dark:text-white">{request.email}</Text>
+                    <Text className="text-sm text-gray-400 dark:text-gray-500">Pending</Text>
+                  </View>
+                ))}
+              </View>
+            ) : null
+          }
           ListEmptyComponent={
             <View className="flex-1 items-center justify-center px-6 py-12">
               <Text className="text-center text-gray-500 dark:text-gray-400">No contacts yet</Text>
@@ -169,6 +366,7 @@ export default function FriendsScreen({ navigation }: Props) {
                     handleOpenChat(item);
                   }
                 }}
+                onLongPress={() => handleLongPressFriend(item)}
                 className={`border-b border-gray-100 px-4 py-4 dark:border-gray-800 ${keysReady ? '' : 'opacity-50'}`}
               >
                 <Text className="text-base text-black dark:text-white">{item.email}</Text>
@@ -177,6 +375,9 @@ export default function FriendsScreen({ navigation }: Props) {
                     Waiting for {item.email} to finish setup
                   </Text>
                 )}
+                {removeErrors[item.user_id] !== undefined ? (
+                  <Text className="mt-1 text-sm text-red-500">{removeErrors[item.user_id]}</Text>
+                ) : null}
               </Pressable>
             );
           }}

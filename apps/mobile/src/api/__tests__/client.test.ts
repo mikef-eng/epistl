@@ -8,6 +8,9 @@ import {
   registerKeys,
   removeContact,
   deleteAccount,
+  listContactRequests,
+  acceptContactRequest,
+  declineContactRequest,
 } from '../client';
 
 jest.mock('../session', () => ({
@@ -341,6 +344,118 @@ describe('client', () => {
 
       await expect(removeContact('u9')).rejects.toMatchObject({
         code: 'not_found',
+        status: 404,
+      });
+    });
+  });
+
+  describe('listContactRequests', () => {
+    it('throws an ApiError with code "no_session" when no token is stored', async () => {
+      mockSession.getToken.mockResolvedValueOnce(null);
+
+      await expect(listContactRequests()).rejects.toMatchObject({ code: 'no_session' });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('GETs /api/contacts/requests with the Authorization header', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-7');
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(200, {
+          incoming: [
+            { id: 'r1', user_id: 'u1', email: 'a@example.com', created_at: '2026-01-01T00:00:00Z' },
+          ],
+          outgoing: [],
+        }),
+      );
+
+      const result = await listContactRequests();
+
+      expect(fetchMock).toHaveBeenCalledWith('http://localhost:3000/api/contacts/requests', {
+        method: 'GET',
+        headers: { Authorization: 'Bearer tok-7' },
+      });
+      expect(result).toEqual({
+        incoming: [
+          { id: 'r1', user_id: 'u1', email: 'a@example.com', created_at: '2026-01-01T00:00:00Z' },
+        ],
+        outgoing: [],
+      });
+    });
+
+    it('throws an ApiError on a non-2xx response', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-7');
+      fetchMock.mockResolvedValueOnce(jsonResponse(500, { error: 'internal_error' }));
+
+      await expect(listContactRequests()).rejects.toMatchObject({
+        code: 'internal_error',
+        status: 500,
+      });
+    });
+  });
+
+  describe('acceptContactRequest', () => {
+    it('throws an ApiError with code "no_session" when no token is stored', async () => {
+      mockSession.getToken.mockResolvedValueOnce(null);
+
+      await expect(acceptContactRequest('r1')).rejects.toMatchObject({ code: 'no_session' });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('POSTs to /api/contacts/requests/{id}/accept with the Authorization header', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-8');
+      fetchMock.mockResolvedValueOnce({ ok: true, status: 204, json: async () => null });
+
+      await acceptContactRequest('r1');
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://localhost:3000/api/contacts/requests/r1/accept',
+        {
+          method: 'POST',
+          headers: { Authorization: 'Bearer tok-8' },
+        },
+      );
+    });
+
+    it('throws an ApiError with code "not_recipient" on 403', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-8');
+      fetchMock.mockResolvedValueOnce(jsonResponse(403, { error: 'not_recipient' }));
+
+      await expect(acceptContactRequest('r1')).rejects.toMatchObject({
+        code: 'not_recipient',
+        status: 403,
+      });
+    });
+  });
+
+  describe('declineContactRequest', () => {
+    it('throws an ApiError with code "no_session" when no token is stored', async () => {
+      mockSession.getToken.mockResolvedValueOnce(null);
+
+      await expect(declineContactRequest('r1')).rejects.toMatchObject({ code: 'no_session' });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('POSTs to /api/contacts/requests/{id}/decline with the Authorization header', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-8');
+      fetchMock.mockResolvedValueOnce({ ok: true, status: 204, json: async () => null });
+
+      await declineContactRequest('r1');
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://localhost:3000/api/contacts/requests/r1/decline',
+        {
+          method: 'POST',
+          headers: { Authorization: 'Bearer tok-8' },
+        },
+      );
+    });
+
+    it('throws an ApiError with code "request_not_found" on 404', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-8');
+      fetchMock.mockResolvedValueOnce(jsonResponse(404, { error: 'request_not_found' }));
+
+      await expect(declineContactRequest('r1')).rejects.toMatchObject({
+        code: 'request_not_found',
         status: 404,
       });
     });

@@ -28,9 +28,9 @@ export type RootStackParamList = {
 
 /**
  * Param list for the post-login bottom tab navigator nested under the root
- * stack's `Main` route. `Conversations`/`Friends` are temporary placeholder
- * screens as of issue #94 -- real implementations land in follow-up issues
- * and fully replace, rather than extend, these placeholders.
+ * stack's `Main` route. Both started as issue #94's temporary placeholder
+ * screens; `Conversations` was replaced with its real implementation in
+ * issue #146, and `Friends` in issue #127.
  */
 export type MainTabParamList = {
   Conversations: undefined;
