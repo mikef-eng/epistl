@@ -12,7 +12,7 @@ import { ensureLocalIdentity, PREKEY_SIGNATURE_CONTEXT } from '../src/crypto/ide
 import { encodeHandshakeEnvelope, encodeRatchetEnvelope } from '../src/crypto/envelope';
 import { deriveNextSendingMessageKey, initiateSession } from '../src/crypto/session';
 import ChatScreen from '../src/screens/ChatScreen';
-import { getMessages, saveMessage } from '../src/storage/messages';
+import { getMessages, markContactMessagesRead, saveMessage } from '../src/storage/messages';
 import { transportStore, type ConnectionStatus, type IncomingFrame } from '../src/transport/store';
 import { base64ToBytes, bytesToBase64, utf8ToBytes } from '../src/utils/base64';
 
@@ -53,6 +53,7 @@ jest.mock('../src/api/client', () => ({
 jest.mock('../src/storage/messages', () => ({
   getMessages: jest.fn(),
   saveMessage: jest.fn(),
+  markContactMessagesRead: jest.fn(),
 }));
 
 jest.mock('expo-secure-store', () => {
@@ -77,6 +78,7 @@ const { getUserId: mockedGetUserId } = jest.requireMock('../src/api/session');
 const { listContacts: mockedListContacts } = jest.requireMock('../src/api/client');
 const mockedGetMessages = getMessages as jest.Mock;
 const mockedSaveMessage = saveMessage as jest.Mock;
+const mockedMarkContactMessagesRead = markContactMessagesRead as jest.Mock;
 
 // See ContactsScreen.test.tsx (issue #26) for why this file needs more
 // headroom than Jest's default 5000ms per-test timeout under CI load; the
@@ -177,6 +179,7 @@ describe('ChatScreen', () => {
     mockedGetUserId.mockResolvedValue(ALICE_USER_ID);
     mockedGetMessages.mockResolvedValue([]);
     mockedSaveMessage.mockResolvedValue(undefined);
+    mockedMarkContactMessagesRead.mockResolvedValue(undefined);
     bob = buildContact();
     mockedListContacts.mockResolvedValue({ contacts: [bob.contact] });
   });
@@ -212,6 +215,15 @@ describe('ChatScreen', () => {
       expect(screen.getByText('hi')).toBeTruthy();
       expect(screen.getByText('hello')).toBeTruthy();
     });
+  });
+
+  it('marks the contact\'s messages read exactly once on mount, alongside loading history', async () => {
+    await renderChatScreen();
+
+    await waitFor(() => {
+      expect(mockedMarkContactMessagesRead).toHaveBeenCalledWith(CONTACT_USER_ID);
+    });
+    expect(mockedMarkContactMessagesRead).toHaveBeenCalledTimes(1);
   });
 
   it('sends a message: appends the real plaintext optimistically, sends a real handshake-init envelope, and persists plaintext locally', async () => {

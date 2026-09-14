@@ -24,7 +24,12 @@ import {
   type RatchetState,
 } from '../crypto/session';
 import type { RootStackParamList } from '../navigation/types';
-import { getMessages, saveMessage, type MessageDirection } from '../storage/messages';
+import {
+  getMessages,
+  markContactMessagesRead,
+  saveMessage,
+  type MessageDirection,
+} from '../storage/messages';
 import { transportStore, type IncomingFrame } from '../transport/store';
 import { base64ToBytes, bytesToBase64, bytesToUtf8, utf8ToBytes } from '../utils/base64';
 
@@ -237,6 +242,16 @@ export default function ChatScreen({ route }: Props) {
           createdAt: row.createdAt,
         }))
       );
+      // "Read on open": opening this contact's history marks their
+      // incoming messages read exactly once per mount, not once per
+      // received message (that would be `handleIncomingEnvelope`, which
+      // deliberately does not call this). See
+      // docs/superpowers/specs/2026-09-13-friends-conversations-ux-design.md,
+      // "Read semantics".
+      await markContactMessagesRead(contactUserId);
+      if (cancelled) {
+        return;
+      }
 
       transportStore.actions.connect(getToken);
     }
