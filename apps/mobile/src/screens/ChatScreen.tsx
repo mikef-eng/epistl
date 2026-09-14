@@ -26,7 +26,7 @@ import {
 import type { RootStackParamList } from '../navigation/types';
 import { getMessages, saveMessage, type MessageDirection } from '../storage/messages';
 import { transportStore, type IncomingFrame } from '../transport/store';
-import { base64ToBytes, base64ToUtf8, bytesToBase64, bytesToUtf8, utf8ToBytes } from '../utils/base64';
+import { base64ToBytes, bytesToBase64, bytesToUtf8, utf8ToBytes } from '../utils/base64';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Chat'>;
 
@@ -167,7 +167,7 @@ export default function ChatScreen({ route }: Props) {
     await saveMessage({
       contactUserId,
       direction: 'incoming',
-      bodyB64: bytesToBase64(utf8ToBytes(text)),
+      body: text,
       createdAt,
     });
   }
@@ -232,7 +232,7 @@ export default function ChatScreen({ route }: Props) {
         rows.map((row) => ({
           key: `db-${row.id}`,
           direction: row.direction,
-          text: base64ToUtf8(row.bodyB64),
+          text: row.body,
           verified: true,
           createdAt: row.createdAt,
         }))
@@ -343,7 +343,7 @@ export default function ChatScreen({ route }: Props) {
     await saveMessage({
       contactUserId,
       direction: 'outgoing',
-      bodyB64: bytesToBase64(utf8ToBytes(text)),
+      body: text,
       createdAt,
     });
   }

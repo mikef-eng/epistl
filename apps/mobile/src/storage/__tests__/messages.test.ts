@@ -110,19 +110,19 @@ describe('markContactMessagesRead', () => {
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'incoming',
-      bodyB64: 'a1',
+      body: 'a1',
       createdAt: '2024-01-01T00:00:00.000Z',
     });
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'outgoing',
-      bodyB64: 'a2',
+      body: 'a2',
       createdAt: '2024-01-01T00:01:00.000Z',
     });
     await messages.saveMessage({
       contactUserId: 'bob',
       direction: 'incoming',
-      bodyB64: 'b1',
+      body: 'b1',
       createdAt: '2024-01-01T00:02:00.000Z',
     });
 
@@ -140,13 +140,13 @@ describe('markContactMessagesRead', () => {
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'incoming',
-      bodyB64: 'a1',
+      body: 'a1',
       createdAt: '2024-01-01T00:00:00.000Z',
     });
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'outgoing',
-      bodyB64: 'a2',
+      body: 'a2',
       createdAt: '2024-01-01T00:01:00.000Z',
     });
 
@@ -164,13 +164,13 @@ describe('markContactMessagesRead', () => {
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'incoming',
-      bodyB64: 'a1',
+      body: 'a1',
       createdAt: '2024-01-01T00:00:00.000Z',
     });
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'outgoing',
-      bodyB64: 'a2',
+      body: 'a2',
       createdAt: '2024-01-01T00:01:00.000Z',
     });
 
@@ -206,13 +206,13 @@ describe('getConversationSummaries', () => {
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'incoming',
-      bodyB64: 'old',
+      body: 'old',
       createdAt: '2024-01-01T00:00:00.000Z',
     });
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'outgoing',
-      bodyB64: 'new',
+      body: 'new',
       createdAt: '2024-01-02T00:00:00.000Z',
     });
 
@@ -221,7 +221,7 @@ describe('getConversationSummaries', () => {
     expect(summaries).toHaveLength(1);
     expect(summaries[0]).toMatchObject({
       contactUserId: 'alice',
-      lastBodyB64: 'new',
+      lastBody: 'new',
       lastDirection: 'outgoing',
       lastCreatedAt: '2024-01-02T00:00:00.000Z',
     });
@@ -231,19 +231,19 @@ describe('getConversationSummaries', () => {
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'incoming',
-      bodyB64: 'a1',
+      body: 'a1',
       createdAt: '2024-01-01T00:00:00.000Z',
     });
     await messages.saveMessage({
       contactUserId: 'bob',
       direction: 'incoming',
-      bodyB64: 'b1',
+      body: 'b1',
       createdAt: '2024-01-03T00:00:00.000Z',
     });
     await messages.saveMessage({
       contactUserId: 'carol',
       direction: 'incoming',
-      bodyB64: 'c1',
+      body: 'c1',
       createdAt: '2024-01-02T00:00:00.000Z',
     });
 
@@ -256,13 +256,13 @@ describe('getConversationSummaries', () => {
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'incoming',
-      bodyB64: 'a1',
+      body: 'a1',
       createdAt: '2024-01-01T00:00:00.000Z',
     });
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'outgoing',
-      bodyB64: 'a2',
+      body: 'a2',
       createdAt: '2024-01-02T00:00:00.000Z',
     });
 
@@ -275,7 +275,7 @@ describe('getConversationSummaries', () => {
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'outgoing',
-      bodyB64: 'a1',
+      body: 'a1',
       createdAt: '2024-01-01T00:00:00.000Z',
     });
 
@@ -288,7 +288,7 @@ describe('getConversationSummaries', () => {
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'incoming',
-      bodyB64: 'a1',
+      body: 'a1',
       createdAt: '2024-01-01T00:00:00.000Z',
     });
 
@@ -313,7 +313,7 @@ describe('drizzle-kit migrations', () => {
       messages.saveMessage({
         contactUserId: 'carol',
         direction: 'incoming',
-        bodyB64: 'hi',
+        body: 'hi',
         createdAt: '2024-01-01T00:00:00.000Z',
       })
     ).resolves.toBeUndefined();
@@ -334,7 +334,7 @@ describe('drizzle-kit migrations', () => {
     await firstLoad.saveMessage({
       contactUserId: 'carol',
       direction: 'incoming',
-      bodyB64: 'hi',
+      body: 'hi',
       createdAt: '2024-01-01T00:00:00.000Z',
     });
 
@@ -348,7 +348,7 @@ describe('drizzle-kit migrations', () => {
 
     const rows = await secondLoad.getMessages('carol');
     expect(rows).toHaveLength(1);
-    expect(rows[0].bodyB64).toBe('hi');
+    expect(rows[0].body).toBe('hi');
   });
 });
 
@@ -375,7 +375,7 @@ describe('messages_fts sync triggers', () => {
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'incoming',
-      bodyB64: 'let us meet for coffee tomorrow',
+      body: 'let us meet for coffee tomorrow',
       createdAt: '2024-01-01T00:00:00.000Z',
     });
 
@@ -390,14 +390,12 @@ describe('messages_fts sync triggers', () => {
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'incoming',
-      bodyB64: 'original content',
+      body: 'original content',
       createdAt: '2024-01-01T00:00:00.000Z',
     });
 
     const raw = openRawDb();
-    raw.execSync(
-      "UPDATE messages SET body_b64 = 'updated content' WHERE contact_user_id = 'alice'"
-    );
+    raw.execSync("UPDATE messages SET body = 'updated content' WHERE contact_user_id = 'alice'");
 
     const oldMatches = raw.getAllSync(
       "SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'original'"
@@ -414,7 +412,7 @@ describe('messages_fts sync triggers', () => {
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'incoming',
-      bodyB64: 'ephemeral content',
+      body: 'ephemeral content',
       createdAt: '2024-01-01T00:00:00.000Z',
     });
 
@@ -440,7 +438,7 @@ describe('searchMessages', () => {
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'incoming',
-      bodyB64: 'let us meet for coffee tomorrow',
+      body: 'let us meet for coffee tomorrow',
       createdAt: '2024-01-01T00:00:00.000Z',
     });
 
@@ -453,7 +451,7 @@ describe('searchMessages', () => {
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'incoming',
-      bodyB64: 'let us meet for coffee tomorrow',
+      body: 'let us meet for coffee tomorrow',
       createdAt: '2024-01-01T00:00:00.000Z',
     });
 
@@ -466,13 +464,13 @@ describe('searchMessages', () => {
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'incoming',
-      bodyB64: 'coffee at noon',
+      body: 'coffee at noon',
       createdAt: '2024-01-01T00:00:00.000Z',
     });
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'outgoing',
-      bodyB64: 'coffee sounds great',
+      body: 'coffee sounds great',
       createdAt: '2024-01-01T00:01:00.000Z',
     });
 
@@ -485,13 +483,13 @@ describe('searchMessages', () => {
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'incoming',
-      bodyB64: 'coffee at noon',
+      body: 'coffee at noon',
       createdAt: '2024-01-01T00:00:00.000Z',
     });
     await messages.saveMessage({
       contactUserId: 'bob',
       direction: 'incoming',
-      bodyB64: 'lunch at noon',
+      body: 'lunch at noon',
       createdAt: '2024-01-01T00:01:00.000Z',
     });
 
@@ -504,7 +502,7 @@ describe('searchMessages', () => {
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'incoming',
-      bodyB64: 'coffee at noon',
+      body: 'coffee at noon',
       createdAt: '2024-01-01T00:00:00.000Z',
     });
 
@@ -517,34 +515,29 @@ describe('searchMessages', () => {
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'incoming',
-      bodyB64: 'coffee at noon',
+      body: 'coffee at noon',
       createdAt: '2024-01-01T00:00:00.000Z',
     });
 
     await expect(messages.searchMessages('coffee-shop "quote')).resolves.toEqual([]);
   });
 
-  // TESTER-ADDED: per docs/decisions/0007-local-history-stores-plaintext.md,
-  // `bodyB64` is always UTF-8 plaintext *base64-encoded* by the real
-  // production caller (ChatScreen.tsx), via
-  // `utf8ToBase64`/`bytesToBase64(utf8ToBytes(plaintext))` — never raw
-  // plaintext bytes. Every other test in this file (including the sync-
-  // trigger tests above) instead stores literal plaintext strings directly
-  // in `bodyB64` (e.g. `bodyB64: 'let us meet for coffee tomorrow'`), which
-  // does not reflect what's actually persisted at rest and makes FTS5
-  // matching trivially succeed regardless of whether the index is built
-  // over decoded content or the base64 form. This test uses the real
-  // encoding a user's typed message would go through, then searches for an
-  // ordinary word straight out of that plaintext, the way a real user would
-  // type it into a search box.
-  it('finds a plaintext word a user actually typed, given realistically base64-encoded content', async () => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports -- avoids adding a new top-level import purely for this one diagnostic test.
-    const { utf8ToBase64 } = require('../../utils/base64');
-
+  // TESTER-ADDED (originally proved the pre-fix bug: FTS5 indexed
+  // `body_b64`, a base64-encoded wrapper around plaintext, so a search for
+  // an ordinary word straight out of the plaintext did not match — FTS5
+  // tokenizes the base64 *form*, which doesn't preserve substring alignment
+  // with the decoded text). Root-caused per issue #102: the `messages`
+  // table's `body` column (renamed from `bodyB64`/`body_b64`) is now plain
+  // UTF-8 plaintext with no base64 wrapper at all (see
+  // docs/decisions/0007-local-history-stores-plaintext.md and this module's
+  // doc comment), so this test now saves plaintext directly, the same way
+  // the real production caller (ChatScreen.tsx) does post-fix, and confirms
+  // an ordinary word a user actually typed is found.
+  it('finds a plaintext word a user actually typed', async () => {
     await messages.saveMessage({
       contactUserId: 'alice',
       direction: 'incoming',
-      bodyB64: utf8ToBase64('the quick brown fox'),
+      body: 'the quick brown fox',
       createdAt: '2024-01-01T00:00:00.000Z',
     });
 
