@@ -12,6 +12,7 @@ import ChatScreen from "./src/screens/ChatScreen";
 import LoginScreen from "./src/screens/LoginScreen";
 import QuicSpikeScreen from "./src/screens/QuicSpikeScreen";
 import SettingsScreen from "./src/screens/SettingsScreen";
+import UserProfileScreen from "./src/screens/UserProfileScreen";
 import { getThemePreference } from "./src/settings/preferences";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -50,6 +51,7 @@ export default function App() {
             (issue #94). */}
         <Stack.Screen name="Main" component={MainTabs} options={{ headerShown: false }} />
         <Stack.Screen name="AddContact" component={AddContactScreen} />
+        <Stack.Screen name="UserProfile" component={UserProfileScreen} />
         <Stack.Screen name="Chat" component={ChatScreen} />
         <Stack.Screen name="Settings" component={SettingsScreen} />
         {/* Dev-only (issue #67 spike) -- never part of the real,
