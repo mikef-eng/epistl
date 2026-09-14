@@ -97,6 +97,28 @@ WHERE ranked.rn = 1
 ORDER BY ranked.created_at DESC
 `;
 
+interface SearchMessagesRow {
+  contact_user_id: string;
+}
+
+/**
+ * Builds a `messages_fts` `MATCH` argument from a free-text search query,
+ * per SQLite's FTS5 query syntax
+ * (https://sqlite.org/fts5.html#full_text_query_syntax): each whitespace-
+ * separated term is double-quoted (escaping any embedded `"`) so bareword
+ * FTS5 query-syntax operators typed by the user (`-foo`, `foo*`, `NEAR`,
+ * unbalanced `"`, etc.) are treated as literal text to search for rather
+ * than parsed as FTS5 syntax, and ANDed together (FTS5's default when
+ * multiple quoted strings are juxtaposed).
+ */
+function toFtsMatchQuery(query: string): string {
+  return query
+    .split(/\s+/)
+    .filter((term) => term.length > 0)
+    .map((term) => `"${term.replace(/"/g, '""')}"`)
+    .join(' AND ');
+}
+
 const sqliteDb = SQLite.openDatabaseSync(DATABASE_NAME);
 const db = drizzle(sqliteDb, { schema: { messages: messagesTable } });
 
@@ -178,4 +200,26 @@ export async function getConversationSummaries(): Promise<ConversationSummary[]>
   await migrationsReady;
   const rows = await db.all<ConversationSummaryRow>(GET_CONVERSATION_SUMMARIES_SQL);
   return rows.map(rowToConversationSummary);
+}
+
+/**
+ * Full-text searches message content via the `messages_fts` FTS5 virtual
+ * table (see `drizzle/0001_messages_fts.sql`), returning the distinct
+ * contacts with at least one matching message. Returns `[]` for a blank
+ * (empty/whitespace-only) query rather than running a query FTS5 would
+ * reject.
+ */
+export async function searchMessages(query: string): Promise<{ contactUserId: string }[]> {
+  await migrationsReady;
+  const matchQuery = toFtsMatchQuery(query.trim());
+  if (matchQuery === '') {
+    return [];
+  }
+  const rows = await db.all<SearchMessagesRow>(sql<SearchMessagesRow>`
+    SELECT DISTINCT m.contact_user_id AS contact_user_id
+    FROM messages_fts
+    JOIN messages m ON m.id = messages_fts.rowid
+    WHERE messages_fts MATCH ${matchQuery}
+  `);
+  return rows.map((row) => ({ contactUserId: row.contact_user_id }));
 }

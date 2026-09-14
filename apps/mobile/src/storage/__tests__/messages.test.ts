@@ -351,3 +351,176 @@ describe('drizzle-kit migrations', () => {
     expect(rows[0].bodyB64).toBe('hi');
   });
 });
+
+/** Reaches past the module under test to query/mutate the raw tables the
+ * `messages_fts` migration created, the same way other tests in this file
+ * reach past the module to assert on raw columns. */
+function openRawDb() {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- reaching past the module under test to exercise the FTS5 sync triggers directly.
+  const SQLite = require('expo-sqlite');
+  return SQLite.openDatabaseSync('epistl.db') as unknown as {
+    getAllSync: <T>(sql: string, params?: unknown[]) => T[];
+    execSync: (sql: string) => void;
+  };
+}
+
+describe('messages_fts sync triggers', () => {
+  let messages: typeof import('../messages');
+
+  beforeEach(() => {
+    messages = loadMessagesModule();
+  });
+
+  it('reflects an INSERT on messages in messages_fts', async () => {
+    await messages.saveMessage({
+      contactUserId: 'alice',
+      direction: 'incoming',
+      bodyB64: 'let us meet for coffee tomorrow',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    });
+
+    const rows = openRawDb().getAllSync<{ rowid: number }>(
+      "SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'coffee'"
+    );
+
+    expect(rows).toHaveLength(1);
+  });
+
+  it('reflects an UPDATE on messages in messages_fts', async () => {
+    await messages.saveMessage({
+      contactUserId: 'alice',
+      direction: 'incoming',
+      bodyB64: 'original content',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    });
+
+    const raw = openRawDb();
+    raw.execSync(
+      "UPDATE messages SET body_b64 = 'updated content' WHERE contact_user_id = 'alice'"
+    );
+
+    const oldMatches = raw.getAllSync(
+      "SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'original'"
+    );
+    const newMatches = raw.getAllSync(
+      "SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'updated'"
+    );
+
+    expect(oldMatches).toHaveLength(0);
+    expect(newMatches).toHaveLength(1);
+  });
+
+  it('reflects a DELETE on messages in messages_fts', async () => {
+    await messages.saveMessage({
+      contactUserId: 'alice',
+      direction: 'incoming',
+      bodyB64: 'ephemeral content',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    });
+
+    const raw = openRawDb();
+    raw.execSync("DELETE FROM messages WHERE contact_user_id = 'alice'");
+
+    const rows = raw.getAllSync(
+      "SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'ephemeral'"
+    );
+
+    expect(rows).toHaveLength(0);
+  });
+});
+
+describe('searchMessages', () => {
+  let messages: typeof import('../messages');
+
+  beforeEach(() => {
+    messages = loadMessagesModule();
+  });
+
+  it('returns the contact_user_id for a content match', async () => {
+    await messages.saveMessage({
+      contactUserId: 'alice',
+      direction: 'incoming',
+      bodyB64: 'let us meet for coffee tomorrow',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    });
+
+    const results = await messages.searchMessages('coffee');
+
+    expect(results).toEqual([{ contactUserId: 'alice' }]);
+  });
+
+  it('returns no results for non-matching content (no false positives)', async () => {
+    await messages.saveMessage({
+      contactUserId: 'alice',
+      direction: 'incoming',
+      bodyB64: 'let us meet for coffee tomorrow',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    });
+
+    const results = await messages.searchMessages('brunch');
+
+    expect(results).toEqual([]);
+  });
+
+  it('deduplicates contact_user_id when multiple of their messages match', async () => {
+    await messages.saveMessage({
+      contactUserId: 'alice',
+      direction: 'incoming',
+      bodyB64: 'coffee at noon',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    });
+    await messages.saveMessage({
+      contactUserId: 'alice',
+      direction: 'outgoing',
+      bodyB64: 'coffee sounds great',
+      createdAt: '2024-01-01T00:01:00.000Z',
+    });
+
+    const results = await messages.searchMessages('coffee');
+
+    expect(results).toEqual([{ contactUserId: 'alice' }]);
+  });
+
+  it('only returns contacts whose own messages match', async () => {
+    await messages.saveMessage({
+      contactUserId: 'alice',
+      direction: 'incoming',
+      bodyB64: 'coffee at noon',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    });
+    await messages.saveMessage({
+      contactUserId: 'bob',
+      direction: 'incoming',
+      bodyB64: 'lunch at noon',
+      createdAt: '2024-01-01T00:01:00.000Z',
+    });
+
+    const results = await messages.searchMessages('coffee');
+
+    expect(results).toEqual([{ contactUserId: 'alice' }]);
+  });
+
+  it('returns an empty array for a blank query', async () => {
+    await messages.saveMessage({
+      contactUserId: 'alice',
+      direction: 'incoming',
+      bodyB64: 'coffee at noon',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    });
+
+    const results = await messages.searchMessages('   ');
+
+    expect(results).toEqual([]);
+  });
+
+  it('does not throw and finds no match for a query containing FTS5 operator syntax', async () => {
+    await messages.saveMessage({
+      contactUserId: 'alice',
+      direction: 'incoming',
+      bodyB64: 'coffee at noon',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    });
+
+    await expect(messages.searchMessages('coffee-shop "quote')).resolves.toEqual([]);
+  });
+});
