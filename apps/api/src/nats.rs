@@ -148,6 +148,7 @@ pub async fn ensure_offline_stream(jetstream: &Context) -> Result<Stream, NatsEr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[tokio::test]
     async fn connect_with_invalid_url_fails_fast() {
@@ -158,9 +159,17 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn connect_reports_missing_nats_url() {
-        // SAFETY: this test does not run concurrently with other tests
-        // that read/write NATS_URL.
+        // SAFETY: `#[serial]` (default, unnamed group -- shared with
+        // `relay::tests`' `#[serial]` tests) ensures this test does not run
+        // concurrently with any other test in this binary that reads or
+        // writes NATS_URL. Confirmed mechanism (issue #121): without this,
+        // `relay::tests::test_state()`'s `dotenvy::dotenv()` call, running
+        // concurrently on another thread, can repopulate the just-removed
+        // NATS_URL from `.env` before this test's own `connect()` call
+        // reads it, flipping the expected `MissingNatsUrl` into a spurious
+        // `Ok(Client)`.
         let previous = env::var(NATS_URL_VAR).ok();
         unsafe {
             env::remove_var(NATS_URL_VAR);
