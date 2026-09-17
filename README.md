@@ -101,7 +101,22 @@ Postgres MCP is configured in [`.mcp.json`](.mcp.json) (project-scoped, via [`cr
 
      The first build is slow (Gradle, plus the one-time Rust target/cargo-ndk install and native library cross-compile); subsequent builds are fast, since both Gradle and `ensure-native-built.js` skip work that's already up to date. Once installed, day-to-day iteration can go back to `moon run mobile:start` (Metro only) with the app already on the emulator, re-running `npx expo run:android` only after a native (not JS) change.
 
-   iOS setup is not covered here — see issue #161 for iOS build reproducibility and setup instructions.
+   **iOS, from a clean clone to a working simulator (macOS only):** same underlying problem as Android — `quic-relay-client` needs a real native build, not plain Expo Go. `apps/mobile/ios` is gitignored (generated on demand via Expo prebuild, not committed), so the steps below take you from nothing to a running simulator:
+
+   - **Prerequisites** (one-time, manual — these are not auto-installed by anything in this repo):
+     - Xcode (from the App Store) plus its Command Line Tools (`xcode-select --install` if you only need those, e.g. for CI-adjacent tooling — a real device/simulator build needs full Xcode). This is the one native-build prerequisite that isn't auto-installed for you (see below) — without it, the iOS build fails fast with an error telling you to install Xcode or run `xcode-select --install`.
+     - [CocoaPods](https://cocoapods.org) (`sudo gem install cocoapods`, or via Homebrew), which `npx expo run:ios` uses under the hood to run `pod install`.
+     - [`rustup`](https://rustup.rs) and a working Rust toolchain for `packages/quic-relay-client`. You do **not** need to install the iOS Rust targets yourself — `QuicRelayClient.podspec`'s `script_phase` (`apps/mobile/modules/quic-relay-client/scripts/ensure-native-built-ios.js`) auto-installs whichever `rustup target` (`aarch64-apple-ios`, `aarch64-apple-ios-sim`, `x86_64-apple-ios`) it needs the first time you build, cross-compiling `packages/quic-relay-client` and packaging it into an xcframework via `ubrn build ios`.
+   - **Commands**, from repo root:
+
+     ```bash
+     cd apps/mobile && npm install
+     npx expo run:ios   # prebuilds ios/ if missing, runs pod install, builds the native app, and launches it on a booted/available simulator
+     ```
+
+     The first build is slow (CocoaPods, plus the one-time Rust target install and native library cross-compile via the podspec's `script_phase`); subsequent builds are fast, since the script's own freshness check skips work that's already up to date. Once installed, day-to-day iteration can go back to `moon run mobile:start` (Metro only) with the app already on the simulator, re-running `npx expo run:ios` only after a native (not JS) change.
+
+   See that module's `README.md` and `docs/decisions/0014-quic-relay-client-ios-native-build-bootstrap.md` for the full flow, and why it's a `script_phase`-triggered bootstrap rather than a CI cross-compile step (expected to also work unmodified under EAS Build's cloud macOS runners, once EAS is adopted).
 
 `api:dev` and `mobile:start` are long-running dev servers (moon's `persistent` task option) — each occupies its terminal until you stop it, same as running `cargo run`/`npm start` directly. `moon run` is otherwise a thin wrapper: `moon.yml` in each app just declares the same commands moon runs, so you can always fall back to invoking `cargo`/`npm` directly from that app's directory if you'd rather not use moon.
 

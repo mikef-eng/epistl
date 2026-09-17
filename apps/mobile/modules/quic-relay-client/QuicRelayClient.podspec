@@ -19,6 +19,46 @@ Pod::Spec.new do |s|
   s.vendored_frameworks = "QuicRelayClientFramework.xcframework"
   s.dependency    "uniffi-bindgen-react-native", "0.31.0-5"
 
+  # Issue #161: builds QuicRelayClientFramework.xcframework on demand,
+  # cross-compiling packages/quic-relay-client (the Rust crate) for
+  # aarch64-apple-ios / aarch64-apple-ios-sim / x86_64-apple-ios via
+  # `scripts/ensure-native-built-ios.js`, which wraps `ubrn build ios`
+  # (see that script for why -- it already does the per-target `cargo
+  # build` + lipo + `xcodebuild -create-xcframework` internally).
+  #
+  # `execution_position :before_compile`, no `output_files` declared: this
+  # always runs on any `pod install`/Xcode build (including `expo run:ios`
+  # and, later, EAS Build's cloud macOS runners), and relies on the
+  # script's own freshness check (comparing the xcframework's mtime against
+  # the crate's sources) to no-op quickly on repeat builds, rather than on
+  # CocoaPods' own script-phase caching.
+  #
+  # Deliberately NOT wired into this package's `prepare` npm lifecycle
+  # script -- `prepare` runs on every plain `npm install`/`npm ci`,
+  # including CI's `mobile` job, which never runs `pod install`/`xcodebuild`
+  # at all (docs/decisions/0010-no-device-testing-gate.md) and has no
+  # Xcode or iOS Rust targets installed. Putting the build there would
+  # newly require that toolchain in CI and break it for everyone, not just
+  # iOS developers.
+  #
+  # `source "$HOME/.cargo/env"` is required here: Xcode's build-phase shell
+  # does NOT inherit a developer's interactive shell PATH/rc files, so
+  # cargo/rustup would otherwise not be found even though they work fine
+  # from a normal terminal. Do not drop this if this block is edited later.
+  s.script_phase = {
+    :name => 'Build quic-relay-client iOS native library (issue #161)',
+    :shell_path => '/bin/bash',
+    :script => <<~SCRIPT,
+      set -e
+      if [ -f "$HOME/.cargo/env" ]; then
+        source "$HOME/.cargo/env"
+      fi
+      export PATH="$HOME/.cargo/bin:$PATH"
+      node "${PODS_TARGET_SRCROOT}/scripts/ensure-native-built-ios.js"
+    SCRIPT
+    :execution_position => :before_compile,
+  }
+
   # Use install_modules_dependencies helper to install the dependencies if React Native version >=0.71.0.
   # See https://github.com/facebook/react-native/blob/febf6b7f33fdb4904669f99d795eba4c0f95d7bf/scripts/cocoapods/new_architecture.rb#L79.
   if respond_to?(:install_modules_dependencies, true)
