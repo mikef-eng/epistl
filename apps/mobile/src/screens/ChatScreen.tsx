@@ -1,5 +1,7 @@
+import { Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useStore } from '@tanstack/react-store';
+import { useColorScheme } from 'nativewind';
 import { useEffect, useRef, useState } from 'react';
 import { FlatList, Pressable, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -86,9 +88,27 @@ function nextLocalKey(): string {
 
 const CANNOT_VERIFY_CONTACT_ERROR = "Cannot verify this contact's keys";
 
-export default function ChatScreen({ route }: Props) {
+/** First letter of the contact's email, uppercased, for the header avatar
+ * circle -- matches `FriendsScreen`/`ConversationsScreen`'s `initialFor`. */
+function initialFor(email: string): string {
+  return email.trim().charAt(0).toUpperCase() || '?';
+}
+
+/** Short absolute clock time (e.g. "3:45 PM") for the per-message
+ * timestamp label -- deliberately not the relative "2h ago" style
+ * `ConversationsScreen`'s `formatRelativeTime` uses for list rows, since a
+ * per-message context reads better with a fixed time-of-day. */
+function formatMessageTime(createdAt: string): string {
+  return new Date(createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+export default function ChatScreen({ navigation, route }: Props) {
   const { userId: contactUserId, email } = route.params;
   const insets = useSafeAreaInsets();
+  const { colorScheme } = useColorScheme();
+  // Matches the header's existing `text-black dark:text-white` convention --
+  // `Ionicons`' `color` prop can't take a NativeWind `className`.
+  const headerIconColor = colorScheme === 'dark' ? '#FFFFFF' : '#000000';
 
   const [messages, setMessages] = useState<ChatListItem[]>([]);
   const [draft, setDraft] = useState('');
@@ -367,7 +387,23 @@ export default function ChatScreen({ route }: Props) {
 
   return (
     <View className="flex-1 bg-white dark:bg-black">
-      <View className="border-b border-gray-200 px-4 py-3 dark:border-gray-700">
+      <View
+        style={{ paddingTop: insets.top }}
+        className="flex-row items-center border-b border-gray-200 px-4 py-3 dark:border-gray-700"
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+          onPress={() => navigation.goBack()}
+          className="mr-3"
+        >
+          <Ionicons name="arrow-back" size={24} color={headerIconColor} />
+        </Pressable>
+        <View className="mr-2 h-8 w-8 items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700">
+          <Text className="text-sm font-semibold text-black dark:text-white">
+            {initialFor(email)}
+          </Text>
+        </View>
         <Text className="text-lg font-semibold text-black dark:text-white">{email}</Text>
       </View>
 
@@ -383,16 +419,20 @@ export default function ChatScreen({ route }: Props) {
         ref={listRef}
         data={messages}
         keyExtractor={(item) => item.key}
+        contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end' }}
         onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
         renderItem={({ item }) => (
           <View
             className={`px-4 py-2 ${item.direction === 'outgoing' ? 'items-end' : 'items-start'}`}
           >
+            <Text className="mb-1 text-xs text-gray-400 dark:text-gray-500">
+              {formatMessageTime(item.createdAt)}
+            </Text>
             <View
               className={`rounded-lg px-3 py-2 ${
                 item.verified
                   ? item.direction === 'outgoing'
-                    ? 'bg-blue-500'
+                    ? 'bg-[#8B2F4B]'
                     : 'bg-gray-200 dark:bg-gray-700'
                   : 'bg-red-50 dark:bg-red-950'
               }`}
@@ -442,7 +482,7 @@ export default function ChatScreen({ route }: Props) {
         <Pressable
           accessibilityRole="button"
           onPress={handleSend}
-          className="rounded-lg bg-blue-500 px-4 py-2"
+          className="rounded-lg bg-[#8B2F4B] px-4 py-2"
         >
           <Text className="text-base font-semibold text-white">Send</Text>
         </Pressable>

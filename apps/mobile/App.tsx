@@ -52,10 +52,29 @@ export default function App() {
               gear icons, so the root stack's default header is hidden here
               (issue #94). */}
           <Stack.Screen name="Main" component={MainTabs} options={{ headerShown: false }} />
-          <Stack.Screen name="AddContact" component={AddContactScreen} />
-          <Stack.Screen name="UserProfile" component={UserProfileScreen} />
-          <Stack.Screen name="Chat" component={ChatScreen} />
-          <Stack.Screen name="Settings" component={SettingsScreen} />
+          {/* These four screens each build their own themed header (back
+              button + title) in the screen body, matching Conversations/
+              Friends' convention, so the root stack's native header is
+              hidden here too -- otherwise every push showed two headers,
+              and the native one ignored dark/light mode entirely (see
+              docs/superpowers/specs/2026-09-15-mobile-frontend-polish.md,
+              B1/B2). */}
+          <Stack.Screen
+            name="AddContact"
+            component={AddContactScreen}
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="UserProfile"
+            component={UserProfileScreen}
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen name="Chat" component={ChatScreen} options={{ headerShown: false }} />
+          <Stack.Screen
+            name="Settings"
+            component={SettingsScreen}
+            options={{ headerShown: false }}
+          />
           {/* Dev-only (issue #67 spike) -- never part of the real,
               authenticated app flow; reachable only from LoginScreen's
               __DEV__-gated link below. */}

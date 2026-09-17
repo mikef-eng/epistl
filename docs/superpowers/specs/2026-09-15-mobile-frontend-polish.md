@@ -16,6 +16,57 @@ which file(s).
 - 2026-09-17: doc moved off `main` onto its own branch
   (`ui/branch-and-spec-tracking`) instead of sitting uncommitted on
   `main` — no polish work done yet.
+- 2026-09-17: B1+B2 fixed together. `App.tsx` now sets `headerShown: false`
+  for `AddContact`/`UserProfile`/`Chat`/`Settings` (same pattern as
+  `Login`/`Main`); each of those four screens
+  (`ChatScreen.tsx`, `SettingsScreen.tsx`, `AddContactScreen.tsx`,
+  `UserProfileScreen.tsx`) now renders its own themed header row (back
+  button wired to `navigation.goBack()` + title, `dark:` classes,
+  `useSafeAreaInsets()` top padding) matching
+  `ConversationsScreen`/`FriendsScreen`'s existing convention, instead of
+  relying on React Navigation's native chrome. Verified on-device on both
+  emulators (Chat in dark mode, Settings in light mode) — single themed
+  header, working back arrow, no more native white flash or raw route-name
+  leak.
+- 2026-09-17: B4+B6 fixed together in `ConversationsScreen.tsx` and
+  `FriendsScreen.tsx`. Added an initial-letter avatar circle to each row
+  (both files); fixed the empty-list `FlatList`s (`contentContainerStyle={{
+  flexGrow: 1 }}`) so the existing centered empty-state view actually
+  centers instead of top-pinning; added a centered emoji glyph to each
+  empty state. Conversations' existing unread dot (already `bg-blue-500`)
+  left in place. B4's Chat-thread dead space not addressed — Chat wasn't
+  part of this request.
+- 2026-09-17: B1 finished (bottom-tab-bar half) in
+  `MainTabs.tsx` — custom `tabBar` render prop (`ThemedTabBar`) replacing
+  React Navigation's unstyled default bar, themed with `dark:` classes,
+  bottom safe-area padding, and `--seal` for the active tab label.
+- 2026-09-17: B3 finished. Added `@expo/vector-icons` (explicit check-in
+  given for this one dependency) and wired real `Ionicons` tab-bar icons in
+  `MainTabs.tsx`. Same request also fixed icon sizing on the previously
+  tiny Unicode glyphs: the settings-gear `⚙` in `ConversationsScreen.tsx`/
+  `FriendsScreen.tsx` and the back-arrow `←` in `ChatScreen.tsx`,
+  `SettingsScreen.tsx`, `AddContactScreen.tsx`, `UserProfileScreen.tsx`, all
+  replaced with sized/tinted `Ionicons`.
+- 2026-09-17: B4 finished (Chat half) in `ChatScreen.tsx` — added
+  `contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end' }}`
+  to the message `FlatList` so a sparse thread anchors to the bottom
+  (near the composer) instead of top-aligning over a void, matching
+  standard messaging-app convention. Correction to this finding's
+  original fix wording: the "don't vertically center rows" guidance is
+  right for Conversations/Friends (browsable lists) but doesn't apply to
+  Chat (a single thread, not a list) — bottom-anchoring, not an
+  empty-state treatment, is the correct fix there. Verified on-device on
+  both emulators with the seeded 2-message thread; long-thread
+  scroll-to-latest behavior reasoned through as unaffected (untested
+  on-device — no easy way to seed enough messages to overflow the
+  viewport).
+- 2026-09-17: B5 fixed in `LoginScreen.tsx`. Form moved up to ~40% from
+  top (flex-ratio spacers replacing `justify-center`); wordmark given
+  weight/tracking and the new `--seal` accent (`#8B2F4B`, applied here as
+  a one-off `bg-[#8B2F4B]`/`text-[#8B2F4B]` arbitrary value, not yet a
+  shared token); one-line subtitle added; primary button switched from
+  flat pale blue to a solid `--seal` fill. Sign-up/dev links kept their
+  existing blue/gray styling, just moved with the block per request.
 
 **How this doc was produced:** built and installed the current working tree
 (uncommitted changes included) on two Android emulators (Pixel 10 Pro A/B,
@@ -63,7 +114,19 @@ for — nothing here needs re-litigating, just carrying forward:
 
 ### B1. Native screen chrome ignores the app's dark/light mode
 
-**Status: not started.**
+**Status: DONE** (2026-09-17, `/ui`). The stack-header half was already done
+— see B2's status line (`headerShown: false` + a custom themed header per
+screen, not a `NavigationContainer` theme prop). The bottom tab bar half is
+now also done: `apps/mobile/src/navigation/MainTabs.tsx` passes a custom
+`tabBar` render prop (`ThemedTabBar`, a plain `View` with `dark:` classes,
+a top border matching the existing header convention, and
+`useSafeAreaInsets()` bottom padding) instead of React Navigation's default
+bar or `tabBarStyle`/`tabBarActiveTintColor` theme props. The active tab's
+label uses `--seal` (`#8B2F4B`, same accent as the Login button); the
+inactive tab uses the existing `gray-500`/`gray-400` secondary-text
+convention. Tap-to-navigate follows the standard `BottomTabBarProps`
+`tabPress` event + `navigation.navigate(route.name)` pattern. Icons (B3)
+intentionally not touched — separate new-dependency finding.
 
 `App.tsx`'s `NavigationContainer` has no `theme` prop, so React Navigation
 always paints native chrome (stack headers, and intermittently the bottom
@@ -85,7 +148,11 @@ otherwise-identical Conversations screenshots taken seconds apart).
 
 ### B2. Every pushed screen shows two headers
 
-**Status: not started.**
+**Status: DONE** (2026-09-17, `/ui`). `App.tsx` sets `headerShown: false`
+for `AddContact`/`UserProfile`/`Chat`/`Settings`; each screen now has its
+own themed header (back button + title) matching
+`ConversationsScreen`/`FriendsScreen`'s convention. Verified on-device:
+single header, working back arrow, AddContact's raw route-name leak gone.
 
 `AddContact`, `UserProfile`, `Chat`, and `Settings` are registered in
 `App.tsx` with no `options`, so each gets React Navigation's default
@@ -118,10 +185,22 @@ the route name.
 
 ### B3. Tab bar icons are React Navigation's "missing icon" placeholder
 
-**Status: not started.** Note the new-dependency flag below still applies —
-`/ui` should not add `@expo/vector-icons` on its own say-so without
-checking in first, since that's exactly the kind of thing this doc already
-flagged as needing a separate issue.
+**Status: DONE** (2026-09-17, `/ui`) — check-in on the new dependency
+happened explicitly for this request (see Progress log). `@expo/vector-icons`
+added to `apps/mobile/package.json`/`package-lock.json`;
+`MainTabs.tsx`'s `ThemedTabBar` now renders `Ionicons`
+`chatbubbles`/`chatbubbles-outline` (Conversations) and
+`people`/`people-outline` (Friends), 26px, filled when focused and outline
+when not, tinted `--seal` active / `gray-500`(light)-`gray-400`(dark)
+inactive via `nativewind`'s `useColorScheme` (matching the existing label
+convention). As a drive-by icon-sizing pass in the same request: the
+`⚙` Unicode gear in `ConversationsScreen.tsx`/`FriendsScreen.tsx`'s headers
+and the `←` Unicode arrow in the custom headers (`ChatScreen.tsx`,
+`SettingsScreen.tsx`, `AddContactScreen.tsx`, `UserProfileScreen.tsx`) were
+replaced with `Ionicons` `settings-outline`/`arrow-back`, 24px, colored via
+the same `useColorScheme`-derived black/white (or `colorScheme`/`nativewind`
+where already imported, e.g. `SettingsScreen.tsx`) rather than a
+`className`, since `Ionicons`' `color` prop can't take NativeWind classes.
 
 `MainTabs.tsx` never sets `tabBarIcon`, and no icon library
 (`@expo/vector-icons` or similar) is a dependency anywhere in
@@ -147,7 +226,36 @@ issue — your call when you run `/plan-issue`.
 
 ### B4. Severe dead space on every list/detail screen
 
-**Status: not started.**
+**Status: DONE** (2026-09-17, `/ui`). Conversations/Friends empty states
+render a centered icon + copy (`contentContainerStyle={{ flexGrow: 1 }}`
+on the `FlatList` so the existing `flex-1 items-center justify-center`
+empty view actually fills the viewport instead of collapsing to its own
+content height; added a centered emoji glyph above each "No … yet" line).
+Chat's sparse-thread dead space is now also fixed, but with a different,
+more specific treatment than Conversations/Friends — see the correction
+note below.
+
+**Correction (Chat is not a browsable list):** the doc's original fix
+bullet ("don't vertically center rows, that would jump around as items
+are added") was written before this distinction was clear, and doesn't
+apply to Chat. Conversations/Friends are browsable lists of distinct
+items, so they got a centered *empty-state* treatment for the zero-item
+case only. Chat is a single ongoing conversation thread, not a list of
+items to browse — the idiomatic fix (the pattern every messaging app
+uses) is to anchor messages to the *bottom* of the viewport, near the
+composer, so a short thread sits naturally where the next message will
+appear and grows upward as more arrive, rather than top-aligning against
+the header and leaving a void below. Implemented in `ChatScreen.tsx` by
+adding `contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end'
+}}` to the message `FlatList`, alongside its existing
+`onContentSizeChange={() => listRef.current?.scrollToEnd({ animated:
+false })}` (which already handled long/overflowing threads by scrolling
+to the latest message — that behavior is unaffected, since
+`justifyContent: 'flex-end'` only matters when content is shorter than
+the viewport and there's nothing to scroll). Verified on-device on both
+emulators (dark and light) with the seeded 2-message "Yo"/"Sup" thread:
+messages now sit bottom-anchored just above the composer instead of
+pinned under the header.
 
 Conversations, Friends, and any Chat thread with few messages all
 top-align their content and leave the remaining viewport (70-90% of
@@ -169,7 +277,19 @@ deliberately short list.
 
 ### B5. Login screen is visually unbalanced and generic
 
-**Status: not started.**
+**Status: DONE** (2026-09-17, `/ui`). `LoginScreen.tsx`: form block moved up
+to roughly the 40%-from-top mark (flex-ratio spacers, 0.8 above / 1.2
+below, instead of `justify-center`); wordmark bumped to
+`text-4xl font-extrabold tracking-wide` in the new `--seal` accent
+(`#8B2F4B`, applied here as a literal `bg-[#8B2F4B]`/`text-[#8B2F4B]`
+arbitrary value since no theme/token file exists yet — not introduced
+elsewhere in the app); added a one-line factual subtitle ("Private,
+post-quantum-secure messaging") under the wordmark; primary button now a
+solid `--seal` fill (was pale flat blue) with a dimmed `--seal`
+disabled state, dark-mode-aware. Sign-up link and dev-only QUIC-spike
+link left with their existing styling (still default blue / gray-400) per
+request — only moved along with the rest of the block, not recolored.
+Inputs unchanged (not part of this pass's scope).
 
 Content (wordmark, two inputs, button, sign-up link, dev-only QUIC-spike
 link) sits pinned roughly two-thirds down the screen with a large,
@@ -186,7 +306,13 @@ fix.
 
 ### B6. Conversation/Friend rows are plain text-only
 
-**Status: not started.**
+**Status: DONE** (2026-09-17, `/ui`) — both `ConversationsScreen` and
+`FriendsScreen` rows now show a 40x40 initial-letter avatar circle
+(`initialFor(email)`, gray-200/gray-700 fill, no new dependency) ahead of
+the email. Conversations already had an unread dot in the app's existing
+accent blue (`bg-blue-500`, matching "Add contact"'s link color, since
+`--seal` isn't implemented yet) alongside the bold-weight convention —
+left as-is, just paired with the new avatar.
 
 Rows show only the contact's raw email address, last-message preview, and
 relative time — no avatar/initial for at-a-glance scanning, and no visible

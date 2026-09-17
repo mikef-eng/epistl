@@ -1,6 +1,8 @@
+import { Ionicons } from '@expo/vector-icons';
 import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import type { CompositeScreenProps } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useColorScheme } from 'nativewind';
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -70,6 +72,13 @@ function hasFullKeyBundle(contact: Contact): boolean {
   );
 }
 
+/** First letter of the contact's email, uppercased, for the row avatar
+ * circle -- no photo upload/server-side avatar storage, just a derived
+ * initial, matching `ConversationsScreen`'s `initialFor`. */
+function initialFor(email: string): string {
+  return email.trim().charAt(0).toUpperCase() || '?';
+}
+
 /** Removes a key from a `Record` map by producing a fresh object, used for
  * both the remove-friend and request-accept/decline inline error maps
  * below -- returns the same reference when the key is already absent, so
@@ -85,6 +94,10 @@ function withoutKey<T>(map: Record<string, T>, key: string): Record<string, T> {
 
 export default function FriendsScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
+  const { colorScheme } = useColorScheme();
+  // Matches the header's existing `text-black dark:text-white` convention --
+  // `Ionicons`' `color` prop can't take a NativeWind `className`.
+  const headerIconColor = colorScheme === 'dark' ? '#FFFFFF' : '#000000';
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [requests, setRequests] = useState<RequestsState>(EMPTY_REQUESTS);
   const [loading, setLoading] = useState(true);
@@ -281,7 +294,7 @@ export default function FriendsScreen({ navigation }: Props) {
         <Text className="text-lg font-semibold text-black dark:text-white">Friends</Text>
         <View className="flex-row items-center">
           <Pressable accessibilityRole="button" onPress={handleAddContact}>
-            <Text className="text-base font-semibold text-blue-500">Add contact</Text>
+            <Text className="text-base font-semibold text-[#8B2F4B]">Add contact</Text>
           </Pressable>
           <Pressable
             accessibilityRole="button"
@@ -289,7 +302,7 @@ export default function FriendsScreen({ navigation }: Props) {
             onPress={handleOpenSettings}
             className="ml-4"
           >
-            <Text className="text-lg text-black dark:text-white">⚙</Text>
+            <Ionicons name="settings-outline" size={24} color={headerIconColor} />
           </Pressable>
         </View>
       </View>
@@ -304,7 +317,7 @@ export default function FriendsScreen({ navigation }: Props) {
           <Pressable
             accessibilityRole="button"
             onPress={handleRetry}
-            className="rounded-lg bg-blue-500 px-4 py-2"
+            className="rounded-lg bg-[#8B2F4B] px-4 py-2"
           >
             <Text className="text-base font-semibold text-white">Retry</Text>
           </Pressable>
@@ -313,6 +326,7 @@ export default function FriendsScreen({ navigation }: Props) {
         <FlatList
           data={contacts}
           keyExtractor={(item) => item.user_id}
+          contentContainerStyle={contacts.length === 0 && !hasRequests ? { flexGrow: 1 } : undefined}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
           ListHeaderComponent={
             hasRequests ? (
@@ -335,7 +349,7 @@ export default function FriendsScreen({ navigation }: Props) {
                         accessibilityLabel={`Accept ${request.email}`}
                         disabled={requestActionIds.has(request.id)}
                         onPress={() => handleAccept(request)}
-                        className="mr-2 rounded-lg bg-blue-500 px-3 py-1"
+                        className="mr-2 rounded-lg bg-[#8B2F4B] px-3 py-1"
                       >
                         <Text className="text-sm font-semibold text-white">Accept</Text>
                       </Pressable>
@@ -373,6 +387,7 @@ export default function FriendsScreen({ navigation }: Props) {
           }
           ListEmptyComponent={
             <View className="flex-1 items-center justify-center px-6 py-12">
+              <Text className="mb-2 text-4xl">👥</Text>
               <Text className="text-center text-gray-500 dark:text-gray-400">No contacts yet</Text>
             </View>
           }
@@ -389,17 +404,24 @@ export default function FriendsScreen({ navigation }: Props) {
                   }
                 }}
                 onLongPress={() => handleLongPressFriend(item)}
-                className={`border-b border-gray-100 px-4 py-4 dark:border-gray-800 ${keysReady ? '' : 'opacity-50'}`}
+                className={`flex-row items-center border-b border-gray-100 px-4 py-4 dark:border-gray-800 ${keysReady ? '' : 'opacity-50'}`}
               >
-                <Text className="text-base text-black dark:text-white">{item.email}</Text>
-                {keysReady ? null : (
-                  <Text className="text-sm text-gray-400 dark:text-gray-500">
-                    Waiting for {item.email} to finish setup
+                <View className="mr-3 h-10 w-10 items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700">
+                  <Text className="text-base font-semibold text-black dark:text-white">
+                    {initialFor(item.email)}
                   </Text>
-                )}
-                {removeErrors[item.user_id] !== undefined ? (
-                  <Text className="mt-1 text-sm text-red-500">{removeErrors[item.user_id]}</Text>
-                ) : null}
+                </View>
+                <View className="flex-1">
+                  <Text className="text-base text-black dark:text-white">{item.email}</Text>
+                  {keysReady ? null : (
+                    <Text className="text-sm text-gray-400 dark:text-gray-500">
+                      Waiting for {item.email} to finish setup
+                    </Text>
+                  )}
+                  {removeErrors[item.user_id] !== undefined ? (
+                    <Text className="mt-1 text-sm text-red-500">{removeErrors[item.user_id]}</Text>
+                  ) : null}
+                </View>
               </Pressable>
             );
           }}
