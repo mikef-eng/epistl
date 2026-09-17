@@ -485,6 +485,22 @@ describe('ChatScreen', () => {
     });
   });
 
+  it('renders dark: variants on the disconnected/reconnecting banner (issue #142)', async () => {
+    const { socket } = await renderChatScreen();
+
+    await act(async () => {
+      socket.setStatus('reconnecting');
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('disconnected-banner')).toHaveTextContent('Reconnecting...');
+    });
+
+    expect(screen.getByTestId('disconnected-banner').props.className).toContain(
+      'dark:bg-red-950'
+    );
+    expect(screen.getByText('Reconnecting...').props.className).toContain('dark:text-red-300');
+  });
+
   it('clears the banner after a reconnect succeeds, and renders a message delivered on the new connection exactly like a pre-reconnect one', async () => {
     const { socket } = await renderChatScreen();
     const aliceIdentity = await ensureLocalIdentity();

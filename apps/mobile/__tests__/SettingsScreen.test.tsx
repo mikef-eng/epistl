@@ -1,4 +1,5 @@
 import { render, screen, userEvent, waitFor } from '@testing-library/react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import SettingsScreen from '../src/screens/SettingsScreen';
 import { ApiError, deleteAccount } from '../src/api/client';
@@ -41,6 +42,13 @@ jest.mock('../src/settings/preferences', () => ({
 
 jest.mock('nativewind', () => ({
   colorScheme: { set: jest.fn() },
+  // SettingsScreen's header-icon color computation reads this (added
+  // alongside the Ionicons back-arrow, since `Ionicons`' `color` prop can't
+  // take a NativeWind `className`) -- other screens' tests don't mock
+  // `nativewind` at all and get the real `useColorScheme`, but this file
+  // already mocks the whole module for `colorScheme.set`, which would
+  // otherwise silently drop this named export too.
+  useColorScheme: jest.fn(() => ({ colorScheme: 'light' })),
 }));
 
 // Issue #125's log-out flow must never touch crypto identity, ratchet
@@ -83,10 +91,21 @@ function storageMessages() {
   return jest.requireMock('../src/storage/messages') as { [key: string]: jest.Mock };
 }
 
+/** Jest has no native safe-area module; seed metrics so the provider
+ * renders children immediately instead of waiting forever. */
+const SAFE_AREA_METRICS = {
+  frame: { x: 0, y: 0, width: 390, height: 844 },
+  insets: { top: 0, left: 0, right: 0, bottom: 0 },
+};
+
 async function renderSettingsScreen() {
   const navigation = { reset: jest.fn(), navigate: jest.fn() };
   const user = userEvent.setup();
-  await render(<SettingsScreen navigation={navigation as never} route={{} as never} />);
+  await render(
+    <SafeAreaProvider initialMetrics={SAFE_AREA_METRICS}>
+      <SettingsScreen navigation={navigation as never} route={{} as never} />
+    </SafeAreaProvider>
+  );
   return { navigation, user };
 }
 

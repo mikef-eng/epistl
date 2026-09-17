@@ -11,6 +11,7 @@ import {
   Pressable,
   RefreshControl,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -103,6 +104,8 @@ export default function FriendsScreen({ navigation }: Props) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [friendQuery, setFriendQuery] = useState('');
 
   const [removingIds, setRemovingIds] = useState<Set<string>>(new Set());
   const [removeErrors, setRemoveErrors] = useState<Record<string, string>>({});
@@ -285,6 +288,17 @@ export default function FriendsScreen({ navigation }: Props) {
 
   const hasRequests = requests.incoming.length > 0 || requests.outgoing.length > 0;
 
+  // Friends-only search (issue #104): filters the already-fetched `contacts`
+  // in memory by case-insensitive email substring match -- no new endpoint
+  // call. An empty (or whitespace-only) query shows the full list, and
+  // `requests` is never touched here, so the Requests section above is
+  // unaffected regardless of the query.
+  const trimmedFriendQuery = friendQuery.trim().toLowerCase();
+  const filteredContacts =
+    trimmedFriendQuery === ''
+      ? contacts
+      : contacts.filter((contact) => contact.email.toLowerCase().includes(trimmedFriendQuery));
+
   return (
     <View testID="friends-screen" className="flex-1 bg-white dark:bg-black">
       <View
@@ -307,6 +321,18 @@ export default function FriendsScreen({ navigation }: Props) {
         </View>
       </View>
 
+      <TextInput
+        testID="friends-search-input"
+        accessibilityLabel="Search"
+        className="mx-4 mt-3 rounded-lg border border-gray-300 px-4 py-2 text-base text-black dark:border-gray-700 dark:text-white"
+        placeholder="Search"
+        placeholderTextColor="#9CA3AF"
+        autoCapitalize="none"
+        autoCorrect={false}
+        value={friendQuery}
+        onChangeText={setFriendQuery}
+      />
+
       {loading ? (
         <View className="flex-1 items-center justify-center">
           <ActivityIndicator testID="friends-loading" size="large" />
@@ -324,9 +350,11 @@ export default function FriendsScreen({ navigation }: Props) {
         </View>
       ) : (
         <FlatList
-          data={contacts}
+          data={filteredContacts}
           keyExtractor={(item) => item.user_id}
-          contentContainerStyle={contacts.length === 0 && !hasRequests ? { flexGrow: 1 } : undefined}
+          contentContainerStyle={
+            filteredContacts.length === 0 && !hasRequests ? { flexGrow: 1 } : undefined
+          }
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
           ListHeaderComponent={
             hasRequests ? (
@@ -388,7 +416,9 @@ export default function FriendsScreen({ navigation }: Props) {
           ListEmptyComponent={
             <View className="flex-1 items-center justify-center px-6 py-12">
               <Text className="mb-2 text-4xl">👥</Text>
-              <Text className="text-center text-gray-500 dark:text-gray-400">No contacts yet</Text>
+              <Text className="text-center text-gray-500 dark:text-gray-400">
+                {trimmedFriendQuery === '' ? 'No contacts yet' : 'No matching friends'}
+              </Text>
             </View>
           }
           renderItem={({ item }) => {

@@ -1,4 +1,5 @@
 import { render, screen, userEvent, waitFor } from '@testing-library/react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import UserProfileScreen from '../src/screens/UserProfileScreen';
 import {
@@ -55,11 +56,20 @@ const ROUTE = { params: { userId: TARGET_USER_ID, email: TARGET_EMAIL } };
 const EMPTY_CONTACTS = { contacts: [] };
 const EMPTY_REQUESTS = { incoming: [], outgoing: [] };
 
+/** Jest has no native safe-area module; seed metrics so the provider
+ * renders children immediately instead of waiting forever. */
+const SAFE_AREA_METRICS = {
+  frame: { x: 0, y: 0, width: 390, height: 844 },
+  insets: { top: 0, left: 0, right: 0, bottom: 0 },
+};
+
 async function renderUserProfileScreen() {
   const navigation = { navigate: jest.fn(), goBack: jest.fn() };
   const user = userEvent.setup();
   await render(
-    <UserProfileScreen navigation={navigation as never} route={ROUTE as never} />
+    <SafeAreaProvider initialMetrics={SAFE_AREA_METRICS}>
+      <UserProfileScreen navigation={navigation as never} route={ROUTE as never} />
+    </SafeAreaProvider>
   );
   return { navigation, user };
 }

@@ -408,8 +408,8 @@ export default function ChatScreen({ navigation, route }: Props) {
       </View>
 
       {status === 'reconnecting' || status === 'disconnected' ? (
-        <View testID="disconnected-banner" className="bg-red-100 px-4 py-2">
-          <Text className="text-center text-red-700">
+        <View testID="disconnected-banner" className="bg-red-100 px-4 py-2 dark:bg-red-950">
+          <Text className="text-center text-red-700 dark:text-red-300">
             {status === 'reconnecting' ? 'Reconnecting...' : 'Disconnected'}
           </Text>
         </View>
