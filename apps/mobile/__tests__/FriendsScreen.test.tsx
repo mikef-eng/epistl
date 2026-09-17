@@ -312,6 +312,95 @@ describe('FriendsScreen', () => {
     expect(navigation.navigate).not.toHaveBeenCalled();
   });
 
+  describe('Friends search filter (issue #104)', () => {
+    it('filters the Friends section by case-insensitive email substring', async () => {
+      mockedListContacts.mockResolvedValueOnce({
+        contacts: [
+          fullyKeyedContact({ user_id: 'u1', email: 'alice@example.com' }),
+          fullyKeyedContact({ user_id: 'u2', email: 'bob@example.com' }),
+        ],
+      });
+      const { user } = await renderFriendsScreen();
+
+      await waitFor(() => {
+        expect(screen.getByText('alice@example.com')).toBeTruthy();
+        expect(screen.getByText('bob@example.com')).toBeTruthy();
+      });
+
+      await user.type(screen.getByTestId('friends-search-input'), 'ALI');
+
+      await waitFor(() => {
+        expect(screen.getByText('alice@example.com')).toBeTruthy();
+        expect(screen.queryByText('bob@example.com')).toBeNull();
+      });
+    });
+
+    it('shows the full Friends list again once the query is cleared', async () => {
+      mockedListContacts.mockResolvedValueOnce({
+        contacts: [
+          fullyKeyedContact({ user_id: 'u1', email: 'alice@example.com' }),
+          fullyKeyedContact({ user_id: 'u2', email: 'bob@example.com' }),
+        ],
+      });
+      const { user } = await renderFriendsScreen();
+      const input = await screen.findByTestId('friends-search-input');
+
+      await user.type(input, 'ali');
+      await waitFor(() => {
+        expect(screen.queryByText('bob@example.com')).toBeNull();
+      });
+
+      await user.clear(input);
+
+      await waitFor(() => {
+        expect(screen.getByText('alice@example.com')).toBeTruthy();
+        expect(screen.getByText('bob@example.com')).toBeTruthy();
+      });
+    });
+
+    it('shows a distinct "No matching friends" message for a non-matching query', async () => {
+      mockedListContacts.mockResolvedValueOnce({
+        contacts: [fullyKeyedContact({ user_id: 'u1', email: 'alice@example.com' })],
+      });
+      const { user } = await renderFriendsScreen();
+      const input = await screen.findByTestId('friends-search-input');
+
+      await user.type(input, 'zzz');
+
+      await waitFor(() => {
+        expect(screen.getByText('No matching friends')).toBeTruthy();
+        expect(screen.queryByText('alice@example.com')).toBeNull();
+      });
+    });
+
+    it('leaves the Requests section unaffected by a query that matches no friend', async () => {
+      mockedListContacts.mockResolvedValueOnce({
+        contacts: [fullyKeyedContact({ user_id: 'u1', email: 'alice@example.com' })],
+      });
+      mockedListContactRequests.mockResolvedValueOnce({
+        incoming: [requestParty({ id: 'r1', user_id: 'u2', email: 'carol@example.com' })],
+        outgoing: [],
+      });
+      const { user } = await renderFriendsScreen();
+      const input = await screen.findByTestId('friends-search-input');
+
+      await waitFor(() => {
+        expect(screen.getByTestId('requests-section')).toBeTruthy();
+      });
+
+      // Query matches neither the friend nor the pending request's email.
+      await user.type(input, 'zzz');
+
+      await waitFor(() => {
+        expect(screen.getByText('No matching friends')).toBeTruthy();
+      });
+      // The Requests section -- and carol's row within it -- stays exactly
+      // as it was; the query never touches `requests` at all.
+      expect(screen.getByTestId('requests-section')).toBeTruthy();
+      expect(screen.getByText('carol@example.com')).toBeTruthy();
+    });
+  });
+
   describe('remove action', () => {
     /** Simulates the user confirming the "Remove" destructive option of the
      * long-press `Alert.alert` context menu -- see `FriendsScreen`'s

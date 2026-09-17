@@ -141,11 +141,17 @@ Claude Code does not auto-read this file. Root [`CLAUDE.md`](CLAUDE.md) imports 
 Planner → Coder → Tester → Reviewer flow this whole file otherwise
 describes: it's for fast, no-ceremony visual iteration on mobile
 presentation-layer files while a dev server hot-reloads — no tests, no
-issue/label changes, no commits, no CI. Its edits land directly on
-whatever branch is checked out and are not reviewed by anything before
-that point. Treat its output as uncommitted scratch work until it's
-picked up by a normal `ready` issue and goes through the Coder/Tester/
-Reviewer flow like everything else — don't let `/ui` edits merge to `main`
-on their own say-so.
+issue/label changes, no CI. It always works on a dedicated branch (it
+creates one itself if it finds `main` checked out, and reuses whatever
+non-`main` branch is already checked out otherwise) rather than editing
+`main` directly, and it tracks its own progress across invocations inside
+`docs/superpowers/specs/2026-09-15-mobile-frontend-polish.md` (the one
+doc, not GitHub issues and not other specs) — but it still never commits,
+pushes, or opens a PR on its own. Treat its output as
+uncommitted scratch work on that branch until someone turns it into
+commits and a PR (bundled with its progress doc), or until it's picked up
+by a normal `ready` issue and goes through the Coder/Tester/Reviewer flow
+like everything else — don't let `/ui` edits merge to `main` on their own
+say-so.
 
 Postgres MCP is configured project-scoped in `.mcp.json` (`crystaldba/postgres-mcp` over Docker, `--network=host`, connects to the local `docker compose` Postgres by default — override via `DATABASE_URL`). **Deferred:** a NATS channel plugin — no such plugin exists in the official Claude Code marketplace as of this writing; revisit if one becomes available, rather than assuming the original "add in the same PR that stands up that service" guidance still applies to something that may not exist.

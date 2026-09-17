@@ -1,6 +1,9 @@
+import { Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useColorScheme } from 'nativewind';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
   acceptContactRequest,
@@ -76,6 +79,11 @@ function withoutKey<T>(map: Record<string, T>, key: string): Record<string, T> {
  * search", `AddContactScreen` paragraph.
  */
 export default function AddContactScreen({ navigation }: Props) {
+  const insets = useSafeAreaInsets();
+  const { colorScheme } = useColorScheme();
+  // Matches the header's existing `text-black dark:text-white` convention --
+  // `Ionicons`' `color` prop can't take a NativeWind `className`.
+  const headerIconColor = colorScheme === 'dark' ? '#FFFFFF' : '#000000';
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchUser[]>([]);
   const [searching, setSearching] = useState(false);
@@ -198,9 +206,23 @@ export default function AddContactScreen({ navigation }: Props) {
   }
 
   return (
-    <View className="flex-1 bg-white px-6 pt-6 dark:bg-black">
-      <Text className="mb-6 text-lg font-semibold text-black dark:text-white">Add contact</Text>
+    <View className="flex-1 bg-white dark:bg-black">
+      <View
+        style={{ paddingTop: insets.top }}
+        className="flex-row items-center border-b border-gray-200 px-4 py-3 dark:border-gray-700"
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+          onPress={() => navigation.goBack()}
+          className="mr-3"
+        >
+          <Ionicons name="arrow-back" size={24} color={headerIconColor} />
+        </Pressable>
+        <Text className="text-lg font-semibold text-black dark:text-white">Add contact</Text>
+      </View>
 
+      <View className="flex-1 px-6 pt-6">
       <TextInput
         className="mb-3 rounded-lg border border-gray-300 px-4 py-3 text-base text-black dark:border-gray-700 dark:text-white"
         placeholder="Search by email"
@@ -231,7 +253,9 @@ export default function AddContactScreen({ navigation }: Props) {
                 accessibilityRole="button"
                 disabled={accepting}
                 onPress={handleAccept}
-                className={`items-center rounded-lg py-3 ${accepting ? 'bg-blue-200' : 'bg-blue-500'}`}
+                className={`items-center rounded-lg py-3 ${
+                  accepting ? 'bg-[#8B2F4B]/35 dark:bg-[#8B2F4B]/25' : 'bg-[#8B2F4B] dark:bg-[#8B2F4B]'
+                }`}
               >
                 <Text className="text-base font-semibold text-white">Accept</Text>
               </Pressable>
@@ -268,7 +292,9 @@ export default function AddContactScreen({ navigation }: Props) {
                 disabled={addingIds.has(result.user_id)}
                 onPress={() => handleAdd(result)}
                 className={`rounded-full px-3 py-1 ${
-                  addingIds.has(result.user_id) ? 'bg-blue-200' : 'bg-blue-500'
+                  addingIds.has(result.user_id)
+                    ? 'bg-[#8B2F4B]/35 dark:bg-[#8B2F4B]/25'
+                    : 'bg-[#8B2F4B] dark:bg-[#8B2F4B]'
                 }`}
               >
                 <Text className="text-base font-semibold text-white">+</Text>
@@ -280,6 +306,7 @@ export default function AddContactScreen({ navigation }: Props) {
           ) : null}
         </View>
       ))}
+      </View>
     </View>
   );
 }

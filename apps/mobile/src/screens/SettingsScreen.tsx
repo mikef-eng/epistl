@@ -1,7 +1,9 @@
+import { Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { colorScheme } from 'nativewind';
+import { colorScheme, useColorScheme } from 'nativewind';
 import { useEffect, useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ApiError, deleteAccount } from '../api/client';
 import { clearSession, getEmail } from '../api/session';
@@ -26,6 +28,11 @@ const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
 ];
 
 export default function SettingsScreen({ navigation }: Props) {
+  const insets = useSafeAreaInsets();
+  const { colorScheme: activeColorScheme } = useColorScheme();
+  // Matches the header's existing `text-black dark:text-white` convention --
+  // `Ionicons`' `color` prop can't take a NativeWind `className`.
+  const headerIconColor = activeColorScheme === 'dark' ? '#FFFFFF' : '#000000';
   const [theme, setTheme] = useState<ThemePreference>('system');
   const [email, setEmail] = useState<string | null>(null);
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
@@ -120,7 +127,18 @@ export default function SettingsScreen({ navigation }: Props) {
 
   return (
     <View className="flex-1 bg-white dark:bg-black">
-      <View className="border-b border-gray-200 px-4 py-3 dark:border-gray-700">
+      <View
+        style={{ paddingTop: insets.top }}
+        className="flex-row items-center border-b border-gray-200 px-4 py-3 dark:border-gray-700"
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+          onPress={() => navigation.goBack()}
+          className="mr-3"
+        >
+          <Ionicons name="arrow-back" size={24} color={headerIconColor} />
+        </Pressable>
         <Text className="text-lg font-semibold text-black dark:text-white">Settings</Text>
       </View>
 
@@ -138,7 +156,7 @@ export default function SettingsScreen({ navigation }: Props) {
                 accessibilityState={{ selected }}
                 onPress={() => handleSelectTheme(option.value)}
                 className={`mr-2 rounded-lg px-4 py-2 ${
-                  selected ? 'bg-blue-500' : 'bg-gray-100 dark:bg-gray-800'
+                  selected ? 'bg-[#8B2F4B]' : 'bg-gray-100 dark:bg-gray-800'
                 }`}
               >
                 <Text
@@ -170,7 +188,7 @@ export default function SettingsScreen({ navigation }: Props) {
             accessibilityState={{ checked: notificationsEnabled }}
             onPress={handleToggleNotifications}
             className={`rounded-full px-3 py-1 ${
-              notificationsEnabled ? 'bg-blue-500' : 'bg-gray-200 dark:bg-gray-700'
+              notificationsEnabled ? 'bg-[#8B2F4B]' : 'bg-gray-200 dark:bg-gray-700'
             }`}
           >
             <Text
