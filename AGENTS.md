@@ -101,6 +101,7 @@ Coder updates the docs in the same PR; Reviewer blocks merge if they're stale re
 - [`docs/decisions/0010-no-device-testing-gate.md`](docs/decisions/0010-no-device-testing-gate.md)
 - [`docs/decisions/0011-quic-dev-cert-trust-remains-dev-only.md`](docs/decisions/0011-quic-dev-cert-trust-remains-dev-only.md)
 - [`docs/decisions/0012-mobile-local-storage-uses-drizzle-going-forward.md`](docs/decisions/0012-mobile-local-storage-uses-drizzle-going-forward.md)
+- [`docs/decisions/0013-quic-relay-client-android-native-build-bootstrap.md`](docs/decisions/0013-quic-relay-client-android-native-build-bootstrap.md)
 
 Add a new numbered file here for any future decision with real cost-of-change (data model, protocol, storage boundaries) — not for routine implementation choices.
 
