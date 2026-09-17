@@ -2,11 +2,19 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { render, screen, userEvent, waitFor, within } from '@testing-library/react-native';
 import { Text } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { listContactRequests, listContacts } from '../src/api/client';
 import MainTabs from '../src/navigation/MainTabs';
 import { getConversationSummaries } from '../src/storage/messages';
 import type { RootStackParamList } from '../src/navigation/types';
+
+/** Jest has no native safe-area module; seed metrics so the provider
+ * renders children immediately instead of waiting forever. */
+const SAFE_AREA_METRICS = {
+  frame: { x: 0, y: 0, width: 390, height: 844 },
+  insets: { top: 0, left: 0, right: 0, bottom: 0 },
+};
 
 // Integration test for issue #94's tab-navigator restructure: a real
 // `NavigationContainer`/`Stack.Navigator` hosting the real `MainTabs`, with
@@ -63,14 +71,16 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 async function renderMainStack() {
   const user = userEvent.setup();
   await render(
-    <NavigationContainer>
-      <Stack.Navigator initialRouteName="Main">
-        <Stack.Screen name="Main" component={MainTabs} options={{ headerShown: false }} />
-        <Stack.Screen name="AddContact" component={AddContactStub} />
-        <Stack.Screen name="Chat" component={ChatStub} />
-        <Stack.Screen name="Settings" component={SettingsStub} />
-      </Stack.Navigator>
-    </NavigationContainer>
+    <SafeAreaProvider initialMetrics={SAFE_AREA_METRICS}>
+      <NavigationContainer>
+        <Stack.Navigator initialRouteName="Main">
+          <Stack.Screen name="Main" component={MainTabs} options={{ headerShown: false }} />
+          <Stack.Screen name="AddContact" component={AddContactStub} />
+          <Stack.Screen name="Chat" component={ChatStub} />
+          <Stack.Screen name="Settings" component={SettingsStub} />
+        </Stack.Navigator>
+      </NavigationContainer>
+    </SafeAreaProvider>
   );
   return { user };
 }

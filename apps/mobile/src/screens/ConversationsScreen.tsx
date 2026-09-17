@@ -11,6 +11,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ApiError, listContacts, type Contact } from '../api/client';
 import type { MainTabParamList, RootStackParamList } from '../navigation/types';
@@ -117,6 +118,7 @@ function formatRelativeTime(iso: string, now: Date = new Date()): string {
 }
 
 export default function ConversationsScreen({ navigation }: Props) {
+  const insets = useSafeAreaInsets();
   const [rows, setRows] = useState<ConversationRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -263,7 +265,10 @@ export default function ConversationsScreen({ navigation }: Props) {
 
   return (
     <View testID="conversations-screen" className="flex-1 bg-white dark:bg-black">
-      <View className="flex-row items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-700">
+      <View
+        style={{ paddingTop: insets.top }}
+        className="flex-row items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-700"
+      >
         <Text className="text-lg font-semibold text-black dark:text-white">Conversations</Text>
         <Pressable
           accessibilityRole="button"

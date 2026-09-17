@@ -123,8 +123,8 @@ Claude Code does not auto-read this file. Root [`CLAUDE.md`](CLAUDE.md) imports 
 
 | Path | Purpose |
 | --- | --- |
-| `.claude/agents/` | Subagents: `planner`, `coder`, `tester`, `reviewer`, `crypto-reviewer` |
-| `.claude/commands/` | Slash commands: `/plan-issue`, `/work-issue`, `/test-pr`, `/review-pr`, `/ship` |
+| `.claude/agents/` | Subagents: `planner`, `coder`, `tester`, `reviewer`, `crypto-reviewer`, `ui` |
+| `.claude/commands/` | Slash commands: `/plan-issue`, `/work-issue`, `/test-pr`, `/review-pr`, `/ship`, `/ui` |
 | `.claude/skills/` | Skills: `open-task-issue`, `pqc-crypto-change` |
 | `.claude/rules/` | Path-scoped rules (e.g. crypto/auth) |
 | `.claude/settings.json` | Enables `superpowers@claude-plugins-official`; sets the permissions policy (see below) |
@@ -134,5 +134,18 @@ Claude Code does not auto-read this file. Root [`CLAUDE.md`](CLAUDE.md) imports 
 `.claude/settings.json` allows read-only `git`/`gh` and the mutating actions that drive the Coder/Tester/Reviewer flow (`gh pr merge`, `gh pr create`, `gh issue create`/`close`/`edit`, `git push`, `git commit`) without prompting, and denies destructive ones outright (`git push --force`, `gh repo delete`, `gh pr merge --admin`). These roles run as unattended background subagents that cannot answer an interactive confirmation prompt, so an `ask` rule on a routine SDLC action just gets silently bypassed anyway (and flagged after the fact) rather than actually getting reviewed — the real gate for these actions is branch protection (PR + green CI required on `main`) plus the Tester/Reviewer playbooks above, not a confirmation prompt. Only the genuinely irreversible operations are denied outright. Update permissions in `.claude/settings.json`, not by improvising broader access mid-session; note that Claude Code itself refuses to let an agent edit its own `.claude/settings*.json` (a "Self-Modification" guardrail), so this file can only be changed by a human directly.
 
 `apps/mobile/.claude/settings.json` enables `expo@claude-plugins-official` for Expo-specific skills.
+
+### `/ui`: an intentional exception to the SDLC above
+
+`/ui` (`.claude/agents/ui.md`) is a deliberate carve-out from the
+Planner → Coder → Tester → Reviewer flow this whole file otherwise
+describes: it's for fast, no-ceremony visual iteration on mobile
+presentation-layer files while a dev server hot-reloads — no tests, no
+issue/label changes, no commits, no CI. Its edits land directly on
+whatever branch is checked out and are not reviewed by anything before
+that point. Treat its output as uncommitted scratch work until it's
+picked up by a normal `ready` issue and goes through the Coder/Tester/
+Reviewer flow like everything else — don't let `/ui` edits merge to `main`
+on their own say-so.
 
 Postgres MCP is configured project-scoped in `.mcp.json` (`crystaldba/postgres-mcp` over Docker, `--network=host`, connects to the local `docker compose` Postgres by default — override via `DATABASE_URL`). **Deferred:** a NATS channel plugin — no such plugin exists in the official Claude Code marketplace as of this writing; revisit if one becomes available, rather than assuming the original "add in the same PR that stands up that service" guidance still applies to something that may not exist.
