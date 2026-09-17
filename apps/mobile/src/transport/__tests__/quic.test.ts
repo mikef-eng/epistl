@@ -8,21 +8,35 @@ import { connectQuic, connectQuicTo, quicTarget } from '../quic';
  * `jest.mock` calls above all imports) allows referencing it here. */
 const mockConnect = jest.fn();
 
-jest.mock('quic-relay-client', () => ({
-  QuicConnection: {
-    connect: (...args: unknown[]) => mockConnect(...args),
-  },
-  QuicClientError: {
-    instanceOf: (obj: unknown): boolean =>
-      typeof obj === 'object' && obj !== null && '__isQuicClientError' in obj,
-    AuthFailed: {
-      instanceOf: (obj: unknown): boolean =>
-        typeof obj === 'object' &&
-        obj !== null &&
-        (obj as { tag?: string }).tag === 'AuthFailed',
+/** `virtual: true` tells Jest not to resolve `quic-relay-client` on disk
+ * before applying this mock. Without it, this is the only test file that
+ * ever resolves the literal specifier `'quic-relay-client'` (a `file:`
+ * dependency backed by a real symlink into `modules/quic-relay-client`),
+ * and doing that resolution live from several parallel Jest workers at
+ * once occasionally throws inside `jest-resolve`'s filesystem walk. Jest
+ * silently swallows that exception and reports a generic
+ * `Cannot find module 'quic-relay-client'` instead -- flaky only under
+ * the full suite's default parallel workers, never in isolation or with
+ * `--runInBand`. See issue #133 for the full investigation. */
+jest.mock(
+  'quic-relay-client',
+  () => ({
+    QuicConnection: {
+      connect: (...args: unknown[]) => mockConnect(...args),
     },
-  },
-}));
+    QuicClientError: {
+      instanceOf: (obj: unknown): boolean =>
+        typeof obj === 'object' && obj !== null && '__isQuicClientError' in obj,
+      AuthFailed: {
+        instanceOf: (obj: unknown): boolean =>
+          typeof obj === 'object' &&
+          obj !== null &&
+          (obj as { tag?: string }).tag === 'AuthFailed',
+      },
+    },
+  }),
+  { virtual: true }
+);
 
 interface CapturedListener {
   onFrame: (frame: string) => void;
