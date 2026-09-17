@@ -59,13 +59,8 @@ exception to the rest of AGENTS.md, not a precedent to extend elsewhere.
 Two Android emulators are normally running for this project, already
 built and logged in:
 
-- **Pixel_10_Pro_A** — account `a@a.com`. (Session note: the password
-  that actually authenticated this account was 7 characters, `aaaaaaa`;
-  a later instruction said 8 characters, `aaaaaaaa` — the two disagree.
-  If you ever need to log in fresh, don't assume either is still current;
-  confirm with whoever gave you the task first.)
-- **Pixel_10_Pro_B** — account `b@b.com`, password `bbbbbbbb` (this one's
-  confirmed correct).
+- **Pixel_10_Pro_A** — account `a@a.com`, password `aaaaaaaa`.
+- **Pixel_10_Pro_B** — account `b@b.com`, password `bbbbbbbb`.
 
 Don't hardcode ADB serials — they (`emulator-5554` etc.) can change across
 restarts. Run `adb devices -l` first and match by AVD/product name if more
