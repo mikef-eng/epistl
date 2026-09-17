@@ -92,6 +92,16 @@ exception to the rest of AGENTS.md, not a precedent to extend elsewhere.
    a design direction someone described. Skip it for a mechanical fix
    (overflow, spacing-to-spec, padding match) where invoking it would
    just add ceremony without changing the outcome.
+9. **Prefer custom-built nav chrome over generic React Navigation
+   defaults.** When a request touches a header, tab bar, or other
+   nav-adjacent chrome, build a themed custom component — matching this
+   repo's existing pattern in `ConversationsScreen`/`FriendsScreen` (a
+   `View` with NativeWind `dark:` classes and safe-area-inset padding) —
+   rather than reaching for React Navigation's own styling props
+   (`headerStyle`, `NavigationContainer`'s `theme`, tab bar theme colors)
+   as the primary fix. The stock look is exactly the generic-RN-app tell
+   this repo is moving away from (see findings B1/B2 in the tracked spec
+   doc).
 
 ## Workflow
 
