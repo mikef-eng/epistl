@@ -463,4 +463,51 @@ describe('clearAllSessions', () => {
 
     expect(mockSecureStore.__store.size).toBe(0);
   });
+
+  it('rejects and reconciles the index when one contact delete fails, leaving the other cleared', async () => {
+    const bobKeys = generateStaticKeys();
+    const { state: aliceState } = initiateSession({
+      contactUserId: 'alice',
+      selfUserId: 'self-user-id',
+      contactBundle: {
+        x25519PublicKey: bobKeys.x25519.publicKey,
+        kyberPublicKey: bobKeys.kyber.publicKey,
+      },
+    });
+    const carolKeys = generateStaticKeys();
+    const { state: carolState } = initiateSession({
+      contactUserId: 'carol',
+      selfUserId: 'self-user-id',
+      contactBundle: {
+        x25519PublicKey: carolKeys.x25519.publicKey,
+        kyberPublicKey: carolKeys.kyber.publicKey,
+      },
+    });
+    await saveSession('alice', aliceState);
+    await saveSession('carol', carolState);
+
+    const carolSessionKey = 'epistl.ratchet_session.carol';
+    const realDeleteItemAsync = mockSecureStore.deleteItemAsync.getMockImplementation()!;
+    mockSecureStore.deleteItemAsync.mockImplementation(async (key: string) => {
+      if (key === carolSessionKey) {
+        throw new Error('simulated SecureStore failure');
+      }
+      return realDeleteItemAsync(key);
+    });
+
+    await expect(clearAllSessions()).rejects.toThrow(/carol/);
+
+    expect(await loadSession('alice')).toBeNull();
+    expect(await loadSession('carol')).toEqual(carolState);
+
+    const rawIndex = mockSecureStore.__store.get('epistl.ratchet_session_index');
+    expect(rawIndex).toBeDefined();
+    expect(JSON.parse(rawIndex as string)).toEqual(['carol']);
+
+    mockSecureStore.deleteItemAsync.mockImplementation(realDeleteItemAsync);
+
+    await clearAllSessions();
+
+    expect(mockSecureStore.__store.size).toBe(0);
+  });
 });
