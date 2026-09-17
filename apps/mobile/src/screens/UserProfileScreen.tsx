@@ -1,6 +1,9 @@
+import { Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useColorScheme } from 'nativewind';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
   acceptContactRequest,
@@ -92,8 +95,13 @@ function deriveRelationship(
  * See `docs/superpowers/specs/2026-09-13-search-design.md`, "Discover
  * search", `UserProfileScreen` paragraph.
  */
-export default function UserProfileScreen({ route }: Props) {
+export default function UserProfileScreen({ navigation, route }: Props) {
   const { userId, email } = route.params;
+  const insets = useSafeAreaInsets();
+  const { colorScheme } = useColorScheme();
+  // Matches the header's existing `text-black dark:text-white` convention --
+  // `Ionicons`' `color` prop can't take a NativeWind `className`.
+  const headerIconColor = colorScheme === 'dark' ? '#FFFFFF' : '#000000';
 
   const [relationship, setRelationship] = useState<Relationship | null>(null);
   const [loading, setLoading] = useState(true);
@@ -231,9 +239,23 @@ export default function UserProfileScreen({ route }: Props) {
   }
 
   return (
-    <View className="flex-1 bg-white px-6 pt-6 dark:bg-black">
-      <Text className="mb-6 text-lg font-semibold text-black dark:text-white">{email}</Text>
+    <View className="flex-1 bg-white dark:bg-black">
+      <View
+        style={{ paddingTop: insets.top }}
+        className="flex-row items-center border-b border-gray-200 px-4 py-3 dark:border-gray-700"
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+          onPress={() => navigation.goBack()}
+          className="mr-3"
+        >
+          <Ionicons name="arrow-back" size={24} color={headerIconColor} />
+        </Pressable>
+        <Text className="text-lg font-semibold text-black dark:text-white">{email}</Text>
+      </View>
 
+      <View className="flex-1 px-6 pt-6">
       {loading ? (
         <ActivityIndicator testID="profile-loading" />
       ) : loadError !== null ? (
@@ -242,7 +264,7 @@ export default function UserProfileScreen({ route }: Props) {
           <Pressable
             accessibilityRole="button"
             onPress={handleRetryLoad}
-            className="items-center rounded-lg bg-blue-500 py-3"
+            className="items-center rounded-lg bg-[#8B2F4B] py-3"
           >
             <Text className="text-base font-semibold text-white">Retry</Text>
           </Pressable>
@@ -254,7 +276,9 @@ export default function UserProfileScreen({ route }: Props) {
               accessibilityRole="button"
               disabled={actionPending}
               onPress={handleAdd}
-              className={`items-center rounded-lg py-3 ${actionPending ? 'bg-blue-200' : 'bg-blue-500'}`}
+              className={`items-center rounded-lg py-3 ${
+                actionPending ? 'bg-[#8B2F4B]/35 dark:bg-[#8B2F4B]/25' : 'bg-[#8B2F4B] dark:bg-[#8B2F4B]'
+              }`}
             >
               <Text className="text-base font-semibold text-white">Add friend</Text>
             </Pressable>
@@ -278,7 +302,9 @@ export default function UserProfileScreen({ route }: Props) {
                 accessibilityRole="button"
                 disabled={actionPending}
                 onPress={() => handleAccept(relationship.requestId)}
-                className={`mb-3 items-center rounded-lg py-3 ${actionPending ? 'bg-blue-200' : 'bg-blue-500'}`}
+                className={`mb-3 items-center rounded-lg py-3 ${
+                  actionPending ? 'bg-[#8B2F4B]/35 dark:bg-[#8B2F4B]/25' : 'bg-[#8B2F4B] dark:bg-[#8B2F4B]'
+                }`}
               >
                 <Text className="text-base font-semibold text-white">Accept</Text>
               </Pressable>
@@ -301,6 +327,7 @@ export default function UserProfileScreen({ route }: Props) {
           ) : null}
         </View>
       ) : null}
+      </View>
     </View>
   );
 }

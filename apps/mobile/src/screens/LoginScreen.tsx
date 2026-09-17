@@ -62,57 +62,68 @@ export default function LoginScreen({ navigation }: Props) {
   }
 
   return (
-    <View className="flex-1 justify-center bg-white px-6 dark:bg-black">
-      <Text className="mb-6 text-center text-2xl font-bold text-blue-500">Epistl</Text>
-
-      <TextInput
-        className="mb-3 rounded-lg border border-gray-300 px-4 py-3 text-base text-black dark:border-gray-700 dark:text-white"
-        placeholder="Email"
-        placeholderTextColor="#9CA3AF"
-        autoCapitalize="none"
-        autoCorrect={false}
-        keyboardType="email-address"
-        value={email}
-        onChangeText={setEmail}
-      />
-      <TextInput
-        className="mb-4 rounded-lg border border-gray-300 px-4 py-3 text-base text-black dark:border-gray-700 dark:text-white"
-        placeholder="Password"
-        placeholderTextColor="#9CA3AF"
-        secureTextEntry
-        value={password}
-        onChangeText={setPassword}
-      />
-
-      {error !== null ? <Text className="mb-4 text-center text-red-500">{error}</Text> : null}
-
-      <Pressable
-        accessibilityRole="button"
-        disabled={isSubmitDisabled}
-        onPress={handleSubmit}
-        className={`mb-4 items-center rounded-lg py-3 ${
-          isSubmitDisabled ? 'bg-blue-200' : 'bg-blue-500'
-        }`}
-      >
-        <Text className="text-base font-semibold text-white">
-          {mode === 'login' ? 'Log in' : 'Sign up'}
+    <View className="flex-1 bg-white px-6 dark:bg-black">
+      {/* Spacers push the form to roughly the vertical center-ish third
+       * (~40% from the top) instead of dead-centering or bottom-pinning it. */}
+      <View style={{ flex: 0.8 }} />
+      <View>
+        <Text className="text-center text-4xl font-extrabold tracking-wide text-[#8B2F4B] dark:text-[#8B2F4B]">
+          Epistl
         </Text>
-      </Pressable>
-
-      <Pressable onPress={toggleMode}>
-        <Text className="text-center text-blue-500">
-          {mode === 'login' ? "Don't have an account? Sign up" : 'Already have an account? Log in'}
+        <Text className="mb-6 mt-1 text-center text-sm text-gray-500 dark:text-gray-400">
+          Private, post-quantum-secure messaging
         </Text>
-      </Pressable>
 
-      {__DEV__ ? (
-        // Dev-only (issue #67 spike): the only entry point to
-        // `QuicSpikeScreen`. Never shown in a production build, and
-        // deliberately kept off the real login flow above.
-        <Pressable className="mt-8" onPress={() => navigation.navigate('QuicSpike')}>
-          <Text className="text-center text-xs text-gray-400">[dev] QUIC spike</Text>
+        <TextInput
+          className="mb-3 rounded-lg border border-gray-300 px-4 py-3 text-base text-black dark:border-gray-700 dark:text-white"
+          placeholder="Email"
+          placeholderTextColor="#9CA3AF"
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="email-address"
+          value={email}
+          onChangeText={setEmail}
+        />
+        <TextInput
+          className="mb-4 rounded-lg border border-gray-300 px-4 py-3 text-base text-black dark:border-gray-700 dark:text-white"
+          placeholder="Password"
+          placeholderTextColor="#9CA3AF"
+          secureTextEntry
+          value={password}
+          onChangeText={setPassword}
+        />
+
+        {error !== null ? <Text className="mb-4 text-center text-red-500">{error}</Text> : null}
+
+        <Pressable
+          accessibilityRole="button"
+          disabled={isSubmitDisabled}
+          onPress={handleSubmit}
+          className={`mb-4 items-center rounded-lg py-3 ${
+            isSubmitDisabled ? 'bg-[#8B2F4B]/35 dark:bg-[#8B2F4B]/25' : 'bg-[#8B2F4B] dark:bg-[#8B2F4B]'
+          }`}
+        >
+          <Text className="text-base font-semibold text-white">
+            {mode === 'login' ? 'Log in' : 'Sign up'}
+          </Text>
         </Pressable>
-      ) : null}
+
+        <Pressable onPress={toggleMode}>
+          <Text className="text-center text-[#8B2F4B]">
+            {mode === 'login' ? "Don't have an account? Sign up" : 'Already have an account? Log in'}
+          </Text>
+        </Pressable>
+
+        {__DEV__ ? (
+          // Dev-only (issue #67 spike): the only entry point to
+          // `QuicSpikeScreen`. Never shown in a production build, and
+          // deliberately kept off the real login flow above.
+          <Pressable className="mt-8" onPress={() => navigation.navigate('QuicSpike')}>
+            <Text className="text-center text-xs text-gray-400">[dev] QUIC spike</Text>
+          </Pressable>
+        ) : null}
+      </View>
+      <View style={{ flex: 1.2 }} />
     </View>
   );
 }

@@ -1,6 +1,8 @@
+import { Ionicons } from '@expo/vector-icons';
 import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import type { CompositeScreenProps } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useColorScheme } from 'nativewind';
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -93,6 +95,14 @@ function truncatePreview(body: string): string {
   return `${singleLine.slice(0, PREVIEW_MAX_LENGTH - 1).trimEnd()}…`;
 }
 
+/** First letter of the contact's email, uppercased, for the row avatar
+ * circle -- no photo upload/server-side avatar storage, just a derived
+ * initial (see Part C's "Avatars beyond a colored initial circle" out-of-
+ * scope note). */
+function initialFor(email: string): string {
+  return email.trim().charAt(0).toUpperCase() || '?';
+}
+
 /** Coarse relative-time label for a row's last-message timestamp (no
  * date-formatting dependency in this app yet -- see AGENTS.md's "extra
  * work becomes a new issue" guidance rather than adding one here). Falls
@@ -119,6 +129,10 @@ function formatRelativeTime(iso: string, now: Date = new Date()): string {
 
 export default function ConversationsScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
+  const { colorScheme } = useColorScheme();
+  // Matches the header's existing `text-black dark:text-white` convention --
+  // `Ionicons`' `color` prop can't take a NativeWind `className`.
+  const headerIconColor = colorScheme === 'dark' ? '#FFFFFF' : '#000000';
   const [rows, setRows] = useState<ConversationRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -275,7 +289,7 @@ export default function ConversationsScreen({ navigation }: Props) {
           accessibilityLabel="Settings"
           onPress={handleOpenSettings}
         >
-          <Text className="text-lg text-black dark:text-white">⚙</Text>
+          <Ionicons name="settings-outline" size={24} color={headerIconColor} />
         </Pressable>
       </View>
 
@@ -301,7 +315,7 @@ export default function ConversationsScreen({ navigation }: Props) {
           <Pressable
             accessibilityRole="button"
             onPress={handleRetry}
-            className="rounded-lg bg-blue-500 px-4 py-2"
+            className="rounded-lg bg-[#8B2F4B] px-4 py-2"
           >
             <Text className="text-base font-semibold text-white">Retry</Text>
           </Pressable>
@@ -310,9 +324,11 @@ export default function ConversationsScreen({ navigation }: Props) {
         <FlatList
           data={displayedRows}
           keyExtractor={(item) => item.contactUserId}
+          contentContainerStyle={displayedRows.length === 0 ? { flexGrow: 1 } : undefined}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
           ListEmptyComponent={
             <View className="flex-1 items-center justify-center px-6 py-12">
+              <Text className="mb-2 text-4xl">✉️</Text>
               <Text className="text-center text-gray-500 dark:text-gray-400">
                 No conversations yet
               </Text>
@@ -324,12 +340,17 @@ export default function ConversationsScreen({ navigation }: Props) {
               onPress={() => handleOpenChat(item)}
               className="flex-row items-center border-b border-gray-100 px-4 py-4 dark:border-gray-800"
             >
+              <View className="mr-3 h-10 w-10 items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700">
+                <Text className="text-base font-semibold text-black dark:text-white">
+                  {initialFor(item.email)}
+                </Text>
+              </View>
               <View className="flex-1 pr-3">
                 <View className="flex-row items-center">
                   {item.hasUnread ? (
                     <View
                       testID={`conversation-unread-dot-${item.contactUserId}`}
-                      className="mr-2 h-2 w-2 rounded-full bg-blue-500"
+                      className="mr-2 h-2 w-2 rounded-full bg-[#8B2F4B]"
                     />
                   ) : null}
                   <Text
