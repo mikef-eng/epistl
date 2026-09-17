@@ -32,6 +32,25 @@ if (isNewArchitectureEnabled()) {
   apply plugin: "com.facebook.react"
 }
 
+// Issue #156: cross-compiles packages/quic-relay-client (the Rust crate) per
+// Android ABI via cargo-ndk, producing the
+// android/src/main/jniLibs/<abi>/libquic_relay_client.a that CMakeLists.txt
+// expects. Reproducible on any dev machine: auto-installs the Rust target
+// and cargo-ndk if missing, and fails fast with an actionable error if the
+// Android NDK itself isn't resolvable (the one prerequisite it won't
+// auto-install). Deliberately wired here (a Gradle task) rather than into
+// this module's `prepare` npm lifecycle script -- `prepare` runs on every
+// plain `npm install`/`npm ci`, including CI's `mobile` job, which never
+// runs Gradle and has no NDK/cargo-ndk installed.
+tasks.register("ensureQuicRelayClientNativeBuilt", Exec) {
+  workingDir "${projectDir}/.."
+  commandLine "node", "scripts/ensure-native-built.js"
+}
+
+tasks.matching { it.name == "preBuild" || it.name.startsWith("externalNativeBuild") }.configureEach {
+  dependsOn("ensureQuicRelayClientNativeBuilt")
+}
+
 def getExtOrDefault(name) {
   return rootProject.ext.has(name) ? rootProject.ext.get(name) : project.properties["QuicRelayClient_" + name]
 }
@@ -79,7 +98,7 @@ android {
       }
     }
     ndk {
-      abiFilters "x86_64"
+      abiFilters "arm64-v8a", "armeabi-v7a", "x86", "x86_64"
     }
   }
 

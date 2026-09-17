@@ -82,8 +82,8 @@ lib/
 ios/generated
 android/generated
 
-# Locally cross-compiled native library (built via `ubrn build android
-# --and-generate` + cargo-ndk, per this module's README) -- per-ABI,
+# Locally cross-compiled native library (built automatically by the
+# Android Gradle build via cargo-ndk, per this module's README) -- per-ABI,
 # per-machine build output, never committed.
 android/src/main/jniLibs/
 

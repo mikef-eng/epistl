@@ -85,6 +85,24 @@ Postgres MCP is configured in [`.mcp.json`](.mcp.json) (project-scoped, via [`cr
 
    The client reads its API base URL from `EXPO_PUBLIC_API_URL`, defaulting to `http://localhost:3000` — fine for the iOS simulator or web on the same machine, but an Android emulator or physical device needs your machine's LAN IP instead. Expo's CLI auto-loads `apps/mobile/.env` (see `apps/mobile/.env.example`) the same way `docker compose` and the API auto-load the root `.env` — copy it and set `EXPO_PUBLIC_API_URL` there rather than exporting it inline each time. The QUIC driver (`src/transport/quic.ts`, tried first on every connect by `src/transport/store.ts`, before falling back to WS — see the Transport row above) reuses that same host and only needs a separate `EXPO_PUBLIC_QUIC_PORT` if the API's `QUIC_LISTEN_ADDR` is bound to a non-default port (defaults to `4433`, matching `QUIC_LISTEN_ADDR`'s own default).
 
+   **Android, from a clean clone to a working emulator:** `apps/mobile` depends on a custom native module (`quic-relay-client`), so plain Expo Go can't run it — Android needs a real native build, not `moon run mobile:start` alone. `apps/mobile/android` is gitignored (generated on demand via Expo prebuild, not committed), so the steps below take you from nothing to a running emulator:
+
+   - **Prerequisites** (one-time, manual — these are not auto-installed by anything in this repo):
+     - [Android Studio](https://developer.android.com/studio), which bundles the Android SDK. Set `ANDROID_HOME` (or `ANDROID_SDK_ROOT`) to its SDK location, e.g. `~/Library/Android/sdk` (macOS) or `~/Android/Sdk` (Linux).
+     - At least one AVD (Android Virtual Device) — create one from Android Studio's Device Manager (or `avdmanager`), then start it (or let the next step start it for you).
+     - The Android NDK, installed via Android Studio's SDK Manager or `sdkmanager --install "ndk;<version>"`. This is the one native-build prerequisite that isn't auto-installed for you (see below) — without it, the Android build fails fast with an error naming the exact `sdkmanager` command to run.
+     - [`rustup`](https://rustup.rs) and a working Rust toolchain for `packages/quic-relay-client`. You do **not** need to install the Android Rust targets or `cargo-ndk` yourself — the Android Gradle build's `ensureQuicRelayClientNativeBuilt` task (`apps/mobile/modules/quic-relay-client/android/build.gradle`) auto-installs whichever `rustup target` (e.g. `aarch64-linux-android`) and `cargo-ndk` it needs the first time you build, cross-compiling `packages/quic-relay-client` per ABI. See that module's `README.md` and `docs/decisions/0013-quic-relay-client-android-native-build-bootstrap.md` for the full flow.
+   - **Commands**, from repo root:
+
+     ```bash
+     cd apps/mobile && npm install
+     npx expo run:android   # prebuilds android/ if missing, builds the native app, and launches it on a running/booted emulator (or connected device)
+     ```
+
+     The first build is slow (Gradle, plus the one-time Rust target/cargo-ndk install and native library cross-compile); subsequent builds are fast, since both Gradle and `ensure-native-built.js` skip work that's already up to date. Once installed, day-to-day iteration can go back to `moon run mobile:start` (Metro only) with the app already on the emulator, re-running `npx expo run:android` only after a native (not JS) change.
+
+   iOS setup is not covered here — see issue #161 for iOS build reproducibility and setup instructions.
+
 `api:dev` and `mobile:start` are long-running dev servers (moon's `persistent` task option) — each occupies its terminal until you stop it, same as running `cargo run`/`npm start` directly. `moon run` is otherwise a thin wrapper: `moon.yml` in each app just declares the same commands moon runs, so you can always fall back to invoking `cargo`/`npm` directly from that app's directory if you'd rather not use moon.
 
 ## Local commands
