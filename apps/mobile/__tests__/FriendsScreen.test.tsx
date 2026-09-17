@@ -1,6 +1,7 @@
 import { Alert } from 'react-native';
 
-import { render, screen, userEvent, waitFor } from '@testing-library/react-native';
+import { act, render, screen, userEvent, waitFor } from '@testing-library/react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import FriendsScreen from '../src/screens/FriendsScreen';
 import {
@@ -10,6 +11,13 @@ import {
   listContacts,
   removeContact,
 } from '../src/api/client';
+
+/** Jest has no native safe-area module; seed metrics so the provider
+ * renders children immediately instead of waiting forever. */
+const SAFE_AREA_METRICS = {
+  frame: { x: 0, y: 0, width: 390, height: 844 },
+  insets: { top: 0, left: 0, right: 0, bottom: 0 },
+};
 
 jest.mock('../src/api/client', () => {
   class ApiError extends Error {
@@ -63,10 +71,20 @@ function makeDeferred<T>() {
   return { promise, resolve, reject };
 }
 
-async function renderFriendsScreen() {
-  const navigation = { navigate: jest.fn() };
+function makeNavigation() {
+  return {
+    navigate: jest.fn(),
+    addListener: jest.fn((_event: string, _handler: () => void) => jest.fn()),
+  };
+}
+
+async function renderFriendsScreen(navigation = makeNavigation()) {
   const user = userEvent.setup();
-  await render(<FriendsScreen navigation={navigation as never} route={{} as never} />);
+  await render(
+    <SafeAreaProvider initialMetrics={SAFE_AREA_METRICS}>
+      <FriendsScreen navigation={navigation as never} route={{} as never} />
+    </SafeAreaProvider>
+  );
   return { navigation, user };
 }
 
@@ -161,6 +179,36 @@ describe('FriendsScreen', () => {
       contacts: [fullyKeyedContact({ user_id: 'u1', email: 'alice@example.com' })],
     });
     await user.press(screen.getByRole('button', { name: 'Retry' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('alice@example.com')).toBeTruthy();
+    });
+    expect(mockedListContacts).toHaveBeenCalledTimes(2);
+  });
+
+  it('refetches when the screen regains focus', async () => {
+    mockedListContacts.mockResolvedValueOnce({ contacts: [] });
+    mockedListContactRequests.mockResolvedValueOnce(EMPTY_REQUESTS);
+    const navigation = makeNavigation();
+    await renderFriendsScreen(navigation);
+
+    await waitFor(() => {
+      expect(screen.getByText('No contacts yet')).toBeTruthy();
+    });
+    expect(mockedListContacts).toHaveBeenCalledTimes(1);
+
+    const focusCall = navigation.addListener.mock.calls.find(([event]) => event === 'focus');
+    expect(focusCall).toBeTruthy();
+    const focusHandler = focusCall![1] as () => void;
+
+    mockedListContacts.mockResolvedValueOnce({
+      contacts: [fullyKeyedContact({ user_id: 'u1', email: 'alice@example.com' })],
+    });
+    mockedListContactRequests.mockResolvedValueOnce(EMPTY_REQUESTS);
+
+    await act(async () => {
+      focusHandler();
+    });
 
     await waitFor(() => {
       expect(screen.getByText('alice@example.com')).toBeTruthy();
@@ -380,13 +428,18 @@ describe('FriendsScreen', () => {
       expect(screen.queryByRole('button', { name: 'Decline bob@example.com' })).toBeNull();
     });
 
-    it('accepts an incoming request, removing it from the section, on success', async () => {
+    it('accepts an incoming request, removing it from the section and showing the new contact', async () => {
       mockedListContacts.mockResolvedValueOnce({ contacts: [] });
       mockedListContactRequests.mockResolvedValueOnce({
         incoming: [requestParty({ id: 'r1', user_id: 'u1', email: 'alice@example.com' })],
         outgoing: [],
       });
       mockedAcceptContactRequest.mockResolvedValueOnce(undefined);
+      // Post-accept refresh of both lists (mutual contacts now exist).
+      mockedListContacts.mockResolvedValueOnce({
+        contacts: [fullyKeyedContact({ user_id: 'u1', email: 'alice@example.com' })],
+      });
+      mockedListContactRequests.mockResolvedValueOnce(EMPTY_REQUESTS);
       const { user } = await renderFriendsScreen();
 
       await waitFor(() => {
@@ -399,6 +452,8 @@ describe('FriendsScreen', () => {
       await waitFor(() => {
         expect(screen.queryByTestId('requests-section')).toBeNull();
       });
+      expect(screen.getByText('alice@example.com')).toBeTruthy();
+      expect(screen.queryByText('No contacts yet')).toBeNull();
     });
 
     it('leaves an incoming request in place and shows an inline error when accept fails', async () => {

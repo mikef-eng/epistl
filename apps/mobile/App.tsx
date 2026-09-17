@@ -4,6 +4,7 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
 import { colorScheme } from "nativewind";
 import { useEffect, useState } from "react";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import MainTabs from "./src/navigation/MainTabs";
 import type { RootStackParamList } from "./src/navigation/types";
@@ -43,23 +44,25 @@ export default function App() {
   }
 
   return (
-    <NavigationContainer>
-      <Stack.Navigator initialRouteName="Login">
-        <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
-        {/* Its own tab headers provide Conversations/Friends' titles and
-            gear icons, so the root stack's default header is hidden here
-            (issue #94). */}
-        <Stack.Screen name="Main" component={MainTabs} options={{ headerShown: false }} />
-        <Stack.Screen name="AddContact" component={AddContactScreen} />
-        <Stack.Screen name="UserProfile" component={UserProfileScreen} />
-        <Stack.Screen name="Chat" component={ChatScreen} />
-        <Stack.Screen name="Settings" component={SettingsScreen} />
-        {/* Dev-only (issue #67 spike) -- never part of the real,
-            authenticated app flow; reachable only from LoginScreen's
-            __DEV__-gated link below. */}
-        {__DEV__ ? <Stack.Screen name="QuicSpike" component={QuicSpikeScreen} /> : null}
-      </Stack.Navigator>
-      <StatusBar style="auto" />
-    </NavigationContainer>
+    <SafeAreaProvider>
+      <NavigationContainer>
+        <Stack.Navigator initialRouteName="Login">
+          <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
+          {/* Its own tab headers provide Conversations/Friends' titles and
+              gear icons, so the root stack's default header is hidden here
+              (issue #94). */}
+          <Stack.Screen name="Main" component={MainTabs} options={{ headerShown: false }} />
+          <Stack.Screen name="AddContact" component={AddContactScreen} />
+          <Stack.Screen name="UserProfile" component={UserProfileScreen} />
+          <Stack.Screen name="Chat" component={ChatScreen} />
+          <Stack.Screen name="Settings" component={SettingsScreen} />
+          {/* Dev-only (issue #67 spike) -- never part of the real,
+              authenticated app flow; reachable only from LoginScreen's
+              __DEV__-gated link below. */}
+          {__DEV__ ? <Stack.Screen name="QuicSpike" component={QuicSpikeScreen} /> : null}
+        </Stack.Navigator>
+        <StatusBar style="auto" />
+      </NavigationContainer>
+    </SafeAreaProvider>
   );
 }

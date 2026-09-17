@@ -11,6 +11,15 @@ import { getThemePreference } from '../src/settings/preferences';
 // exercises `App.tsx`'s own cold-start theme-application logic -- so each
 // is mocked wholesale to keep this file's scope to that.
 jest.mock('../global.css', () => ({}));
+// `App.tsx` wraps its tree in `SafeAreaProvider` internally, so (unlike
+// the screen-level tests, which supply their own outer
+// `SafeAreaProvider initialMetrics={...}`) there's no seam for this test
+// to inject metrics from outside. Use the library's own Jest mock so its
+// internal provider resolves synchronously instead of hanging forever
+// waiting on a native measurement that doesn't exist under Jest.
+jest.mock('react-native-safe-area-context', () =>
+  require('react-native-safe-area-context/jest/mock').default
+);
 jest.mock('../src/storage/messages', () => ({
   getMessages: jest.fn(),
   saveMessage: jest.fn(),
