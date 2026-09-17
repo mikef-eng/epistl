@@ -144,9 +144,10 @@ presentation-layer files while a dev server hot-reloads — no tests, no
 issue/label changes, no CI. It always works on a dedicated branch (it
 creates one itself if it finds `main` checked out, and reuses whatever
 non-`main` branch is already checked out otherwise) rather than editing
-`main` directly, and it tracks its own progress across invocations in a
-`docs/superpowers/specs/` doc rather than a GitHub issue — but it still
-never commits, pushes, or opens a PR on its own. Treat its output as
+`main` directly, and it tracks its own progress across invocations inside
+`docs/superpowers/specs/2026-09-15-mobile-frontend-polish.md` (the one
+doc, not GitHub issues and not other specs) — but it still never commits,
+pushes, or opens a PR on its own. Treat its output as
 uncommitted scratch work on that branch until someone turns it into
 commits and a PR (bundled with its progress doc), or until it's picked up
 by a normal `ready` issue and goes through the Coder/Tester/Reviewer flow

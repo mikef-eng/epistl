@@ -50,31 +50,32 @@ exception to the rest of AGENTS.md, not a precedent to extend elsewhere.
    Store/Query state module (this repo's global-state layer per
    `docs/decisions/0009-tanstack-store-and-query-for-network-layer.md` —
    the Redux/Zustand equivalent here).
-5. **Track progress in `docs/superpowers/specs/`, not in your own memory
-   — you don't get to keep any.** Every invocation of you is a fresh
-   agent with no memory of a previous one, so a doc on disk is the only
-   continuity across a multi-step visual iteration session:
-   - Before editing, check `docs/superpowers/specs/` for an existing doc
-     whose findings already describe this request (e.g. a frontend-audit
-     or design-polish spec with a matching bullet). If one exists, treat
-     it as your shared memory: find the item this request corresponds
-     to, do the work, then mark that item done directly in the doc (turn
-     its `**Fix:**` bullet into a done note, check its checkbox if it
-     has one — match whatever done/pending convention the doc already
-     uses) with one line naming exactly what changed and in which
-     file(s).
-   - If no existing doc covers this request but the work is substantial
-     enough that a later `/ui` call will need to build on it, create a
-     short one in `docs/superpowers/specs/YYYY-MM-DD-<topic>.md`
-     (matching that directory's naming convention) and log progress in
-     it the same way.
-   - For a genuinely trivial one-off fix with nothing to iterate on
-     later, skip the doc — don't manufacture paperwork for a
-     30-second change.
-   - Whatever doc you touch, leave it in the working tree alongside the
-     code on the same branch, so it rides along into the eventual PR and
-     gives whoever writes that PR's description a ready-made changelog
-     instead of a diff to reverse-engineer.
+5. **Track mobile UI polish milestones inside
+   `docs/superpowers/specs/2026-09-15-mobile-frontend-polish.md` — not
+   anywhere else, and not from your own memory, which you don't get to
+   keep between invocations.** That doc is the running audit/ledger for
+   this work:
+   - Before editing, read it. If the request matches one of its Part
+     B findings (or a Part C direction item), do the work, then update
+     that finding's `**Status:**` line in place (`not started` →
+     `done`, or `in progress` with a one-line note of what's left) and
+     add one line to its `## Progress log` section: date, what shipped,
+     which file(s).
+   - Do **not** create additional docs under `docs/superpowers/specs/`
+     for this work, and do not go looking through that directory for
+     other unrelated specs — this one file is the whole ledger for
+     mobile UI polish.
+   - A request that doesn't correspond to anything in that doc (some
+     unrelated one-off ask) doesn't need it touched at all — just make
+     the edit.
+   - B3 (tab bar icons) is flagged in the doc as needing a new
+     dependency (`@expo/vector-icons`) — don't add it on your own
+     say-so; that's exactly the kind of thing the doc already called out
+     as needing a separate decision first.
+   - Keep the doc in the working tree alongside the code on the same
+     branch, so it rides along into the eventual PR and gives whoever
+     writes that PR's description a ready-made changelog instead of a
+     diff to reverse-engineer.
 6. **Action over explanation.** Make the edit, save it, and reply with
    exactly one short sentence naming the file(s) changed (and the branch
    name, if this call created a new one). No diffs, no rationale, no "I
@@ -95,8 +96,9 @@ exception to the rest of AGENTS.md, not a precedent to extend elsewhere.
 ## Workflow
 
 - Check the current branch (directive 2) before touching any file.
-- Check `docs/superpowers/specs/` for a relevant doc (directive 5) before
-  touching any file.
+- Read `docs/superpowers/specs/2026-09-15-mobile-frontend-polish.md`
+  (directive 5) before touching any file, to see if this request matches
+  a tracked finding.
 - Locate the exact component/screen for the request. If more than one
   file could be meant, prefer whichever is currently visible on the
   emulators (see below) over asking a clarifying question.
