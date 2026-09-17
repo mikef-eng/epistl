@@ -198,14 +198,44 @@ export async function saveSession(contactUserId: string, state: RatchetState): P
  * log-out (`api/session.ts`'s `clearSession`), which deliberately leaves
  * per-contact sessions intact so logging back in as the same user finds
  * them unchanged.
+ *
+ * Attempts every per-contact delete via `Promise.allSettled` rather than
+ * `Promise.all`, so a single rejected `SecureStore.deleteItemAsync` call
+ * can't prevent the others from being attempted. If every delete succeeds,
+ * behavior is unchanged: `SESSION_INDEX_KEY` is deleted and this resolves
+ * with `undefined`. If any delete fails, `SESSION_INDEX_KEY` is rewritten to
+ * contain only the contacts whose delete failed (so it never lists a
+ * contact whose session was actually deleted, and never omits one that
+ * still exists), and this rejects with an `AggregateError` naming the
+ * failed contact(s) instead of silently leaving the caller with stale
+ * bookkeeping or an unhandled rejection. See issue #144.
  */
 export async function clearAllSessions(): Promise<void> {
   const raw = await SecureStore.getItemAsync(SESSION_INDEX_KEY);
   const index: string[] = raw === null ? [] : (JSON.parse(raw) as string[]);
-  await Promise.all(
+  const results = await Promise.allSettled(
     index.map((contactUserId) => SecureStore.deleteItemAsync(sessionStorageKey(contactUserId)))
   );
-  await SecureStore.deleteItemAsync(SESSION_INDEX_KEY);
+
+  const failures = index
+    .map((contactUserId, i) => ({ contactUserId, result: results[i] }))
+    .filter(
+      (entry): entry is { contactUserId: string; result: PromiseRejectedResult } =>
+        entry.result.status === 'rejected'
+    );
+
+  if (failures.length === 0) {
+    await SecureStore.deleteItemAsync(SESSION_INDEX_KEY);
+    return;
+  }
+
+  const failedContactUserIds = failures.map((failure) => failure.contactUserId);
+  await SecureStore.setItemAsync(SESSION_INDEX_KEY, JSON.stringify(failedContactUserIds));
+
+  throw new AggregateError(
+    failures.map((failure) => failure.result.reason),
+    `clearAllSessions: failed to delete session(s) for contact(s): ${failedContactUserIds.join(', ')}`
+  );
 }
 
 /**
