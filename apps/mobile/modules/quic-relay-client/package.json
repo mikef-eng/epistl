@@ -108,14 +108,10 @@
     "name": "QuicRelayClientSpec",
     "type": "modules",
     "jsSrcsDir": "src",
-    "outputDir": {
-      "ios": "ios/generated",
-      "android": "android/generated"
-    },
     "android": {
       "javaPackageName": "com.quicrelayclient"
     },
-    "includesGeneratedCode": true
+    "includesGeneratedCode": false
   },
   "prettier": {
     "quoteProps": "consistent",
