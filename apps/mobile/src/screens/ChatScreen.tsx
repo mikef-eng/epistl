@@ -2,6 +2,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useStore } from '@tanstack/react-store';
 import { useEffect, useRef, useState } from 'react';
 import { FlatList, Pressable, Text, TextInput, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { type Contact, listContacts } from '../api/client';
 import { getToken, getUserId } from '../api/session';
@@ -87,6 +88,7 @@ const CANNOT_VERIFY_CONTACT_ERROR = "Cannot verify this contact's keys";
 
 export default function ChatScreen({ route }: Props) {
   const { userId: contactUserId, email } = route.params;
+  const insets = useSafeAreaInsets();
 
   const [messages, setMessages] = useState<ChatListItem[]>([]);
   const [draft, setDraft] = useState('');
@@ -426,7 +428,10 @@ export default function ChatScreen({ route }: Props) {
         </View>
       ) : null}
 
-      <View className="flex-row items-center border-t border-gray-200 px-4 py-3 dark:border-gray-700">
+      <View
+        style={{ paddingBottom: insets.bottom }}
+        className="flex-row items-center border-t border-gray-200 px-4 py-3 dark:border-gray-700"
+      >
         <TextInput
           className="mr-3 flex-1 rounded-lg border border-gray-300 px-4 py-2 text-base text-black dark:border-gray-700 dark:text-white"
           placeholder="Message"

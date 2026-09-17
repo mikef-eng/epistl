@@ -11,6 +11,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
   acceptContactRequest,
@@ -83,6 +84,7 @@ function withoutKey<T>(map: Record<string, T>, key: string): Record<string, T> {
 }
 
 export default function FriendsScreen({ navigation }: Props) {
+  const insets = useSafeAreaInsets();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [requests, setRequests] = useState<RequestsState>(EMPTY_REQUESTS);
   const [loading, setLoading] = useState(true);
@@ -148,6 +150,18 @@ export default function FriendsScreen({ navigation }: Props) {
       }
     }
   }, []);
+
+  // Refetch whenever this tab regains focus (e.g. the other party accepted
+  // while we were on Conversations/AddContact), matching
+  // `ConversationsScreen`. Without this, Friends stays on its mount-time
+  // snapshot -- accept creates contacts server-side but this list looks
+  // empty until a manual pull-to-refresh.
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      refetch(false);
+    });
+    return unsubscribe;
+  }, [navigation, refetch]);
 
   function handleRefresh() {
     refetch(true);
@@ -216,10 +230,15 @@ export default function FriendsScreen({ navigation }: Props) {
     setRequestActionIds((prev) => new Set(prev).add(request.id));
     try {
       await acceptContactRequest(request.id);
-      setRequests((prev) => ({
-        ...prev,
-        incoming: prev.incoming.filter((r) => r.id !== request.id),
-      }));
+      // Accept creates mutual `contacts` rows server-side; re-pull both
+      // lists so the new friend appears here immediately instead of only
+      // clearing the request and leaving "No contacts yet".
+      const [contactsResponse, requestsResponse] = await Promise.all([
+        listContacts(),
+        listContactRequests(),
+      ]);
+      setContacts(contactsResponse.contacts);
+      setRequests(requestsResponse);
     } catch (err) {
       setRequestErrors((prev) => ({ ...prev, [request.id]: messageFor(err) }));
     } finally {
@@ -255,7 +274,10 @@ export default function FriendsScreen({ navigation }: Props) {
 
   return (
     <View testID="friends-screen" className="flex-1 bg-white dark:bg-black">
-      <View className="flex-row items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-700">
+      <View
+        style={{ paddingTop: insets.top }}
+        className="flex-row items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-700"
+      >
         <Text className="text-lg font-semibold text-black dark:text-white">Friends</Text>
         <View className="flex-row items-center">
           <Pressable accessibilityRole="button" onPress={handleAddContact}>

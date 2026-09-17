@@ -2,6 +2,7 @@ import 'react-native-get-random-values';
 
 import { act, render, screen, userEvent, waitFor } from '@testing-library/react-native';
 import * as SecureStore from 'expo-secure-store';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { x25519 } from '@noble/curves/ed25519.js';
 import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
 import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';
@@ -160,9 +161,20 @@ const ROUTE = { params: { userId: CONTACT_USER_ID, email: 'bob@example.com' } };
 const CAROL_USER_ID = 'carol-user-id';
 const CAROL_ROUTE = { params: { userId: CAROL_USER_ID, email: 'carol@example.com' } };
 
+/** Jest has no native safe-area module; seed metrics so the provider
+ * renders children immediately instead of waiting forever. */
+const SAFE_AREA_METRICS = {
+  frame: { x: 0, y: 0, width: 390, height: 844 },
+  insets: { top: 0, left: 0, right: 0, bottom: 0 },
+};
+
 async function renderChatScreen(socket: ChatSocketHarness = createChatSocketHarness()) {
   const navigation = { navigate: jest.fn() };
-  const view = await render(<ChatScreen navigation={navigation as never} route={ROUTE as never} />);
+  const view = await render(
+    <SafeAreaProvider initialMetrics={SAFE_AREA_METRICS}>
+      <ChatScreen navigation={navigation as never} route={ROUTE as never} />
+    </SafeAreaProvider>
+  );
   const user = userEvent.setup();
   await waitFor(() => expect(mockedGetMessages).toHaveBeenCalledWith(CONTACT_USER_ID));
   await waitFor(() => expect(mockedConnect).toHaveBeenCalledWith(mockedGetToken));
@@ -593,7 +605,11 @@ describe('ChatScreen', () => {
     const carol = buildContact(CAROL_USER_ID, 'carol@example.com');
     mockedListContacts.mockResolvedValue({ contacts: [carol.contact] });
     const navigation = { navigate: jest.fn() };
-    await render(<ChatScreen navigation={navigation as never} route={CAROL_ROUTE as never} />);
+    await render(
+      <SafeAreaProvider initialMetrics={SAFE_AREA_METRICS}>
+        <ChatScreen navigation={navigation as never} route={CAROL_ROUTE as never} />
+      </SafeAreaProvider>
+    );
     await waitFor(() => expect(mockedGetMessages).toHaveBeenCalledWith(CAROL_USER_ID));
 
     // A genuinely new frame from Carol, delivered after Carol's screen has
