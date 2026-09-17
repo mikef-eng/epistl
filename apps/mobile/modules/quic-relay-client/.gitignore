@@ -82,5 +82,10 @@ lib/
 ios/generated
 android/generated
 
+# Locally cross-compiled native library (built via `ubrn build android
+# --and-generate` + cargo-ndk, per this module's README) -- per-ABI,
+# per-machine build output, never committed.
+android/src/main/jniLibs/
+
 # React Native Nitro Modules
 nitrogen/

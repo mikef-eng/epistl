@@ -197,16 +197,27 @@ fn build_dev_client_config() -> Result<quinn::ClientConfig, QuicClientError> {
         })?;
 
     let mut client_config = quinn::ClientConfig::new(Arc::new(quic_crypto));
-    // Spike-appropriate timeout: fail fast against an unreachable/dead
-    // server rather than waiting on Quinn's much longer default idle
-    // timeout. Not a product-grade retry/backoff policy -- out of scope
-    // for this spike (see issue #67's "out of scope").
+    // Fail fast against an unreachable/dead server rather than waiting on
+    // Quinn's much longer default idle timeout -- originally chosen for
+    // this crate's issue #67 spike (`quic_ping`'s single short-lived
+    // round trip), but this config is also what `QuicConnection::connect`
+    // below uses for the real, long-lived control-stream connection
+    // (issue #73/#75) that backs the mobile app's persistent chat relay.
+    // Without a `keep_alive_interval` shorter than this, Quinn has no
+    // traffic to reset the idle timer during a normal quiet chat session
+    // (no messages sent either direction), so the connection was
+    // dropping and reconnecting roughly every 5s at all times other than
+    // active typing -- not a real network failure. `keep_alive_interval`
+    // makes Quinn emit periodic PINGs itself so an otherwise-healthy
+    // connection never goes idle long enough to hit the timeout below,
+    // while a genuinely dead path (no PING responses) still fails fast.
     let mut transport_config = quinn::TransportConfig::default();
     transport_config.max_idle_timeout(Some(
         std::time::Duration::from_secs(5)
             .try_into()
             .expect("5s fits in Quinn's VarInt-backed IdleTimeout"),
     ));
+    transport_config.keep_alive_interval(Some(std::time::Duration::from_secs(2)));
     client_config.transport_config(Arc::new(transport_config));
 
     Ok(client_config)
