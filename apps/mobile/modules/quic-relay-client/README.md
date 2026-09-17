@@ -78,5 +78,50 @@ section's Gradle task, and PR #155's `abiFilters` narrowing before it) --
 a future `ubrn build android --and-generate` regeneration will need to
 reapply both sets of hand-edits.
 
-iOS build reproducibility for this module is tracked separately in issue
-#161 and isn't covered by the above.
+## iOS native build (automatic)
+
+Producing `QuicRelayClientFramework.xcframework` at this module's root
+(what `QuicRelayClient.podspec`'s `s.vendored_frameworks` already expects)
+used to require manually running `ubrn build ios --and-generate` -- the
+same kind of undocumented, easy-to-get-wrong incantation Android had before
+issue #156. As of issue #161, this is automatic:
+
+- `QuicRelayClient.podspec` declares an `s.script_phase` (`execution_position
+  :before_compile`) that runs on **any** real Xcode build of the app --
+  `pod install` + a build from Xcode, `npx expo run:ios`, and, once adopted,
+  EAS Build's cloud macOS runners (which run `pod install`/`xcodebuild`
+  themselves; no iOS-specific EAS configuration is needed beyond that). It
+  is **not** wired into this package's `prepare` npm lifecycle script, for
+  the same reason as Android: `prepare` also runs on a plain `npm
+  install`/`npm ci` -- including CI's `mobile` job, which never runs `pod
+  install`/`xcodebuild` and has no Xcode or iOS Rust targets installed.
+- The script_phase's shell explicitly sources `$HOME/.cargo/env` (and
+  prefixes `PATH` with `$HOME/.cargo/bin`) before invoking the build script,
+  because Xcode's build-phase shell does not inherit a developer's
+  interactive shell `PATH`/rc files -- `cargo`/`rustup` would not otherwise
+  be found even though they work fine from a normal terminal.
+- The script phase runs `scripts/ensure-native-built-ios.js`, which:
+  - Skips the build entirely if the xcframework is already newer than
+    `packages/quic-relay-client`'s sources (crate root plus the workspace
+    `Cargo.lock`) -- a fast no-op once it's already built.
+  - Otherwise first checks that `xcodebuild -version` succeeds. If Xcode /
+    the Command Line Tools aren't installed (including simply not running
+    on macOS at all), it fails fast with an actionable error telling you to
+    install Xcode or run `xcode-select --install`, without attempting a
+    build.
+  - Runs `rustup target add <triple>` for any of the three iOS target
+    triples (`aarch64-apple-ios`, `aarch64-apple-ios-sim`, `x86_64-apple-ios`
+    -- device, Apple Silicon simulator, and Intel simulator, always all
+    three regardless of the host Mac's own architecture) not already
+    installed.
+  - Shells out to `ubrn build ios --and-generate -t
+    aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios`, which already
+    performs the per-target `cargo build`, lipo-merges the simulator
+    slices, and runs `xcodebuild -create-xcframework` internally --
+    producing `QuicRelayClientFramework.xcframework` at this module's root.
+
+See
+`docs/decisions/0014-quic-relay-client-ios-native-build-bootstrap.md` for
+why this is an on-demand per-machine bootstrap (triggered by a CocoaPods
+`script_phase`) rather than a CI cross-compile step or a committed
+`.xcframework` binary.
