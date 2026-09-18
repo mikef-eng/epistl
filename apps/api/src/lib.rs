@@ -10,6 +10,7 @@ pub mod contacts;
 pub mod db;
 pub mod keys;
 pub mod nats;
+pub mod push;
 pub mod push_tokens;
 pub mod quic;
 pub mod registry;
