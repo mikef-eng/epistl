@@ -68,6 +68,18 @@ fn unique_email(label: &str) -> String {
     format!("{label}-{}@example.com", Uuid::new_v4())
 }
 
+/// A username satisfying Better Auth's own `validate_username` (3-30 chars,
+/// `[a-zA-Z0-9_.]`), unique per call.
+fn unique_username(label: &str) -> String {
+    let sanitized: String = label
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect();
+    let mut username = format!("{sanitized}_{}", Uuid::new_v4().simple()).to_lowercase();
+    username.truncate(30);
+    username
+}
+
 async fn request(
     app: Router,
     method: &str,
@@ -103,12 +115,13 @@ async fn request(
 /// Signs up a fresh user and returns `(token, user_id, email)`.
 async fn signup_user(pool: &PgPool, state: AppState, label: &str) -> (String, Uuid, String) {
     let email = unique_email(label);
+    let username = unique_username(label);
     let (status, body) = request(
         api::app(state),
         "POST",
         "/signup",
         None,
-        Some(json!({ "email": email, "password": "correct-horse-battery" })),
+        Some(json!({ "email": email, "password": "correct-horse-battery", "username": username })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "signup failed: {body:?}");
