@@ -31,7 +31,7 @@ apps/
   api/      Rust Axum API
 packages/   Shared libraries
   quic-relay-client/   Rust/Quinn QUIC client crate (quic_ping spike + QuicConnection persistent-connection API; see Stack table)
-  dev-setup/           Rust CLI that checks a macOS/Linux dev machine against what's needed to run Epistl locally -- OS gate, `.env` auto-copy, and detect-only rustup/node/moon/docker/sccache reporting (issue #203). On macOS (issue #204), also detects Homebrew and, only when the CLI is run with an explicit opt-in `--install` flag, auto-installs whichever of rustup/node/moon/sccache it found absent via `brew install`; Docker (GUI installer) and Xcode/CocoaPods/Android Studio/the Android NDK stay detect-and-guide-only always, printing the exact manual step (pointing at this file's Android/iOS prerequisite subsections) rather than ever being auto-installed. A plain `dev-setup` invocation with no flags never installs anything, on any OS. Not yet wired into "Running the stack locally" below, and Linux has no auto-install equivalent yet -- see follow-up issues
+  dev-setup/           Rust CLI that checks a macOS/Linux dev machine against what's needed to run Epistl locally -- OS gate, `.env` auto-copy, and rustup/node/moon/docker/sccache reporting (issue #203). Opt-in `--install` auto-installs missing tools where it's safe to do so: on macOS, via Homebrew for rustup/node/moon/sccache, with Docker (GUI installer) and Xcode/CocoaPods/Android Studio/the Android NDK staying detect-and-guide-only always (issue #204); on apt-based Linux distros, via each tool's official installer for rustup/moon/sccache, with Node.js/Docker and non-apt distros staying guide-only (issue #205). Also an opt-in `--start` flag that runs `docker compose up -d`, waits for Postgres/NATS/SeaweedFS health, then `moon run api:migrate` (issue #206). A plain `dev-setup` invocation with no flags never installs or starts anything, on any OS. See `packages/dev-setup/README.md` and "Running the stack locally" below
 ```
 
 ## Development harness
@@ -52,6 +52,21 @@ Root [CLAUDE.md](CLAUDE.md) imports [AGENTS.md](AGENTS.md). Agent tooling lives 
 Postgres MCP is configured in [`.mcp.json`](.mcp.json) (project-scoped, via [`crystaldba/postgres-mcp`](https://github.com/crystaldba/postgres-mcp) over Docker — connects to the local `docker compose` Postgres by default). A NATS channel plugin remains deferred — no such plugin was found in the official Claude Code marketplace as of this writing; revisit if one becomes available.
 
 ## Running the stack locally
+
+**Recommended fast path (macOS/Linux):** [`packages/dev-setup`](packages/dev-setup) is a
+CLI that checks your machine against the requirements below and can bring up
+the local stack for you — see [`packages/dev-setup/README.md`](packages/dev-setup/README.md)
+for exactly what it checks and its `--install`/`--start` flag semantics:
+
+```bash
+cd packages/dev-setup
+cargo run              # detect-only report against the steps below
+cargo run -- --start   # also runs docker compose up + waits for health + migrations (steps 3-4 below)
+```
+
+Windows isn't supported by this tool — Windows contributors (and anyone who wants
+to understand or do each step by hand) should follow the numbered steps below,
+which `dev-setup` itself is only ever a shortcut for, never a replacement for.
 
 1. **Install [`sccache`](https://github.com/mozilla/sccache)** (one-time, required before your first Rust build — `apps/api` and `packages/quic-relay-client` share a workspace whose root [`.cargo/config.toml`](.cargo/config.toml) sets `rustc-wrapper = "sccache"`, so `cargo build`/`moon run api:*`/`moon run quic-relay-client:*` all fail outright with an "executable `sccache` not found" error until it's on your `PATH`):
 

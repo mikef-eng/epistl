@@ -8,8 +8,10 @@ pub mod checks;
 pub mod env_file;
 pub mod environment;
 pub mod homebrew;
+pub mod linux_install;
 pub mod macos;
 pub mod os_check;
+pub mod start;
 
 use std::path::{Path, PathBuf};
 
@@ -20,21 +22,37 @@ pub use checks::{
 pub use env_file::{ensure_env_file, EnvFileOutcome};
 pub use environment::{Environment, SystemEnvironment};
 pub use homebrew::check_homebrew;
+pub use linux_install::{
+    apt_available, docker_action, format_linux_action, moon_action, node_action, rustup_action,
+    sccache_action, LinuxAction,
+};
 pub use macos::{format_mac_report_line, run_macos_checks, MacOutcome, MacReport};
 pub use os_check::check_os;
+pub use start::{format_step_outcome, maybe_run_start, RealSleeper, Sleeper, StepOutcome};
 
-/// Whether `--install` was passed on the command line. Takes the
-/// already-collected args (as `std::env::args()` yields them, including
-/// `argv[0]`) rather than reading the environment itself, so this is
-/// unit-testable without spawning the real binary.
-pub fn install_flag_set<I, S>(args: I) -> bool
+/// Whether `checks` reports `name` as `Present` -- used by `--start` to
+/// decide whether Docker/moon are available before attempting to shell
+/// out to either, reusing the environment-check report rather than
+/// re-probing.
+pub fn check_status(checks: &[ToolCheck], name: &str) -> bool {
+    checks
+        .iter()
+        .find(|check| check.name == name)
+        .map(|check| check.status.is_present())
+        .unwrap_or(false)
+}
+
+/// Whether `--install` was passed on the command line -- the opt-in gate
+/// for the Linux (apt-based) auto-install path this issue adds. Takes
+/// `args` as a parameter (rather than reading `std::env::args()` itself)
+/// so tests can inject arg vectors directly instead of depending on how
+/// the test binary itself was invoked.
+pub fn has_install_flag<I, S>(args: I) -> bool
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    args.into_iter()
-        .skip(1)
-        .any(|arg| arg.as_ref() == "--install")
+    args.into_iter().any(|a| a.as_ref() == "--install")
 }
 
 /// The repo root, derived from where this crate lives on disk
@@ -97,14 +115,30 @@ mod tests {
     }
 
     #[test]
-    fn install_flag_set_detects_the_flag_anywhere_after_argv0() {
-        assert!(install_flag_set(["dev-setup", "--install"]));
-        assert!(install_flag_set(["dev-setup", "--foo", "--install"]));
+    fn has_install_flag_detects_the_flag_among_other_args() {
+        assert!(has_install_flag(["dev-setup", "--install"]));
+        assert!(has_install_flag(["dev-setup", "--foo", "--install"]));
+        assert!(!has_install_flag(["dev-setup"]));
+        assert!(!has_install_flag(["dev-setup", "--other-flag"]));
     }
 
     #[test]
-    fn install_flag_set_is_false_when_absent_or_only_argv0() {
-        assert!(!install_flag_set(["dev-setup"]));
-        assert!(!install_flag_set(["dev-setup", "--other-flag"]));
+    fn check_status_variants() {
+        let checks = vec![
+            ToolCheck {
+                name: "docker",
+                status: ToolStatus::Present(None),
+            },
+            ToolCheck {
+                name: "moon",
+                status: ToolStatus::Absent,
+            },
+        ];
+
+        assert!(check_status(&checks, "docker"));
+        assert!(!check_status(&checks, "moon"));
+        // A name that isn't in the report at all is treated as absent,
+        // not a panic.
+        assert!(!check_status(&checks, "sccache"));
     }
 }
