@@ -188,11 +188,24 @@ fn unique_email(label: &str) -> String {
     format!("{label}-{}@example.com", Uuid::new_v4())
 }
 
+/// A username satisfying Better Auth's own `validate_username` (3-30 chars,
+/// `[a-zA-Z0-9_.]`), unique per call.
+fn unique_username(label: &str) -> String {
+    let sanitized: String = label
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect();
+    let mut username = format!("{sanitized}_{}", Uuid::new_v4().simple()).to_lowercase();
+    username.truncate(30);
+    username
+}
+
 /// Signs up a fresh user (via the real `/signup` handler, in-process --
 /// only the `/ws` upgrade itself needs a real TCP server) and returns
 /// `(token, user_id, email)`.
 async fn signup_user(pool: &PgPool, state: AppState, label: &str) -> (String, Uuid, String) {
     let email = unique_email(label);
+    let username = unique_username(label);
     let response = api::app(state)
         .oneshot(
             Request::builder()
@@ -200,7 +213,8 @@ async fn signup_user(pool: &PgPool, state: AppState, label: &str) -> (String, Uu
                 .uri("/signup")
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    json!({ "email": email, "password": "correct-horse-battery" }).to_string(),
+                    json!({ "email": email, "password": "correct-horse-battery", "username": username })
+                        .to_string(),
                 ))
                 .unwrap(),
         )

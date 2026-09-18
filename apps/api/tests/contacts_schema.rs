@@ -38,19 +38,29 @@ async fn user_and_contact_rows_round_trip() {
     let owner_email = format!("owner-{run_id}@example.com");
     let contact_email = format!("contact-{run_id}@example.com");
 
-    let owner_id: Uuid = sqlx::query("INSERT INTO users (email) VALUES ($1) RETURNING id")
-        .bind(&owner_email)
-        .fetch_one(&pool)
-        .await
-        .expect("failed to insert owner user")
-        .get("id");
+    // `username` is required/unique (issue #183) -- derive one per row from
+    // the same `run_id` used for the emails above so this stays unique on
+    // re-runs against a persistent dev database.
+    let owner_username = format!("owner_{}", run_id.simple());
+    let contact_username = format!("contact_{}", run_id.simple());
 
-    let contact_user_id: Uuid = sqlx::query("INSERT INTO users (email) VALUES ($1) RETURNING id")
-        .bind(&contact_email)
-        .fetch_one(&pool)
-        .await
-        .expect("failed to insert contact user")
-        .get("id");
+    let owner_id: Uuid =
+        sqlx::query("INSERT INTO users (email, username) VALUES ($1, $2) RETURNING id")
+            .bind(&owner_email)
+            .bind(&owner_username)
+            .fetch_one(&pool)
+            .await
+            .expect("failed to insert owner user")
+            .get("id");
+
+    let contact_user_id: Uuid =
+        sqlx::query("INSERT INTO users (email, username) VALUES ($1, $2) RETURNING id")
+            .bind(&contact_email)
+            .bind(&contact_username)
+            .fetch_one(&pool)
+            .await
+            .expect("failed to insert contact user")
+            .get("id");
 
     let contact_id: Uuid = sqlx::query(
         "INSERT INTO contacts (owner_user_id, contact_user_id) VALUES ($1, $2) RETURNING id",
