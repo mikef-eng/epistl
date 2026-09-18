@@ -31,7 +31,7 @@ apps/
   api/      Rust Axum API
 packages/   Shared libraries
   quic-relay-client/   Rust/Quinn QUIC client crate (quic_ping spike + QuicConnection persistent-connection API; see Stack table)
-  dev-setup/           Rust CLI that checks a macOS/Linux dev machine against what's needed to run Epistl locally -- OS gate, `.env` auto-copy, and detect-only rustup/node/moon/docker/sccache reporting (issue #203); not yet wired into "Running the stack locally" below or into installing anything itself -- see follow-up issues
+  dev-setup/           Rust CLI that checks a macOS/Linux dev machine against what's needed to run Epistl locally -- OS gate, `.env` auto-copy, and rustup/node/moon/docker/sccache reporting (issue #203); on apt-based Linux distros, opt-in `--install` auto-installs rustup/moon/sccache via their official installers, with Node.js/Docker and non-apt distros staying guide-only (issue #205); not yet wired into "Running the stack locally" below -- see follow-up issues
 ```
 
 ## Development harness

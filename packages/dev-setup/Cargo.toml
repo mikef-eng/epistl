@@ -8,16 +8,18 @@ Local dev-environment checker for Epistl (issue #203): detects the host
 OS (macOS/Linux only), auto-copies `.env.example` to `.env` if missing,
 and reports Present/Absent for the core tools README's "Running the
 stack locally" section requires (rustup, cargo/rustc, node, moon,
-docker, sccache). Detect-only in this issue -- no installs, no mutating
-docker/moon actions; see the issue for the follow-up, OS-specific
-install-flow work this scaffolds toward.
+docker, sccache). On apt-based Linux distros, an opt-in `--install` flag
+(issue #205) auto-installs rustup/moon/sccache via their official
+installers when absent; Node.js/Docker stay guide-only, and non-apt
+distros fall back to guide-only for all five tools.
 """
 
 # No external dependencies: OS detection uses `std::env::consts::OS`,
 # tool detection shells out via `std::process::Command` behind this
-# crate's own `CommandExecutor` trait (see src/checks.rs), and this
-# issue's acceptance criteria don't call for any CLI flags/arguments, so
-# there's nothing here an argument-parsing crate would buy.
+# crate's own `CommandExecutor` trait (see src/checks.rs), and the
+# `--install` flag (issue #205) is a single boolean check against
+# `std::env::args()` (see `has_install_flag` in src/lib.rs) -- not
+# enough surface for an argument-parsing crate to buy anything yet.
 
 [lib]
 name = "dev_setup"

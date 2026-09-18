@@ -6,6 +6,7 @@
 
 pub mod checks;
 pub mod env_file;
+pub mod linux_install;
 pub mod os_check;
 
 use std::path::{Path, PathBuf};
@@ -15,7 +16,24 @@ pub use checks::{
     is_required, run_all_checks, CommandExecutor, SystemExecutor, ToolCheck, ToolStatus,
 };
 pub use env_file::{ensure_env_file, EnvFileOutcome};
+pub use linux_install::{
+    apt_available, docker_action, format_linux_action, moon_action, node_action, rustup_action,
+    sccache_action, LinuxAction,
+};
 pub use os_check::check_os;
+
+/// Whether `--install` was passed on the command line -- the opt-in gate
+/// for the Linux (apt-based) auto-install path this issue adds. Takes
+/// `args` as a parameter (rather than reading `std::env::args()` itself)
+/// so tests can inject arg vectors directly instead of depending on how
+/// the test binary itself was invoked.
+pub fn has_install_flag<I, S>(args: I) -> bool
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    args.into_iter().any(|a| a.as_ref() == "--install")
+}
 
 /// The repo root, derived from where this crate lives on disk
 /// (`packages/dev-setup`) rather than the process's current working
@@ -74,5 +92,12 @@ mod tests {
             status: ToolStatus::Absent,
         };
         assert_eq!(format_check_line(&absent), "sccache: Absent");
+    }
+
+    #[test]
+    fn has_install_flag_detects_the_flag_among_other_args() {
+        assert!(has_install_flag(["dev-setup", "--install"]));
+        assert!(!has_install_flag(["dev-setup"]));
+        assert!(!has_install_flag(["dev-setup", "--other-flag"]));
     }
 }
