@@ -1,7 +1,4 @@
 {
-  "enabledPlugins": {
-    "superpowers@claude-plugins-official": true
-  },
   "permissions": {
     "allow": [
       "Bash(gh pr view *)",
@@ -28,15 +25,17 @@
       "Bash(git push *)",
       "Bash(git commit *)"
     ],
-    "ask": [
-      
-    ],
     "deny": [
       "Bash(git push --force *)",
       "Bash(git push -f *)",
       "Bash(gh repo delete *)",
       "Bash(gh pr merge * --admin)",
       "Bash(gh label delete *)"
-    ]
+    ],
+    "ask": []
+  },
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": true,
+    "linear@claude-plugins-official": true
   }
 }
