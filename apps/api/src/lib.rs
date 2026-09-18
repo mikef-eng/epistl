@@ -17,6 +17,7 @@ pub mod quic;
 pub mod registry;
 pub mod relay;
 pub mod search;
+pub mod username;
 pub mod ws;
 
 use axum::routing::get;
@@ -29,8 +30,9 @@ pub use auth::{AppState, AuthenticatedUser};
 /// key-storage routes from [`keys::router`], the account routes from
 /// [`account::router`], the discover-search route from [`search::router`],
 /// the push-token registration route from [`push_tokens::router`], the
-/// avatar upload/serving routes from [`avatars::router`], and the `/ws`
-/// relay from [`ws::router`].
+/// avatar upload/serving routes from [`avatars::router`], the
+/// change-username route from [`username::router`], and the `/ws` relay
+/// from [`ws::router`].
 pub fn app(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
@@ -41,6 +43,7 @@ pub fn app(state: AppState) -> Router {
         .merge(search::router(state.clone()))
         .merge(push_tokens::router(state.clone()))
         .merge(avatars::router(state.clone()))
+        .merge(username::router(state.clone()))
         .merge(ws::router(state))
 }
 
