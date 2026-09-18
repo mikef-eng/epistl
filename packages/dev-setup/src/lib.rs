@@ -7,6 +7,7 @@
 pub mod checks;
 pub mod env_file;
 pub mod os_check;
+pub mod start;
 
 use std::path::{Path, PathBuf};
 
@@ -16,6 +17,19 @@ pub use checks::{
 };
 pub use env_file::{ensure_env_file, EnvFileOutcome};
 pub use os_check::check_os;
+pub use start::{format_step_outcome, maybe_run_start, RealSleeper, Sleeper, StepOutcome};
+
+/// Whether `checks` reports `name` as `Present` -- used by `--start` to
+/// decide whether Docker/moon are available before attempting to shell
+/// out to either, reusing the environment-check report rather than
+/// re-probing.
+pub fn check_status(checks: &[ToolCheck], name: &str) -> bool {
+    checks
+        .iter()
+        .find(|check| check.name == name)
+        .map(|check| check.status.is_present())
+        .unwrap_or(false)
+}
 
 /// The repo root, derived from where this crate lives on disk
 /// (`packages/dev-setup`) rather than the process's current working
@@ -74,5 +88,25 @@ mod tests {
             status: ToolStatus::Absent,
         };
         assert_eq!(format_check_line(&absent), "sccache: Absent");
+    }
+
+    #[test]
+    fn check_status_variants() {
+        let checks = vec![
+            ToolCheck {
+                name: "docker",
+                status: ToolStatus::Present(None),
+            },
+            ToolCheck {
+                name: "moon",
+                status: ToolStatus::Absent,
+            },
+        ];
+
+        assert!(check_status(&checks, "docker"));
+        assert!(!check_status(&checks, "moon"));
+        // A name that isn't in the report at all is treated as absent,
+        // not a panic.
+        assert!(!check_status(&checks, "sccache"));
     }
 }

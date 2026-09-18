@@ -18,9 +18,12 @@ tasks:
     args: ["test"]
     options:
       cache: false
-  # Invokes the CLI directly -- detect-only (no mutating docker/moon
-  # actions in this issue), so this is safe to run repeatedly and isn't
-  # cached, same reasoning as `check`/`test` above.
+  # Invokes the CLI directly. Detect-only by default -- safe to run
+  # repeatedly and not cached, same reasoning as `check`/`test` above.
+  # Pass `-- --start` (e.g. `moon run dev-setup:run -- --start`) to opt
+  # into the mutating docker-compose-up + api:migrate flow (issue #206);
+  # without it, this never shells out to docker or moon beyond the
+  # detect-only checks in `checks.rs`.
   run:
     command: "cargo"
     args: ["run"]
