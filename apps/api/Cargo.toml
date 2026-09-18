@@ -57,6 +57,15 @@ async-nats = "0.50.0"
 quinn = "0.11"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rcgen = "0.14"
+# `reqwest` (issue #167, outbound push notification sending via Expo's
+# HTTPS push API -- `apps/api/src/push.rs`). Pinned to 0.12.28, the exact
+# version already present in `Cargo.lock` as a transitive dependency of
+# `better-auth-api` (confirmed via `cargo tree -p api -i reqwest`), so
+# declaring it directly here is just an explicit, intentional edge to a
+# crate this code now also uses directly -- it doesn't add a new resolved
+# version to the dependency graph. `features = ["json"]` enables
+# `RequestBuilder::json`, used to send Expo's JSON push payload.
+reqwest = { version = "0.12.28", features = ["json"] }
 
 [dev-dependencies]
 # Real WebSocket client for the `/ws` relay's integration tests --
@@ -77,3 +86,11 @@ serial_test = "3"
 # `rustls`, and `rcgen` themselves are real `[dependencies]` above now (the
 # listener needs them at runtime); this dev-dependency is only for the
 # test-only client-side helper.
+# `wiremock` (issue #167) mocks Expo's push HTTP API in
+# `apps/api/src/push.rs`'s tests -- no real network call is made. The tests
+# point a local `wiremock::MockServer`'s URL at `send_push_notification`'s
+# `endpoint` parameter (a test-only seam, mirroring `nats::connect_with`'s
+# `connect`/`connect_with` split) instead of the real
+# `https://exp.host/--/api/v2/push/send` used by default at runtime. First
+# HTTP-mocking dependency in this crate.
+wiremock = "0.6.5"
