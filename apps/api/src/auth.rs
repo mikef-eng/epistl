@@ -633,6 +633,14 @@ pub struct AppState {
     /// further `AppState` clones (e.g. this crate's own integration tests
     /// rebuilding a `Router` per request from the same `AppState`).
     pub search_rate_limiter: crate::search::SearchRateLimiter,
+    /// Best-effort outbound push-notification sender (issue #167's
+    /// `crate::push::PushNotifier` seam), used by
+    /// `crate::relay::queue_for_offline_delivery` (issue #168) to notify an
+    /// offline recipient's registered devices (`push_tokens`, issue #166).
+    /// `Arc`-backed (`crate::push::SharedPushNotifier`) so it stays
+    /// cheaply `Clone` like the fields above, and so integration tests can
+    /// inject a mock notifier instead of exercising the real Expo push API.
+    pub push_notifier: crate::push::SharedPushNotifier,
 }
 
 /// The axum router for `/signup`, `/login`, and (by composition with other

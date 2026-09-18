@@ -36,6 +36,13 @@ const TEST_SECRET: &str = "test-only-secret-do-not-use-in-prod-32+";
 /// instead of hanging CI.
 const RECV_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// How long `assert_no_push_call` waits before concluding no push-notifier
+/// call is coming -- mirroring `redeliver_if_now_connected`'s own tests'
+/// `NO_MESSAGE_WINDOW` in `src/relay.rs`, since both the redelivery spawn
+/// and the push-notification spawn (issue #168) race the sender's `ack`
+/// the same way.
+const NO_PUSH_WINDOW: Duration = Duration::from_millis(750);
+
 async fn test_pool() -> PgPool {
     // Loads DATABASE_URL/AUTH_SECRET from a repo-root .env if present and
     // not already set (e.g. by CI). Safe to call redundantly per-test.
@@ -57,6 +64,13 @@ async fn test_pool() -> PgPool {
 }
 
 async fn test_state() -> AppState {
+    test_state_with_push_notifier(std::sync::Arc::new(api::push::ExpoPushNotifier::new())).await
+}
+
+/// Same as [`test_state`], but with an injected `push_notifier` -- used by
+/// the issue #168 push-on-offline-delivery tests below to swap in
+/// [`MockPushNotifier`] instead of exercising the real Expo push API.
+async fn test_state_with_push_notifier(push_notifier: api::push::SharedPushNotifier) -> AppState {
     dotenvy::dotenv().ok();
     let database_url = std::env::var("DATABASE_URL")
         .expect("DATABASE_URL must be set to run this integration test");
@@ -79,7 +93,95 @@ async fn test_state() -> AppState {
         registry: api::registry::ConnectionRegistry::new(),
         nats,
         search_rate_limiter: api::search::SearchRateLimiter::new(),
+        push_notifier,
     }
+}
+
+/// Records every `send_push` call made against it (as `(token, data)`
+/// pairs) onto an unbounded channel the test can await on with a timeout --
+/// mirroring `recv_frame`/`assert_no_further_message`'s pattern for
+/// WebSocket frames above, so a push-notification assertion is just as
+/// deterministic as a frame assertion instead of polling a shared `Vec`.
+///
+/// `fail_tokens` lets a test simulate Expo rejecting (or a network error
+/// on) specific tokens -- the call is still recorded (an attempt was
+/// still made) but `send_push` returns `Err` for those tokens, so a test
+/// can assert that one token failing doesn't prevent the others from
+/// being attempted (issue #168's "attempted independently" criterion).
+#[derive(Clone)]
+struct MockPushNotifier {
+    calls: tokio::sync::mpsc::UnboundedSender<(String, Value)>,
+    fail_tokens: std::collections::HashSet<String>,
+}
+
+impl MockPushNotifier {
+    /// Returns a fresh `(notifier, receiver)` pair -- the receiver is what
+    /// the test awaits `recv_push_call`/`assert_no_push_call` on.
+    fn new() -> (Self, tokio::sync::mpsc::UnboundedReceiver<(String, Value)>) {
+        Self::new_with_failing_tokens(std::collections::HashSet::new())
+    }
+
+    /// Same as [`Self::new`], but `send_push` will return `Err` (while
+    /// still recording the call) for any token in `fail_tokens`.
+    fn new_with_failing_tokens(
+        fail_tokens: std::collections::HashSet<String>,
+    ) -> (Self, tokio::sync::mpsc::UnboundedReceiver<(String, Value)>) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        (
+            Self {
+                calls: tx,
+                fail_tokens,
+            },
+            rx,
+        )
+    }
+}
+
+impl api::push::PushNotifier for MockPushNotifier {
+    fn send_push<'a>(
+        &'a self,
+        token: &'a str,
+        _title: &'a str,
+        _body: &'a str,
+        data: Value,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<(), api::push::PushError>> + Send + 'a>,
+    > {
+        let calls = self.calls.clone();
+        let should_fail = self.fail_tokens.contains(token);
+        let token = token.to_string();
+        Box::pin(async move {
+            let _ = calls.send((token, data));
+            if should_fail {
+                Err(api::push::PushError::RequestFailed(
+                    "mock push failure".to_string(),
+                ))
+            } else {
+                Ok(())
+            }
+        })
+    }
+}
+
+/// Waits (with [`RECV_TIMEOUT`]) for exactly one recorded [`MockPushNotifier`]
+/// call and returns it.
+async fn recv_push_call(
+    rx: &mut tokio::sync::mpsc::UnboundedReceiver<(String, Value)>,
+) -> (String, Value) {
+    timeout(RECV_TIMEOUT, rx.recv())
+        .await
+        .expect("timed out waiting for a push-notifier call")
+        .expect("push-notifier channel closed before recording a call")
+}
+
+/// Asserts no [`MockPushNotifier`] call arrives within [`NO_PUSH_WINDOW`] --
+/// the push-side equivalent of `assert_no_frame` above.
+async fn assert_no_push_call(rx: &mut tokio::sync::mpsc::UnboundedReceiver<(String, Value)>) {
+    let result = timeout(NO_PUSH_WINDOW, rx.recv()).await;
+    assert!(
+        result.is_err(),
+        "expected no push-notifier call, but got one: {result:?}"
+    );
 }
 
 fn unique_email(label: &str) -> String {
@@ -137,6 +239,26 @@ async fn add_contact(state: AppState, owner_token: &str, contact_email: &str) {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::CREATED);
+}
+
+/// Registers `token` (via the real `POST /api/push-tokens` handler,
+/// in-process) as `owner_token`'s device push token -- used by the issue
+/// #168 push-on-offline-delivery tests below to give a recipient a
+/// registered device to push to.
+async fn register_push_token(state: AppState, owner_token: &str, token: &str) {
+    let response = api::app(state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/push-tokens")
+                .header("authorization", format!("Bearer {owner_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "token": token }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
 }
 
 /// Sends `method uri` with an optional bearer `token` and optional JSON
@@ -793,4 +915,221 @@ async fn remove_contact_pushes_frame_to_other_party() {
     assert_eq!(pushed["type"], "contact_removed");
     assert_eq!(pushed["user_id"], owner_id.to_string());
     assert_eq!(pushed["email"], owner_email);
+}
+
+/// Acceptance criterion (issue #168): sending a message to a recipient with
+/// no live connection and at least one registered push token results in a
+/// push-send attempt with the correct recipient token and `fromUserId`.
+#[tokio::test]
+#[serial]
+async fn send_to_offline_contact_with_push_token_triggers_push() {
+    let pool = test_pool().await;
+    let (notifier, mut push_calls) = MockPushNotifier::new();
+    let state = test_state_with_push_notifier(std::sync::Arc::new(notifier)).await;
+    let (sender_token, sender_id, _sender_email) =
+        signup_user(&pool, state.clone(), "push-offline-sender").await;
+    let (recipient_token, recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "push-offline-recipient").await;
+    add_contact(state.clone(), &sender_token, &recipient_email).await;
+
+    let device_token = format!("ExponentPushToken[{}]", Uuid::new_v4());
+    register_push_token(state.clone(), &recipient_token, &device_token).await;
+
+    let addr = spawn_server(state).await;
+    let mut sender_ws = connect_ws(addr, &sender_token).await;
+    // Note: the recipient never connects.
+
+    let body_b64 = BASE64.encode(b"queued while the recipient is offline, with a push token");
+    sender_ws
+        .send(WsMessage::text(
+            json!({ "type": "send", "to": recipient_id, "body_b64": body_b64 }).to_string(),
+        ))
+        .await
+        .expect("failed to send frame");
+
+    let ack = recv_json(&mut sender_ws).await;
+    assert_eq!(ack, json!({ "type": "ack", "to": recipient_id }));
+
+    let (token, data) = recv_push_call(&mut push_calls).await;
+    assert_eq!(token, device_token);
+    assert_eq!(data, json!({ "type": "message", "fromUserId": sender_id }));
+    assert_no_push_call(&mut push_calls).await;
+}
+
+/// Acceptance criterion (issue #168): sending a message to a recipient with
+/// no registered push tokens at all completes normally (offline queue
+/// publish still succeeds, sender still gets their `ack`) with no push
+/// attempted.
+#[tokio::test]
+#[serial]
+async fn send_to_offline_contact_without_push_token_completes_with_no_push() {
+    let pool = test_pool().await;
+    let (notifier, mut push_calls) = MockPushNotifier::new();
+    let state = test_state_with_push_notifier(std::sync::Arc::new(notifier)).await;
+    let (sender_token, _sender_id, _sender_email) =
+        signup_user(&pool, state.clone(), "push-none-sender").await;
+    let (_recipient_token, recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "push-none-recipient").await;
+    add_contact(state.clone(), &sender_token, &recipient_email).await;
+    // Note: the recipient never registers a push token.
+
+    let addr = spawn_server(state).await;
+    let mut sender_ws = connect_ws(addr, &sender_token).await;
+    // Note: the recipient never connects.
+
+    let body_b64 = BASE64.encode(b"queued while the recipient is offline, no push token");
+    sender_ws
+        .send(WsMessage::text(
+            json!({ "type": "send", "to": recipient_id, "body_b64": body_b64 }).to_string(),
+        ))
+        .await
+        .expect("failed to send frame");
+
+    let ack = recv_json(&mut sender_ws).await;
+    assert_eq!(ack, json!({ "type": "ack", "to": recipient_id }));
+
+    assert_no_push_call(&mut push_calls).await;
+}
+
+/// Acceptance criterion (issue #168): a live-delivered message (recipient
+/// connected) does not trigger a push attempt, even though the recipient
+/// has a registered push token -- only the offline-queue path triggers a
+/// push.
+#[tokio::test]
+#[serial]
+async fn send_to_connected_recipient_does_not_trigger_push() {
+    let pool = test_pool().await;
+    let (notifier, mut push_calls) = MockPushNotifier::new();
+    let state = test_state_with_push_notifier(std::sync::Arc::new(notifier)).await;
+    let (sender_token, _sender_id, _sender_email) =
+        signup_user(&pool, state.clone(), "push-live-sender").await;
+    let (recipient_token, recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "push-live-recipient").await;
+    add_contact(state.clone(), &sender_token, &recipient_email).await;
+
+    let device_token = format!("ExponentPushToken[{}]", Uuid::new_v4());
+    register_push_token(state.clone(), &recipient_token, &device_token).await;
+
+    let addr = spawn_server(state).await;
+    let mut sender_ws = connect_ws(addr, &sender_token).await;
+    let mut recipient_ws = connect_ws(addr, &recipient_token).await;
+
+    let body_b64 = BASE64.encode(b"delivered live, must not trigger a push");
+    sender_ws
+        .send(WsMessage::text(
+            json!({ "type": "send", "to": recipient_id, "body_b64": body_b64 }).to_string(),
+        ))
+        .await
+        .expect("failed to send frame");
+
+    let relayed = recv_json(&mut recipient_ws).await;
+    assert_eq!(relayed["type"], "message");
+    let ack = recv_json(&mut sender_ws).await;
+    assert_eq!(ack, json!({ "type": "ack", "to": recipient_id }));
+
+    assert_no_push_call(&mut push_calls).await;
+}
+
+/// Acceptance criterion (issue #168): if the recipient has multiple
+/// registered tokens (multiple devices), a push is attempted to each one
+/// independently.
+#[tokio::test]
+#[serial]
+async fn send_to_offline_contact_with_multiple_push_tokens_notifies_each_one() {
+    let pool = test_pool().await;
+    let (notifier, mut push_calls) = MockPushNotifier::new();
+    let state = test_state_with_push_notifier(std::sync::Arc::new(notifier)).await;
+    let (sender_token, sender_id, _sender_email) =
+        signup_user(&pool, state.clone(), "push-multi-sender").await;
+    let (recipient_token, recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "push-multi-recipient").await;
+    add_contact(state.clone(), &sender_token, &recipient_email).await;
+
+    let device_token_a = format!("ExponentPushToken[{}]", Uuid::new_v4());
+    let device_token_b = format!("ExponentPushToken[{}]", Uuid::new_v4());
+    register_push_token(state.clone(), &recipient_token, &device_token_a).await;
+    register_push_token(state.clone(), &recipient_token, &device_token_b).await;
+
+    let addr = spawn_server(state).await;
+    let mut sender_ws = connect_ws(addr, &sender_token).await;
+    // Note: the recipient never connects.
+
+    let body_b64 = BASE64.encode(b"queued while the recipient is offline, two devices");
+    sender_ws
+        .send(WsMessage::text(
+            json!({ "type": "send", "to": recipient_id, "body_b64": body_b64 }).to_string(),
+        ))
+        .await
+        .expect("failed to send frame");
+
+    let ack = recv_json(&mut sender_ws).await;
+    assert_eq!(ack, json!({ "type": "ack", "to": recipient_id }));
+
+    let mut received_tokens = std::collections::HashSet::new();
+    for _ in 0..2 {
+        let (token, data) = recv_push_call(&mut push_calls).await;
+        assert_eq!(data, json!({ "type": "message", "fromUserId": sender_id }));
+        received_tokens.insert(token);
+    }
+    assert_eq!(
+        received_tokens,
+        std::collections::HashSet::from([device_token_a, device_token_b])
+    );
+    assert_no_push_call(&mut push_calls).await;
+}
+
+/// Acceptance criterion (issue #168): a push failure on one of a
+/// recipient's multiple registered tokens does not prevent sending to the
+/// others -- each token is attempted independently. Simulates a rejected
+/// token (e.g. `DeviceNotRegistered`, a network failure) via
+/// `MockPushNotifier::new_with_failing_tokens`, and asserts the other
+/// token is still attempted, and that none of this is visible to the
+/// sender (the `ack` still succeeds normally).
+#[tokio::test]
+#[serial]
+async fn send_to_offline_contact_attempts_other_tokens_after_one_fails() {
+    let pool = test_pool().await;
+    let device_token_failing = format!("ExponentPushToken[{}]", Uuid::new_v4());
+    let device_token_ok = format!("ExponentPushToken[{}]", Uuid::new_v4());
+    let (notifier, mut push_calls) =
+        MockPushNotifier::new_with_failing_tokens(std::collections::HashSet::from([
+            device_token_failing.clone(),
+        ]));
+    let state = test_state_with_push_notifier(std::sync::Arc::new(notifier)).await;
+    let (sender_token, sender_id, _sender_email) =
+        signup_user(&pool, state.clone(), "push-fail-sender").await;
+    let (recipient_token, recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "push-fail-recipient").await;
+    add_contact(state.clone(), &sender_token, &recipient_email).await;
+    register_push_token(state.clone(), &recipient_token, &device_token_failing).await;
+    register_push_token(state.clone(), &recipient_token, &device_token_ok).await;
+
+    let addr = spawn_server(state).await;
+    let mut sender_ws = connect_ws(addr, &sender_token).await;
+    // Note: the recipient never connects.
+
+    let body_b64 = BASE64.encode(b"queued while offline, one of two tokens will fail");
+    sender_ws
+        .send(WsMessage::text(
+            json!({ "type": "send", "to": recipient_id, "body_b64": body_b64 }).to_string(),
+        ))
+        .await
+        .expect("failed to send frame");
+
+    // The sender's ack must succeed regardless of the eventual per-token
+    // push outcome, since the push send is spawned rather than awaited.
+    let ack = recv_json(&mut sender_ws).await;
+    assert_eq!(ack, json!({ "type": "ack", "to": recipient_id }));
+
+    let mut received_tokens = std::collections::HashSet::new();
+    for _ in 0..2 {
+        let (token, data) = recv_push_call(&mut push_calls).await;
+        assert_eq!(data, json!({ "type": "message", "fromUserId": sender_id }));
+        received_tokens.insert(token);
+    }
+    assert_eq!(
+        received_tokens,
+        std::collections::HashSet::from([device_token_failing, device_token_ok])
+    );
+    assert_no_push_call(&mut push_calls).await;
 }

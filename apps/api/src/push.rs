@@ -4,13 +4,15 @@
 //! iOS/APNs and Android/FCM behind one unified endpoint without this API
 //! needing direct Apple/Google credentials.
 //!
-//! This module only builds the sending capability as a standalone,
-//! independently-testable unit (issue #167). Wiring it into an actual
-//! delivery event (e.g. a message queued for an offline recipient) is a
-//! separate issue, as is reading device tokens out of a `push_tokens`
-//! table (not built yet) -- [`send_push_notification`] just takes a token
-//! as a plain parameter -- and so is stale-token cleanup on a
-//! `DeviceNotRegistered` rejection; this module only surfaces that outcome
+//! This module originally only built the sending capability as a
+//! standalone, independently-testable unit (issue #167) --
+//! [`send_push_notification`] just takes a token as a plain parameter, with
+//! no knowledge of `push_tokens` (issue #166) or any delivery event. Issue
+//! #168 wires it into the actual offline-delivery path
+//! (`crate::relay::queue_for_offline_delivery`) via the [`PushNotifier`]
+//! trait below, which reads tokens out of `push_tokens` itself rather than
+//! this module doing so. Stale-token cleanup on a `DeviceNotRegistered`
+//! rejection is still not built -- this module only surfaces that outcome
 //! to its caller via [`PushError::Rejected`].
 //!
 //! Per `docs/decisions/0001-message-content-never-in-postgres.md` /
@@ -24,6 +26,9 @@
 //! plaintext/ciphertext/envelope bytes into `title`/`body`/`data`.
 
 use std::fmt;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -170,6 +175,74 @@ async fn send_push_notification_to(
         ))),
     }
 }
+
+/// Object-safe seam over [`send_push_notification`], so callers that need
+/// to trigger a push as a side effect of some other event (issue #168's
+/// `crate::relay::queue_for_offline_delivery`) can depend on a trait object
+/// instead of a concrete `reqwest::Client`, letting integration tests
+/// inject a mock notifier instead of exercising the real Expo push API (or
+/// even a `wiremock` server) end to end.
+///
+/// Not `async_trait`-based -- this crate doesn't otherwise depend on
+/// `async_trait`, so the trait method returns a manually boxed future
+/// instead, which needs no extra dependency for a single trait.
+pub trait PushNotifier: Send + Sync {
+    /// Same contract as [`send_push_notification`]: `title`/`body` must
+    /// stay content-free, and `data` stays limited to a small identity-only
+    /// payload -- this trait doesn't enforce that at the type level either.
+    fn send_push<'a>(
+        &'a self,
+        token: &'a str,
+        title: &'a str,
+        body: &'a str,
+        data: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<(), PushError>> + Send + 'a>>;
+}
+
+/// The real [`PushNotifier`] used at runtime: sends via
+/// [`send_push_notification`] against the actual Expo push API, using a
+/// shared `reqwest::Client` (connection pooling across every push this
+/// process ever sends, rather than a fresh client per call).
+pub struct ExpoPushNotifier {
+    client: reqwest::Client,
+}
+
+impl ExpoPushNotifier {
+    pub fn new() -> Self {
+        Self {
+            client: reqwest::Client::new(),
+        }
+    }
+}
+
+impl Default for ExpoPushNotifier {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PushNotifier for ExpoPushNotifier {
+    fn send_push<'a>(
+        &'a self,
+        token: &'a str,
+        title: &'a str,
+        body: &'a str,
+        data: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<(), PushError>> + Send + 'a>> {
+        Box::pin(send_push_notification(
+            &self.client,
+            token,
+            title,
+            body,
+            data,
+        ))
+    }
+}
+
+/// Shared, `Clone`-cheap handle to a [`PushNotifier`], suitable for storing
+/// on `crate::auth::AppState` (which is itself cloned per-request/per-task
+/// the same way `pool`/`registry`/`nats` are).
+pub type SharedPushNotifier = Arc<dyn PushNotifier>;
 
 #[cfg(test)]
 mod tests {
