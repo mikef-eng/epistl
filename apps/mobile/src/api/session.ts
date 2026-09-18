@@ -28,6 +28,12 @@ export const SESSION_EMAIL_KEY = 'epistl.session_email';
  * `SettingsScreen`, always hits `GET /api/avatar/{user_id}` directly and
  * falls back to the initial circle on failure -- see `../components/Avatar.tsx`). */
 export const SESSION_AVATAR_PATH_KEY = 'epistl.session_avatar_path';
+/** The authenticated user's own username (issue #185), as returned by the
+ * `username` field now present in `/signup` and `/login` responses' `user`
+ * object -- persisted the same way as the email so `SettingsScreen`'s
+ * account info section (and its edit control, via `../api/client.ts`'s
+ * `updateUsername`) can display/update it without a network round trip. */
+export const SESSION_USERNAME_KEY = 'epistl.session_username';
 
 export async function saveToken(token: string): Promise<void> {
   await SecureStore.setItemAsync(SESSION_TOKEN_KEY, token);
@@ -57,6 +63,14 @@ export async function getEmail(): Promise<string | null> {
   return SecureStore.getItemAsync(SESSION_EMAIL_KEY);
 }
 
+export async function saveUsername(username: string): Promise<void> {
+  await SecureStore.setItemAsync(SESSION_USERNAME_KEY, username);
+}
+
+export async function getUsername(): Promise<string | null> {
+  return SecureStore.getItemAsync(SESSION_USERNAME_KEY);
+}
+
 export async function saveAvatarPath(path: string): Promise<void> {
   await SecureStore.setItemAsync(SESSION_AVATAR_PATH_KEY, path);
 }
@@ -65,18 +79,19 @@ export async function getAvatarPath(): Promise<string | null> {
   return SecureStore.getItemAsync(SESSION_AVATAR_PATH_KEY);
 }
 
-/** Clears the token, user id, email, and avatar path keys together in one
- * call (issue #125's log-out flow) so a future caller can't forget one by
- * clearing them individually at each call site. Deliberately does not
- * touch `../crypto/identity.ts`, `../crypto/session.ts`, or
- * `../storage/messages.ts` -- those are tied to the device's cryptographic
- * identity, not the auth session, and logging back in as the same user
- * should find them intact. */
+/** Clears the token, user id, email, username, and avatar path keys
+ * together in one call (issue #125's log-out flow) so a future caller
+ * can't forget one by clearing them individually at each call site.
+ * Deliberately does not touch `../crypto/identity.ts`, `../crypto/session.ts`,
+ * or `../storage/messages.ts` -- those are tied to the device's
+ * cryptographic identity, not the auth session, and logging back in as the
+ * same user should find them intact. */
 export async function clearSession(): Promise<void> {
   await Promise.all([
     SecureStore.deleteItemAsync(SESSION_TOKEN_KEY),
     SecureStore.deleteItemAsync(SESSION_USER_ID_KEY),
     SecureStore.deleteItemAsync(SESSION_EMAIL_KEY),
+    SecureStore.deleteItemAsync(SESSION_USERNAME_KEY),
     SecureStore.deleteItemAsync(SESSION_AVATAR_PATH_KEY),
   ]);
 }
