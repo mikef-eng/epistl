@@ -14,9 +14,9 @@ Epistl uses a controlled SDLC harness so humans and AI agents work through small
 | Role | Responsibility |
 | --- | --- |
 | **Planner** | Breaks the goal into small tasks; opens issues with clear goal, acceptance criteria, and out of scope. Labels `planning`, then `ready` when unambiguous. |
-| **Coder** | Implements **one** `ready` issue at a time. Creates a branch, opens a PR that closes the issue. Extra discoveries become new issues — not scope on the current branch. |
-| **Tester** | Runs CI, adds tests for acceptance criteria when missing, checks the PR against criteria line by line. Failures → PR comment + `blocked`. Pass → `needs-review`. |
-| **Reviewer** | Final pass on quality, security, conventions, and scope. Merge only when CI is green and criteria are met. |
+| **Coder** | Implements **one** `ready` issue at a time. Creates a branch, classifies the change as logic-affecting or non-logic (see Coder playbook), and opens a PR that closes the issue. Extra discoveries become new issues — not scope on the current branch. |
+| **Tester** | Runs CI, adds tests for acceptance criteria when missing, checks the PR against criteria line by line. Failures → PR comment + `blocked`. Pass → `needs-review`. Skipped by the orchestrator when the Coder classifies the change non-logic, unless the Reviewer overrides that classification. |
+| **Reviewer** | Final pass on quality, security, conventions, and scope. Independently confirms the Coder's testing classification before trusting it. Merge only when CI is green and criteria are met. |
 
 ## Labels
 
@@ -30,7 +30,7 @@ Epistl uses a controlled SDLC harness so humans and AI agents work through small
 | `bug` | Defect against expected behavior |
 | `backlog` | Idea not ready for Planner/Coder yet |
 
-Flow: `planning` → `ready` → `in-progress` → (`blocked` \| `needs-review`) → merge/close.
+Flow: `planning` → `ready` → `in-progress` → (`blocked` \| `needs-review`) → merge/close. For a change the Coder classifies non-logic, the orchestrator may skip dispatching a Tester entirely, so the issue can go straight from `in-progress` to merge/close on Reviewer sign-off — `needs-review` is not a mandatory waypoint in that case.
 
 ## Planner playbook
 
@@ -50,8 +50,9 @@ Flow: `planning` → `ready` → `in-progress` → (`blocked` \| `needs-review`)
 4. Implement **only** that issue's scope. Prefer TDD (red → green → refactor) when tests are part of the acceptance criteria. Run local checks via moon (`moon run api:check`/`api:lint`/`api:test`, `moon run mobile:lint`/`mobile:typecheck`/`mobile:test`), not raw `cargo`/`npm` — see the Tester playbook below for why.
 5. If you notice extra work, open a new issue via the `open-task-issue` skill — do not expand this branch.
 6. If the change alters the stack, how to run something, an env var, or an architectural constraint, update the relevant section of `README.md` in the same PR — see "Docs freshness" below.
-7. Open a PR that references the issue with `Closes #<number>`.
-8. Keep the issue labeled `in-progress` until Tester finishes.
+7. Before opening the PR, classify the change and state it in the PR description under a `## Testing recommendation` heading, as one of: **"Logic-affecting — recommend Tester"** or **"Non-logic (config/CI/docs/tooling only) — Tester likely unnecessary, Reviewer can verify directly."** This is not the Coder grading whether its own implementation is correct (that would be checking its own homework) — it's classifying the *nature* of the diff, a narrower and more objective call. Concretely: "non-logic" covers changes confined to CI workflow files, `.cargo`/build config, README/docs/decision-doc content, dependency version bumps with no code changes, and formatting-only diffs. Anything touching `apps/api/src/**` (excluding pure config files), `apps/mobile/src/**`, migrations, or any test file whose assertions changed (not just mechanical fixture updates forced by an unrelated signature change) is "logic-affecting" by default. When unsure, default to "logic-affecting" — this is a fail-safe-toward-more-scrutiny rule, not a fail-safe-toward-less-ceremony one.
+8. Open a PR that references the issue with `Closes #<number>`.
+9. Keep the issue labeled `in-progress` until Tester (if one is dispatched) or Reviewer finishes.
 
 ## Tester playbook
 
@@ -64,13 +65,14 @@ Flow: `planning` → `ready` → `in-progress` → (`blocked` \| `needs-review`)
 
 ## Reviewer playbook
 
-1. Confirm CI is green and the Tester has set `needs-review`. Trust CI-green plus the Tester's `needs-review` label entirely for correctness — never re-run test suites yourself; spend your review effort on the diff, not on re-verifying "does it pass."
-2. Re-read the issue acceptance criteria against the PR diff.
-3. Check scope: nothing beyond the issue landed; discoveries should already be separate issues.
-4. Check conventions against this file and the repo's existing patterns.
-5. Check docs freshness: if the diff changes the stack, how to run something, an env var, or an architectural constraint, `README.md` must be updated in the same PR. Block merge if it isn't — see "Docs freshness" below.
-6. If the diff touches `apps/api/src/crypto/**` or `apps/api/src/auth/**`, run the `crypto-reviewer` subagent (or the `pqc-crypto-change` skill) and do **not** approve without its sign-off.
-7. Merge only when CI is green and criteria are met. Prefer squash merge; delete the branch after merge.
+1. Confirm CI is green. If the Coder classified the change "logic-affecting" and a Tester ran, confirm it set `needs-review` and trust that pass entirely for correctness — never re-run test suites yourself; spend your review effort on the diff, not on re-verifying "does it pass." If the Coder classified it "non-logic" and no Tester ran, the issue will still be labeled `in-progress` rather than `needs-review` — that's expected, not a sign something was skipped incorrectly, provided the classification holds up in the next step.
+2. Independently confirm the Coder's classification stated in the PR description's `## Testing recommendation` heading — do not just trust it. If the diff actually touches business logic, data handling, or user-facing behavior despite a "non-logic" label, do **not** merge on Reviewer-only sign-off: request a Tester pass first (re-run the `tester` subagent or comment on the PR to that effect) and hold off on merging until it completes. A "logic-affecting" label on a diff that turns out to be config/docs-only is harmless and doesn't block merge — just note it if you want the classification tightened next time.
+3. Re-read the issue acceptance criteria against the PR diff.
+4. Check scope: nothing beyond the issue landed; discoveries should already be separate issues.
+5. Check conventions against this file and the repo's existing patterns.
+6. Check docs freshness: if the diff changes the stack, how to run something, an env var, or an architectural constraint, `README.md` must be updated in the same PR. Block merge if it isn't — see "Docs freshness" below.
+7. If the diff touches `apps/api/src/crypto/**` or `apps/api/src/auth/**`, run the `crypto-reviewer` subagent (or the `pqc-crypto-change` skill) and do **not** approve without its sign-off.
+8. Merge only when CI is green and criteria are met. Prefer squash merge; delete the branch after merge.
 
 ## Docs freshness
 

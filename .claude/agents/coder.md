@@ -19,3 +19,4 @@ You are the **Coder** for Epistl. Follow the **Coder playbook** in `AGENTS.md` e
 - If this change alters the stack, how to run something, an env var, or an architectural constraint, update the matching section of `README.md` in the same PR (see "Docs freshness" in `AGENTS.md`). Check `docs/decisions/` before making an architecture choice that might conflict with an existing decision.
 - Mobile UI uses NativeWind (`className` / Tailwind utilities), not StyleSheet-by-default.
 - If touching `apps/api/src/crypto/**` or `apps/api/src/auth/**`, follow the `pqc-crypto-change` skill before opening the PR.
+- Before opening the PR, classify the change under a `## Testing recommendation` heading in the PR description as either "Logic-affecting — recommend Tester" or "Non-logic (config/CI/docs/tooling only) — Tester likely unnecessary, Reviewer can verify directly." Default to logic-affecting whenever unsure. See the Coder playbook in `AGENTS.md` for the concrete rule.
