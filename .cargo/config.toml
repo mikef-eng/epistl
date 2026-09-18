@@ -1,0 +1,13 @@
+# Project-wide Cargo config for the workspace rooted at this repo's
+# top-level `Cargo.toml`/`Cargo.lock` (shared by `apps/api` and
+# `packages/quic-relay-client`).
+#
+# `sccache` is a required (not optional/personal) dev tool: without it on
+# `PATH`, `cargo build`/`moon run api:check`/`moon run quic-relay-client:check`
+# will fail with an "executable `sccache` not found" style error. This is
+# intentional -- see README.md's "Local commands" section for install
+# instructions, and docs/decisions/0016-concurrent-subagents-require-isolated-worktrees.md
+# for why a shared compiler cache matters here (concurrent git worktrees
+# otherwise each recompile the same dependency graph from scratch).
+[build]
+rustc-wrapper = "sccache"
