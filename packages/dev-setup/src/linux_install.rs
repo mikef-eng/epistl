@@ -211,6 +211,53 @@ mod tests {
         }
     }
 
+    /// Unlike `FakeExecutor` above (which ignores `args` and matches on
+    /// program name alone), this executor only reports success for an
+    /// *exact* `(program, args)` match, and records every call it
+    /// receives. This is what actually proves the code invokes the
+    /// official installer command verbatim (not just "some command named
+    /// sh"/"some command named cargo"), and lets tests assert an install
+    /// command was never invoked at all -- not just that the returned
+    /// action happened to be the right enum variant.
+    struct RecordingExecutor {
+        allow: Vec<(&'static str, Vec<&'static str>)>,
+        calls: std::cell::RefCell<Vec<(String, Vec<String>)>>,
+    }
+
+    impl RecordingExecutor {
+        fn new(allow: Vec<(&'static str, Vec<&'static str>)>) -> Self {
+            RecordingExecutor {
+                allow,
+                calls: std::cell::RefCell::new(Vec::new()),
+            }
+        }
+
+        fn was_called_with(&self, program: &str, args: &[&str]) -> bool {
+            self.calls.borrow().iter().any(|(p, a)| {
+                p == program
+                    && a.as_slice() == args.iter().map(|s| s.to_string()).collect::<Vec<_>>()
+            })
+        }
+    }
+
+    impl CommandExecutor for RecordingExecutor {
+        fn run(&self, program: &str, args: &[&str]) -> Option<String> {
+            self.calls.borrow_mut().push((
+                program.to_string(),
+                args.iter().map(|s| s.to_string()).collect(),
+            ));
+            let matched = self
+                .allow
+                .iter()
+                .any(|(p, a)| *p == program && a.as_slice() == args);
+            if matched {
+                Some(format!("{program} ok"))
+            } else {
+                None
+            }
+        }
+    }
+
     #[test]
     fn apt_available_true_when_apt_get_present() {
         let exec = FakeExecutor::new(&["apt-get"]);
@@ -258,6 +305,43 @@ mod tests {
     }
 
     #[test]
+    fn rustup_guide_only_message_explains_unsupported_package_manager_when_apt_absent() {
+        let exec = FakeExecutor::new(&["sh"]);
+        let action = rustup_action(&exec, false, true);
+        match action {
+            LinuxAction::GuideOnly(msg) => {
+                let lower = msg.to_lowercase();
+                assert!(
+                    lower.contains("unsupported") || lower.contains("unrecognized"),
+                    "expected an unsupported/unrecognized package manager explanation, got: {msg}"
+                );
+                assert!(msg.contains("rustup.rs"));
+            }
+            other => panic!("expected GuideOnly, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rustup_install_with_flag_invokes_the_exact_official_installer_command() {
+        let exec = RecordingExecutor::new(vec![("sh", vec!["-c", RUSTUP_INSTALL_CMD])]);
+        let action = rustup_action(&exec, true, true);
+        assert_eq!(action, LinuxAction::Installed);
+        assert!(exec.was_called_with("sh", &["-c", RUSTUP_INSTALL_CMD]));
+    }
+
+    #[test]
+    fn rustup_would_run_without_install_flag_never_actually_invokes_the_installer() {
+        let exec = RecordingExecutor::new(vec![("sh", vec!["-c", RUSTUP_INSTALL_CMD])]);
+        let action = rustup_action(&exec, true, false);
+        assert_eq!(action, LinuxAction::WouldRun(RUSTUP_INSTALL_CMD));
+        assert!(
+            exec.calls.borrow().is_empty(),
+            "the installer must never run without --install, but got calls: {:?}",
+            exec.calls.borrow()
+        );
+    }
+
+    #[test]
     fn moon_install_runs_when_apt_present_and_install_flag_set() {
         let exec = FakeExecutor::new(&["apt-get", "bash"]);
         let action = moon_action(&exec, true, true);
@@ -276,6 +360,43 @@ mod tests {
         let exec = FakeExecutor::new(&["bash"]);
         let action = moon_action(&exec, false, true);
         assert!(matches!(action, LinuxAction::GuideOnly(_)));
+    }
+
+    #[test]
+    fn moon_guide_only_message_explains_unsupported_package_manager_when_apt_absent() {
+        let exec = FakeExecutor::new(&["bash"]);
+        let action = moon_action(&exec, false, true);
+        match action {
+            LinuxAction::GuideOnly(msg) => {
+                let lower = msg.to_lowercase();
+                assert!(
+                    lower.contains("unsupported") || lower.contains("unrecognized"),
+                    "expected an unsupported/unrecognized package manager explanation, got: {msg}"
+                );
+                assert!(msg.contains("moonrepo.dev"));
+            }
+            other => panic!("expected GuideOnly, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn moon_install_with_flag_invokes_the_exact_official_installer_command() {
+        let exec = RecordingExecutor::new(vec![("bash", vec!["-c", MOON_INSTALL_CMD])]);
+        let action = moon_action(&exec, true, true);
+        assert_eq!(action, LinuxAction::Installed);
+        assert!(exec.was_called_with("bash", &["-c", MOON_INSTALL_CMD]));
+    }
+
+    #[test]
+    fn moon_would_run_without_install_flag_never_actually_invokes_the_installer() {
+        let exec = RecordingExecutor::new(vec![("bash", vec!["-c", MOON_INSTALL_CMD])]);
+        let action = moon_action(&exec, true, false);
+        assert_eq!(action, LinuxAction::WouldRun(MOON_INSTALL_CMD));
+        assert!(
+            exec.calls.borrow().is_empty(),
+            "the installer must never run without --install, but got calls: {:?}",
+            exec.calls.borrow()
+        );
     }
 
     #[test]
@@ -304,6 +425,49 @@ mod tests {
         let exec = FakeExecutor::new(&["cargo"]);
         let action = sccache_action(&exec, false, true);
         assert!(matches!(action, LinuxAction::GuideOnly(_)));
+    }
+
+    #[test]
+    fn sccache_guide_only_message_explains_unsupported_package_manager_when_apt_absent() {
+        let exec = FakeExecutor::new(&["cargo"]);
+        let action = sccache_action(&exec, false, true);
+        match action {
+            LinuxAction::GuideOnly(msg) => {
+                let lower = msg.to_lowercase();
+                assert!(
+                    lower.contains("unsupported") || lower.contains("unrecognized"),
+                    "expected an unsupported/unrecognized package manager explanation, got: {msg}"
+                );
+                assert!(msg.contains("github.com/mozilla/sccache"));
+            }
+            other => panic!("expected GuideOnly, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sccache_install_with_flag_invokes_the_exact_official_installer_command() {
+        let exec = RecordingExecutor::new(vec![
+            ("cargo", vec!["--version"]),
+            ("cargo", vec!["install", "sccache", "--locked"]),
+        ]);
+        let action = sccache_action(&exec, true, true);
+        assert_eq!(action, LinuxAction::Installed);
+        assert!(exec.was_called_with("cargo", &["install", "sccache", "--locked"]));
+    }
+
+    #[test]
+    fn sccache_would_run_without_install_flag_never_actually_invokes_the_installer() {
+        let exec = RecordingExecutor::new(vec![
+            ("cargo", vec!["--version"]),
+            ("cargo", vec!["install", "sccache", "--locked"]),
+        ]);
+        let action = sccache_action(&exec, true, false);
+        assert_eq!(action, LinuxAction::WouldRun(SCCACHE_INSTALL_CMD));
+        assert!(
+            !exec.was_called_with("cargo", &["install", "sccache", "--locked"]),
+            "the installer must never run without --install, but got calls: {:?}",
+            exec.calls.borrow()
+        );
     }
 
     #[test]
