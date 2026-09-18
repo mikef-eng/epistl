@@ -42,6 +42,7 @@ export interface AuthResponse {
 export interface Contact {
   user_id: string;
   email: string;
+  username: string;
   added_at: string;
   x25519_public_key_b64: string | null;
   kyber_public_key_b64: string | null;
@@ -173,6 +174,45 @@ export async function login(email: string, password: string): Promise<AuthRespon
   return data;
 }
 
+/** Best-effort upsert of a successful `listContacts()` response into the
+ * local username cache (issue #174) -- see `storage/contacts.ts`'s module
+ * doc. Failures here (e.g. a local storage error) are swallowed rather than
+ * surfaced to `listContacts()`'s caller: this cache is purely a latency
+ * optimization for offline push-notification sender lookup, never a
+ * correctness requirement for displaying the contacts list itself.
+ *
+ * Imports `storage/contacts.ts` lazily (rather than a static top-level
+ * import) because that module -- via `storage/messages.ts`'s shared
+ * `DATABASE_NAME` -- opens the on-device SQLite database and runs its
+ * `drizzle-kit` migrations as a module-load side effect. `client.ts` is
+ * imported by transport-layer modules/tests (`transport/quic.ts`,
+ * `transport/store.ts`) that have no reason to touch SQLite at all; a
+ * static import here would force that side effect onto every consumer of
+ * this file, not just the contacts path that actually needs it.
+ *
+ * Uses `require()` rather than a dynamic `import()` for this: both Metro
+ * (the app's real bundler) and Jest (via `babel-preset-expo`) compile this
+ * module to CommonJS, but neither environment rewrites a native
+ * `import()` expression to a `require()` call the way a Node ESM loader
+ * would -- under Jest that leaves `import()` trying to hit Node's real
+ * dynamic-import machinery, which throws ("a dynamic import callback was
+ * invoked without --experimental-vm-modules") because Jest's default
+ * `testEnvironment` isn't running real ESM. `require()` is lazy in exactly
+ * the same way (it only runs -- and only pays the module-load side effect
+ * -- the first time this function is called) and works identically under
+ * both. */
+async function cacheContactUsernames(contacts: Contact[]): Promise<void> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy require, see doc comment above.
+    const { upsertContacts } = require('../storage/contacts') as typeof import('../storage/contacts');
+    await upsertContacts(
+      contacts.map((contact) => ({ userId: contact.user_id, username: contact.username }))
+    );
+  } catch {
+    // Best-effort -- see doc comment above.
+  }
+}
+
 export async function listContacts(): Promise<ContactsResponse> {
   const token = await requireToken();
 
@@ -185,7 +225,9 @@ export async function listContacts(): Promise<ContactsResponse> {
     await throwApiError(response);
   }
 
-  return (await response.json()) as ContactsResponse;
+  const data = (await response.json()) as ContactsResponse;
+  await cacheContactUsernames(data.contacts);
+  return data;
 }
 
 /** Sends a contact request by email (issue #79's

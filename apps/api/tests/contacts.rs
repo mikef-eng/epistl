@@ -213,6 +213,51 @@ async fn add_contact_reflects_in_list() {
     assert!(contacts[0]["added_at"].is_string());
 }
 
+/// Acceptance criterion (issue #174): `GET /api/contacts` includes each
+/// contact's `username` alongside the existing `email` field.
+#[tokio::test]
+async fn list_contacts_includes_username() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (owner_token, _owner_id, _owner_email) =
+        signup_user(&pool, state.clone(), "username-owner").await;
+    let (_contact_token, contact_id, contact_email) =
+        signup_user(&pool, state.clone(), "username-contact").await;
+
+    let contact_username: String = sqlx::query("SELECT username FROM users WHERE id = $1")
+        .bind(contact_id)
+        .fetch_one(&pool)
+        .await
+        .expect("contact user row must exist")
+        .get("username");
+
+    let (add_status, _) = request(
+        api::app(state.clone()),
+        "POST",
+        "/api/contacts",
+        Some(&owner_token),
+        Some(json!({ "email": contact_email })),
+    )
+    .await;
+    assert_eq!(add_status, StatusCode::CREATED);
+
+    let (status, body) = request(
+        api::app(state),
+        "GET",
+        "/api/contacts",
+        Some(&owner_token),
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    let contacts = body["contacts"].as_array().unwrap();
+    assert_eq!(contacts.len(), 1);
+    assert_eq!(contacts[0]["user_id"], contact_id.to_string());
+    assert_eq!(contacts[0]["email"], contact_email);
+    assert_eq!(contacts[0]["username"], contact_username);
+}
+
 #[tokio::test]
 async fn add_contact_duplicate_returns_409() {
     let pool = test_pool().await;
