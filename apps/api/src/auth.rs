@@ -651,6 +651,10 @@ pub struct AppState {
     /// cheaply `Clone` like the fields above, and so integration tests can
     /// inject a mock notifier instead of exercising the real Expo push API.
     pub push_notifier: crate::push::SharedPushNotifier,
+    /// SeaweedFS S3-gateway client pair backing `crate::avatars` (issue
+    /// #189). `Clone`-cheap the same way the fields above are --
+    /// `aws_sdk_s3::Client` is itself `Arc`-backed.
+    pub avatar_store: crate::avatars::AvatarStore,
 }
 
 /// The axum router for `/signup`, `/login`, and (by composition with other
