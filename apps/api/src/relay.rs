@@ -453,6 +453,8 @@ mod tests {
             nats,
             search_rate_limiter: crate::search::SearchRateLimiter::new(),
             push_notifier: std::sync::Arc::new(crate::push::ExpoPushNotifier::new()),
+            avatar_store: crate::avatars::AvatarStore::from_env()
+                .expect("failed to build AvatarStore for test"),
         }
     }
 

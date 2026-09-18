@@ -287,6 +287,8 @@ async fn test_state() -> AppState {
         nats,
         search_rate_limiter: api::search::SearchRateLimiter::new(),
         push_notifier: std::sync::Arc::new(api::push::ExpoPushNotifier::new()),
+        avatar_store: api::avatars::AvatarStore::from_env()
+            .expect("failed to build AvatarStore for test"),
     }
 }
 

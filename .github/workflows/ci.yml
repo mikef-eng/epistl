@@ -92,6 +92,18 @@ jobs:
       # service. `better-auth` requires at least 32 bytes.
       AUTH_SECRET: ci-only-secret-do-not-use-in-prod-32+
       NATS_URL: nats://localhost:4222
+      # Not real credentials -- only used against the ephemeral CI
+      # SeaweedFS container started below, matching
+      # `docker/seaweedfs-s3-config.json`'s checked-in identity (the same
+      # one `.env.example` documents for local dev). The API always runs
+      # as a host process (never containerized, even in local dev), so
+      # both endpoints are `localhost` here, same as `NATS_URL` above --
+      # see issue #189 / `docs/decisions/0018-seaweedfs-object-storage-for-avatars.md`.
+      SEAWEEDFS_S3_ACCESS_KEY: epistl
+      SEAWEEDFS_S3_SECRET_KEY: epistl-seaweedfs-dev-secret
+      SEAWEEDFS_INTERNAL_ENDPOINT: http://localhost:8333
+      SEAWEEDFS_PUBLIC_ENDPOINT: http://localhost:8333
+      AVATAR_BUCKET_NAME: avatars
     steps:
       - uses: actions/checkout@v4
         with:
@@ -121,6 +133,20 @@ jobs:
             nats:2-alpine -js -sd /data -m 8222
           timeout 30s sh -c \
             'until wget -qO- http://localhost:8222/healthz >/dev/null 2>&1; do sleep 1; done'
+
+      # Same reason NATS isn't a `services:` container above: `services:`
+      # has no way to pass `weed mini`'s CMD args, only extra `docker
+      # create` options -- so this runs the exact same image/command/config
+      # mount `docker-compose.yml`'s `seaweedfs` service uses for local dev.
+      - name: Start SeaweedFS
+        run: |
+          docker run -d --name seaweedfs \
+            -p 8333:8333 -p 9333:9333 \
+            -v "$(pwd)/docker/seaweedfs-s3-config.json:/etc/seaweedfs/s3.json:ro" \
+            -e S3_BUCKET=avatars \
+            chrislusf/seaweedfs:4.47 mini -dir=/data -s3.config=/etc/seaweedfs/s3.json
+          timeout 30s sh -c \
+            'until curl -fs http://localhost:9333/cluster/status >/dev/null 2>&1; do sleep 1; done'
 
       - name: Format
         run: moon run api:check

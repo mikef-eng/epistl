@@ -66,6 +66,13 @@ rcgen = "0.14"
 # version to the dependency graph. `features = ["json"]` enables
 # `RequestBuilder::json`, used to send Expo's JSON push payload.
 reqwest = { version = "0.12.28", features = ["json"] }
+# `aws-sdk-s3` (issue #189, avatar upload/serving against SeaweedFS's S3
+# gateway -- `apps/api/src/avatars.rs`). Pinned to 1.148.0, the version
+# resolved via `cargo add aws-sdk-s3` at implementation time. See that
+# module's doc comment for the full choice/version-pin rationale, the
+# `behavior-version-latest` feature, and why two separate clients are
+# built from it.
+aws-sdk-s3 = { version = "1.148.0", features = ["behavior-version-latest"] }
 
 [dev-dependencies]
 # Real WebSocket client for the `/ws` relay's integration tests --
