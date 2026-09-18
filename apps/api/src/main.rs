@@ -79,6 +79,7 @@ async fn main() {
         registry: api::registry::ConnectionRegistry::new(),
         nats: nats_client,
         search_rate_limiter: api::search::SearchRateLimiter::new(),
+        push_notifier: std::sync::Arc::new(api::push::ExpoPushNotifier::new()),
     };
 
     // On by default (issue #114): starts a real QUIC listener alongside
