@@ -7,17 +7,10 @@ import { FlatList, Pressable, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { type Contact, listContacts } from '../api/client';
+import { bundleFromContact, type ContactKeyBundle } from '../api/contactBundle';
 import { getToken, getUserId } from '../api/session';
 import { ensureLocalIdentity, type Identity } from '../crypto/identity';
-import {
-  decodeHandshakeEnvelope,
-  decodeRatchetEnvelope,
-  encodeHandshakeEnvelope,
-  encodeRatchetEnvelope,
-  HANDSHAKE_ENVELOPE_VERSION,
-  RATCHET_ENVELOPE_VERSION,
-  type EnvelopeDecodeResult,
-} from '../crypto/envelope';
+import { encodeHandshakeEnvelope, encodeRatchetEnvelope } from '../crypto/envelope';
 import {
   deriveNextSendingMessageKey,
   initiateSession,
@@ -26,6 +19,7 @@ import {
   verifyPrekeyBundle,
   type RatchetState,
 } from '../crypto/session';
+import { inboxStore, type InboxEvent } from '../inbox/listener';
 import type { RootStackParamList } from '../navigation/types';
 import {
   getMessages,
@@ -34,7 +28,7 @@ import {
   type MessageDirection,
 } from '../storage/messages';
 import { transportStore, type IncomingFrame } from '../transport/store';
-import { base64ToBytes, bytesToBase64, bytesToUtf8, utf8ToBytes } from '../utils/base64';
+import { bytesToBase64, utf8ToBytes } from '../utils/base64';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Chat'>;
 
@@ -50,32 +44,6 @@ interface ChatListItem {
   verified: boolean;
   createdAt: string;
   deliveryFailed?: boolean;
-}
-
-/** This device's view of a contact's server-reported PQXDH key bundle,
- * decoded from base64 (issue #35's `user_keys` fields via `listContacts`). */
-interface ContactKeyBundle {
-  x25519PublicKey: Uint8Array;
-  kyberPublicKey: Uint8Array;
-  dilithiumPublicKey: Uint8Array;
-  prekeySignature: Uint8Array;
-}
-
-function bundleFromContact(contact: Contact): ContactKeyBundle | null {
-  if (
-    contact.x25519_public_key_b64 === null ||
-    contact.kyber_public_key_b64 === null ||
-    contact.dilithium_public_key_b64 === null ||
-    contact.prekey_signature_b64 === null
-  ) {
-    return null;
-  }
-  return {
-    x25519PublicKey: base64ToBytes(contact.x25519_public_key_b64),
-    kyberPublicKey: base64ToBytes(contact.kyber_public_key_b64),
-    dilithiumPublicKey: base64ToBytes(contact.dilithium_public_key_b64),
-    prekeySignature: base64ToBytes(contact.prekey_signature_b64),
-  };
 }
 
 let localKeySeq = 0;
@@ -116,6 +84,7 @@ export default function ChatScreen({ navigation, route }: Props) {
 
   const status = useStore(transportStore, (s) => s.status);
   const lastFrame = useStore(transportStore, (s) => s.lastFrame);
+  const lastInboxEvent = useStore(inboxStore, (s) => s.lastEvent);
 
   const lastSentKeyRef = useRef<string | null>(null);
   const listRef = useRef<FlatList<ChatListItem> | null>(null);
@@ -123,10 +92,17 @@ export default function ChatScreen({ navigation, route }: Props) {
   // identity. `transportStore` is a module-wide singleton whose `lastFrame`
   // can carry over from a previous mount of this same screen (e.g.
   // navigating away from and back to the same contact); without this guard
-  // that stale frame would be reprocessed (and its message re-appended) on
-  // remount. Seeded with whatever `lastFrame` already holds at mount time
-  // so only frames that arrive *after* mount are treated as new.
+  // that stale frame would be reprocessed on remount. Seeded with whatever
+  // `lastFrame` already holds at mount time so only frames that arrive
+  // *after* mount are treated as new. Only `'error'` frames reach
+  // `handleFrame` now -- `'message'` frames are decoded exactly once, for
+  // every contact, by the app-level `../inbox/listener.ts` (issue #165),
+  // never here.
   const processedFrameRef = useRef<IncomingFrame | null>(transportStore.state.lastFrame);
+  // Same dedupe pattern as `processedFrameRef` above, but for
+  // `inboxStore`'s published decode outcomes (see the effect below) rather
+  // than raw transport frames.
+  const processedInboxEventRef = useRef<InboxEvent | null>(inboxStore.state.lastEvent);
 
   // Crypto context needed to send/receive, loaded once on mount below.
   const identityRef = useRef<Identity | null>(null);
@@ -140,74 +116,7 @@ export default function ChatScreen({ navigation, route }: Props) {
     ]);
   }
 
-  /** Decodes+verifies a live incoming envelope (received over the open WS
-   * connection), persists the advanced ratchet state on success, and
-   * persists the decrypted plaintext to local history — never the
-   * ciphertext, and never on any failure. See
-   * `docs/decisions/0007-local-history-stores-plaintext.md`. */
-  async function handleIncomingEnvelope(bodyB64: string) {
-    const createdAt = new Date().toISOString();
-    const contact = contactBundleRef.current;
-    const identity = identityRef.current;
-    const selfUserId = selfUserIdRef.current;
-
-    if (!contact || !identity || !selfUserId) {
-      appendUnverifiable('incoming', createdAt);
-      return;
-    }
-
-    const envelope = base64ToBytes(bodyB64);
-    const version = envelope[0];
-
-    let result: EnvelopeDecodeResult | null = null;
-    if (version === HANDSHAKE_ENVELOPE_VERSION) {
-      result = decodeHandshakeEnvelope(envelope, {
-        contactUserId,
-        selfUserId,
-        selfX25519SecretKey: identity.x25519SecretKey,
-        selfKyberSecretKey: identity.kyberSecretKey,
-        senderDilithiumPublicKey: contact.dilithiumPublicKey,
-      });
-    } else if (version === RATCHET_ENVELOPE_VERSION) {
-      const session = await loadSession(contactUserId);
-      if (session !== null) {
-        result = decodeRatchetEnvelope(envelope, {
-          state: session,
-          senderDilithiumPublicKey: contact.dilithiumPublicKey,
-          selfUserId,
-          contactUserId,
-        });
-      }
-    }
-
-    if (result === null || !result.ok) {
-      appendUnverifiable('incoming', createdAt);
-      return;
-    }
-
-    await saveSession(contactUserId, result.nextState);
-    const text = bytesToUtf8(result.plaintext);
-    setMessages((prev) => [
-      ...prev,
-      { key: nextLocalKey(), direction: 'incoming', text, verified: true, createdAt },
-    ]);
-    await saveMessage({
-      contactUserId,
-      direction: 'incoming',
-      body: text,
-      createdAt,
-    });
-  }
-
   function handleFrame(frame: IncomingFrame) {
-    if (frame.type === 'message') {
-      if (frame.from !== contactUserId) {
-        return;
-      }
-      void handleIncomingEnvelope(frame.body_b64);
-      return;
-    }
-
     if (frame.type === 'error' && frame.code === 'queue_unavailable') {
       const failedKey = lastSentKeyRef.current;
       if (!failedKey) {
@@ -219,11 +128,36 @@ export default function ChatScreen({ navigation, route }: Props) {
     }
   }
 
-  // Loads crypto context (self identity + contact key bundle) and message
-  // history, then opens the connection through `transportStore`, all on
-  // mount. Reconnect-with-backoff lives in the store's `connect` action
-  // (`../transport/store.ts`, issue #74, superseding issue #55's
-  // `createReconnectingChatSocket`).
+  /** Renders one of `../inbox/listener.ts`'s published decode outcomes for
+   * *this* contact -- ignores events for every other contact. See the
+   * effect below for why `ChatScreen` observes `inboxStore` this way
+   * instead of decoding anything itself. */
+  function handleInboxEvent(event: InboxEvent) {
+    if (event.contactUserId !== contactUserId) {
+      return;
+    }
+    if (event.status === 'unverifiable') {
+      appendUnverifiable('incoming', event.createdAt);
+      return;
+    }
+    setMessages((prev) => [
+      ...prev,
+      {
+        key: nextLocalKey(),
+        direction: 'incoming',
+        text: event.text,
+        verified: true,
+        createdAt: event.createdAt,
+      },
+    ]);
+  }
+
+  // Loads crypto context (self identity + contact key bundle, needed for
+  // `handleSend` below) and this contact's message history on mount. The
+  // transport connection itself is no longer opened/closed here -- it is
+  // owned at the app level by `../inbox/appSession.ts`
+  // (`../navigation/MainTabs.tsx`'s mount/unmount, issue #165), independent
+  // of which contact's chat (if any) is currently open.
   useEffect(() => {
     let cancelled = false;
 
@@ -233,7 +167,6 @@ export default function ChatScreen({ navigation, route }: Props) {
         return;
       }
       if (!token) {
-        transportStore.actions.close();
         return;
       }
 
@@ -266,36 +199,43 @@ export default function ChatScreen({ navigation, route }: Props) {
       );
       // "Read on open": opening this contact's history marks their
       // incoming messages read exactly once per mount, not once per
-      // received message (that would be `handleIncomingEnvelope`, which
-      // deliberately does not call this). See
+      // received message (that would be the inbox-event effect below,
+      // which deliberately does not call this). See
       // docs/superpowers/specs/2026-09-13-friends-conversations-ux-design.md,
       // "Read semantics".
       await markContactMessagesRead(contactUserId);
-      if (cancelled) {
-        return;
-      }
-
-      transportStore.actions.connect(getToken);
     }
 
     setup();
 
     return () => {
       cancelled = true;
-      transportStore.actions.close();
     };
   }, [contactUserId]);
 
   // Routes each newly-arrived frame through `handleFrame`, exactly as the
   // old `onMessage` callback did — see `processedFrameRef`'s comment above
-  // for why a plain `[lastFrame]` dependency alone isn't enough.
+  // for why a plain `[lastFrame]` dependency alone isn't enough. Only
+  // `'error'` frames reach `handleFrame` now (see that function).
   useEffect(() => {
     if (lastFrame && lastFrame !== processedFrameRef.current) {
       processedFrameRef.current = lastFrame;
       handleFrame(lastFrame);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastFrame]);
+
+  // Reflects this contact's newly-decoded incoming messages, without
+  // decoding anything itself: `../inbox/listener.ts` (issue #165) is the
+  // only place that decodes a live frame, for every contact, independent of
+  // which `ChatScreen` (if any) is mounted; this effect just renders
+  // whichever of its published outcomes belong to *this* contact.
+  useEffect(() => {
+    if (lastInboxEvent && lastInboxEvent !== processedInboxEventRef.current) {
+      processedInboxEventRef.current = lastInboxEvent;
+      handleInboxEvent(lastInboxEvent);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastInboxEvent, contactUserId]);
 
   async function handleSend() {
     const text = draft.trim();
