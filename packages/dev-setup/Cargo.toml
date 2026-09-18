@@ -9,11 +9,14 @@ OS (macOS/Linux only, issue #203), auto-copies `.env.example` to `.env`
 if missing, and reports Present/Absent for the core tools README's
 "Running the stack locally" section requires (rustup, cargo/rustc, node,
 moon, docker, sccache). Detect-only by default -- two opt-in mutating
-flags exist: `--install` (apt-based Linux auto-install of rustup/moon/
-sccache, with Node.js/Docker and non-apt distros staying guide-only,
-issue #205) and `--start` (`docker compose up -d` + health-wait + `moon
-run api:migrate`, issue #206). See `README.md` in this directory for the
-full flag semantics.
+flags exist: `--install` (OS-specific auto-install of missing tools where
+it's safe: macOS via Homebrew for rustup/node/moon/sccache with Docker
+and the Xcode/CocoaPods/Android Studio/NDK native toolchain staying
+detect-and-guide-only always, issue #204; apt-based Linux via each tool's
+official installer for rustup/moon/sccache, with Node.js/Docker and
+non-apt distros staying guide-only, issue #205) and `--start` (`docker
+compose up -d` + health-wait + `moon run api:migrate`, issue #206). See
+`README.md` in this directory for the full flag semantics.
 """
 
 # No external dependencies: OS detection uses `std::env::consts::OS`,

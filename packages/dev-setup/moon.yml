@@ -18,12 +18,14 @@ tasks:
     args: ["test"]
     options:
       cache: false
-  # Invokes the CLI directly. Detect-only by default -- safe to run
-  # repeatedly and not cached, same reasoning as `check`/`test` above.
-  # Pass `-- --start` (e.g. `moon run dev-setup:run -- --start`) to opt
-  # into the mutating docker-compose-up + api:migrate flow (issue #206);
-  # without it, this never shells out to docker or moon beyond the
-  # detect-only checks in `checks.rs`.
+  # Invokes the CLI directly -- detect-only by default (no mutating
+  # docker/moon/brew/apt actions), so this is safe to run repeatedly and
+  # isn't cached, same reasoning as `check`/`test` above. The opt-in
+  # exceptions are `--install` (macOS Homebrew / apt-based Linux
+  # auto-install, issues #204/#205) and `--start` (docker-compose-up +
+  # api:migrate, issue #206), neither of which this task passes; pass
+  # e.g. `-- --install` or `-- --start` explicitly to exercise those
+  # paths.
   run:
     command: "cargo"
     args: ["run"]

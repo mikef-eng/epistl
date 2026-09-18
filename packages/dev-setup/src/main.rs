@@ -1,20 +1,23 @@
 //! `dev-setup`: checks a macOS/Linux dev machine against what README's
 //! "Running the stack locally" section requires (issue #203), and,
 //! opt-in via `--start`, brings up the local `docker compose` stack and
-//! runs API migrations (issue #206). Also opt-in via `--install` on
-//! apt-based Linux distros (issue #205), which can auto-install
-//! rustup/moon/sccache via their official installers. Detect-only
-//! otherwise, plus one safe filesystem auto-fix (`.env` copy) -- see
-//! those issues for what's still out of scope (non-apt distro-specific
-//! installs, etc).
+//! runs API migrations (issue #206). Also opt-in via `--install`: on
+//! macOS, auto-installs rustup/node/moon/sccache via Homebrew where
+//! present (issue #204); on apt-based Linux distros, auto-installs
+//! rustup/moon/sccache via their official installers (issue #205).
+//! Detect-only otherwise, plus one safe filesystem auto-fix (`.env`
+//! copy) -- see those issues for what's still out of scope (Homebrew's
+//! own install, non-apt distro-specific installs, Xcode/Android Studio
+//! scripting, etc).
 
 use std::process::ExitCode;
 
 use dev_setup::{
     apt_available, check_os, check_status, docker_action, ensure_env_file, format_check_line,
-    format_linux_action, format_step_outcome, has_install_flag, is_required, maybe_run_start,
-    moon_action, node_action, repo_root, run_all_checks, rustup_action, sccache_action,
-    EnvFileOutcome, RealSleeper, StepOutcome, SystemExecutor,
+    format_linux_action, format_mac_report_line, format_step_outcome, has_install_flag,
+    is_required, maybe_run_start, moon_action, node_action, repo_root, run_all_checks,
+    run_macos_checks, rustup_action, sccache_action, EnvFileOutcome, RealSleeper, StepOutcome,
+    SystemEnvironment, SystemExecutor,
 };
 
 fn main() -> ExitCode {
@@ -47,6 +50,26 @@ fn main() -> ExitCode {
         println!("{}", format_check_line(check));
         if is_required(check.name) && !check.status.is_present() {
             all_required_present = false;
+        }
+    }
+
+    // macOS-only: detect Homebrew and, for each absent tool Homebrew can
+    // safely install, report/act on it; plus the always-guide-only
+    // Docker/Xcode/CocoaPods/Android Studio/NDK checks. No behavior
+    // change on Linux or elsewhere from this block -- see issue #204.
+    if os == "macos" {
+        println!();
+        println!("macOS-specific checks (pass --install to auto-install via Homebrew where safe):");
+        let environment = SystemEnvironment;
+        let mac_reports = run_macos_checks(&checks, install_flag, &executor, &environment);
+        for report in &mac_reports {
+            println!("{}", report.message);
+        }
+
+        println!();
+        println!("macOS summary:");
+        for report in &mac_reports {
+            println!("{}", format_mac_report_line(report));
         }
     }
 

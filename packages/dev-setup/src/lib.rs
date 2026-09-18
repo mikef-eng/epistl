@@ -6,7 +6,10 @@
 
 pub mod checks;
 pub mod env_file;
+pub mod environment;
+pub mod homebrew;
 pub mod linux_install;
+pub mod macos;
 pub mod os_check;
 pub mod start;
 
@@ -17,10 +20,13 @@ pub use checks::{
     is_required, run_all_checks, CommandExecutor, SystemExecutor, ToolCheck, ToolStatus,
 };
 pub use env_file::{ensure_env_file, EnvFileOutcome};
+pub use environment::{Environment, SystemEnvironment};
+pub use homebrew::check_homebrew;
 pub use linux_install::{
     apt_available, docker_action, format_linux_action, moon_action, node_action, rustup_action,
     sccache_action, LinuxAction,
 };
+pub use macos::{format_mac_report_line, run_macos_checks, MacOutcome, MacReport};
 pub use os_check::check_os;
 pub use start::{format_step_outcome, maybe_run_start, RealSleeper, Sleeper, StepOutcome};
 
@@ -111,6 +117,7 @@ mod tests {
     #[test]
     fn has_install_flag_detects_the_flag_among_other_args() {
         assert!(has_install_flag(["dev-setup", "--install"]));
+        assert!(has_install_flag(["dev-setup", "--foo", "--install"]));
         assert!(!has_install_flag(["dev-setup"]));
         assert!(!has_install_flag(["dev-setup", "--other-flag"]));
     }
