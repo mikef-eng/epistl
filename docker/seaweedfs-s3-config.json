@@ -1,0 +1,20 @@
+{
+  "identities": [
+    {
+      "name": "epistl",
+      "credentials": [
+        {
+          "accessKey": "epistl",
+          "secretKey": "epistl-seaweedfs-dev-secret"
+        }
+      ],
+      "actions": [
+        "Admin",
+        "Read",
+        "List",
+        "Tagging",
+        "Write"
+      ]
+    }
+  ]
+}

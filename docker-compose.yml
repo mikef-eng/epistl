@@ -1,4 +1,4 @@
-# Local Postgres + NATS + MinIO for API development.
+# Local Postgres + NATS + SeaweedFS for API development.
 #
 # Setup and full run instructions live in README.md ("Running the stack
 # locally") and .env.example — this file only wires the containers
@@ -41,31 +41,40 @@ services:
       timeout: 5s
       retries: 5
 
-  minio:
+  seaweedfs:
     # Pinned to a specific release (not `latest`), matching this file's
-    # existing convention for postgres/nats. MinIO stopped publishing images
-    # to Docker Hub in 2024 -- quay.io/minio/minio is the official upstream
-    # image now. It ships a shell + curl, so a CMD-SHELL healthcheck against
-    # its own liveness endpoint works (unlike the distroless `nats:2` tag
-    # documented above).
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
-    command: ["server", "/data", "--console-address", ":9001"]
+    # existing convention for postgres/nats. MinIO Community Edition was
+    # dropped (see docs/decisions/0018-seaweedfs-object-storage-for-avatars.md)
+    # in favor of SeaweedFS, an actively-maintained, Apache-2.0,
+    # S3-API-compatible object store. `weed mini` is SeaweedFS's own
+    # all-in-one single-process mode (master + volume + filer + S3 gateway
+    # combined in one container) -- the image's own documented default
+    # `CMD`, and the right shape for this repo's single-node local-dev
+    # stack (as opposed to SeaweedFS's own example multi-container
+    # master/volume/filer/s3 production topology).
+    image: chrislusf/seaweedfs:4.47
+    command: ["mini", "-dir=/data", "-s3.config=/etc/seaweedfs/s3.json"]
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-epistl}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-epistl-minio}
+      # `weed mini` auto-creates this bucket on startup itself -- the
+      # later avatar-upload endpoint issue does NOT need any idempotent
+      # bucket-creation-on-API-startup logic; that responsibility lives
+      # here, in infra.
+      S3_BUCKET: ${AVATAR_BUCKET_NAME:-avatars}
     ports:
       # Published to the host (not just `expose:`): presigned URLs are
-      # handed to the mobile client, which must reach MinIO directly over a
-      # host-reachable address -- not only via the docker-compose internal
-      # network the API container uses. See MINIO_INTERNAL_ENDPOINT /
-      # MINIO_PUBLIC_ENDPOINT in .env.example and
-      # docs/decisions/0017-minio-object-storage-for-avatars.md.
-      - "9000:9000" # S3 API
-      - "9001:9001" # web console
+      # handed to the mobile client, which must reach SeaweedFS directly
+      # over a host-reachable address -- not only via the docker-compose
+      # internal network the API container uses. See
+      # SEAWEEDFS_INTERNAL_ENDPOINT / SEAWEEDFS_PUBLIC_ENDPOINT in
+      # .env.example and
+      # docs/decisions/0018-seaweedfs-object-storage-for-avatars.md.
+      - "8333:8333" # S3 API
+      - "23646:23646" # Admin UI (optional local-debugging convenience)
     volumes:
-      - epistl-minio-data:/data
+      - epistl-seaweedfs-data:/data
+      - ./docker/seaweedfs-s3-config.json:/etc/seaweedfs/s3.json:ro
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://localhost:9333/cluster/status || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -73,4 +82,4 @@ services:
 volumes:
   epistl-postgres-data:
   epistl-nats-data:
-  epistl-minio-data:
+  epistl-seaweedfs-data:
