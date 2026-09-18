@@ -1,4 +1,4 @@
-# Local Postgres + NATS for API development.
+# Local Postgres + NATS + MinIO for API development.
 #
 # Setup and full run instructions live in README.md ("Running the stack
 # locally") and .env.example — this file only wires the containers
@@ -41,6 +41,36 @@ services:
       timeout: 5s
       retries: 5
 
+  minio:
+    # Pinned to a specific release (not `latest`), matching this file's
+    # existing convention for postgres/nats. MinIO stopped publishing images
+    # to Docker Hub in 2024 -- quay.io/minio/minio is the official upstream
+    # image now. It ships a shell + curl, so a CMD-SHELL healthcheck against
+    # its own liveness endpoint works (unlike the distroless `nats:2` tag
+    # documented above).
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-epistl}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-epistl-minio}
+    ports:
+      # Published to the host (not just `expose:`): presigned URLs are
+      # handed to the mobile client, which must reach MinIO directly over a
+      # host-reachable address -- not only via the docker-compose internal
+      # network the API container uses. See MINIO_INTERNAL_ENDPOINT /
+      # MINIO_PUBLIC_ENDPOINT in .env.example and
+      # docs/decisions/0017-minio-object-storage-for-avatars.md.
+      - "9000:9000" # S3 API
+      - "9001:9001" # web console
+    volumes:
+      - epistl-minio-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
 volumes:
   epistl-postgres-data:
   epistl-nats-data:
+  epistl-minio-data:
