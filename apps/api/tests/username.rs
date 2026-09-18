@@ -290,7 +290,7 @@ async fn change_username_invalid_format_returns_400() {
     let state = test_state().await;
     let (session_token, _user_id, _email) = signup_user(&pool, state.clone(), "un-invalid").await;
 
-    // Too short, and contains a character outside `[a-zA-Z0-9_]`.
+    // Too short, and contains a character outside `[a-zA-Z0-9_.]`.
     for invalid in ["ab", "has space", "has-dash", "a".repeat(33).as_str(), ""] {
         let (status, body) = request(
             api::app(state.clone()),
@@ -308,6 +308,71 @@ async fn change_username_invalid_format_returns_400() {
         );
         assert_eq!(body, json!({ "error": "invalid_username" }));
     }
+}
+
+/// Issue #199: the ceiling dropped from 32 to Better Auth's own 30-character
+/// limit, so a 31-32 character username -- which used to succeed -- must now
+/// be rejected.
+#[tokio::test]
+async fn change_username_31_to_32_chars_returns_400() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (session_token, _user_id, _email) =
+        signup_user(&pool, state.clone(), "un-too-long-now").await;
+
+    for len in [31, 32] {
+        let too_long = "a".repeat(len);
+        let (status, body) = request(
+            api::app(state.clone()),
+            "PATCH",
+            "/api/username",
+            Some(&session_token),
+            Some(json!({ "username": too_long })),
+        )
+        .await;
+
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "a {len}-character username should be rejected: {body:?}"
+        );
+        assert_eq!(body, json!({ "error": "invalid_username" }));
+    }
+}
+
+/// Issue #199: dots are allowed by Better Auth's own `validate_username`, so
+/// a username containing one must now succeed via `PATCH /api/username`
+/// (previously would have 400'd against the old hand-rolled
+/// `[a-zA-Z0-9_]`-only rule).
+#[tokio::test]
+async fn change_username_with_dot_succeeds() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (session_token, user_id, _email) = signup_user(&pool, state.clone(), "un-dot-base").await;
+    // Built directly (rather than via `unique_username`, which truncates to
+    // fill the full 30-character ceiling on its own) so the trailing
+    // `.name` still fits within Better Auth's 30-character limit.
+    let unique_suffix = Uuid::new_v4().simple().to_string().to_lowercase();
+    let new_username = format!("dot.{}", &unique_suffix[..20]);
+
+    let (status, body) = request(
+        api::app(state),
+        "PATCH",
+        "/api/username",
+        Some(&session_token),
+        Some(json!({ "username": new_username })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "change failed: {body:?}");
+    assert_eq!(body["username"], new_username);
+
+    let persisted: String = sqlx::query_scalar("SELECT username FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_one(&pool)
+        .await
+        .expect("user row must exist");
+    assert_eq!(persisted, new_username);
 }
 
 #[tokio::test]
