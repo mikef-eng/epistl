@@ -256,6 +256,37 @@ mod tests {
         assert_eq!(check_docker(&exec).status, ToolStatus::Absent);
     }
 
+    /// An executor whose response depends on the *args*, not just the
+    /// program name -- unlike `FakeExecutor` above. Needed to actually
+    /// prove `check_docker` calls `docker info` (daemon-aware) rather than
+    /// `docker --version` (which succeeds even with the daemon down):
+    /// `FakeExecutor` alone can't distinguish those two call sites since
+    /// it ignores `args` entirely.
+    struct DaemonDownExecutor;
+
+    impl CommandExecutor for DaemonDownExecutor {
+        fn run(&self, program: &str, args: &[&str]) -> Option<String> {
+            match (program, args) {
+                ("docker", ["--version"]) => {
+                    Some("Docker version 27.0.3, build abc1234".to_string())
+                }
+                ("docker", ["info"]) => None,
+                _ => None,
+            }
+        }
+    }
+
+    #[test]
+    fn docker_reports_absent_when_daemon_is_down_even_though_the_binary_is_present() {
+        // `docker --version` would succeed here (binary present), but
+        // `check_docker` must still report `Absent` because it checks
+        // `docker info`, which fails while the daemon isn't running. This
+        // is the concrete behavior the "info, not --version" distinction
+        // in the issue's acceptance criteria is for.
+        let check = check_docker(&DaemonDownExecutor);
+        assert_eq!(check.status, ToolStatus::Absent);
+    }
+
     #[test]
     fn sccache_absence_is_not_required_but_others_are() {
         assert!(is_required("rustup"));
