@@ -37,7 +37,7 @@ const mockedEnsureKeysRegistered = ensureKeysRegistered as jest.Mock;
 const mockedSaveUserId = saveUserId as jest.Mock;
 
 async function renderLoginScreen() {
-  const navigation = { replace: jest.fn() };
+  const navigation = { replace: jest.fn(), navigate: jest.fn() };
   const user = userEvent.setup();
   await render(<LoginScreen navigation={navigation as never} route={{} as never} />);
   return { navigation, user };
@@ -105,8 +105,7 @@ describe('LoginScreen', () => {
     });
   });
 
-  it('switches to sign-up mode and calls signup() on submit', async () => {
-    mockedSignup.mockResolvedValueOnce({ token: 'tok-2', user: {} });
+  it('switches to sign-up mode and navigates to SetupProfile with the entered email/password instead of calling signup() directly (issue #216)', async () => {
     const { navigation, user } = await renderLoginScreen();
 
     await user.press(screen.getByText(/sign up/i));
@@ -115,9 +114,13 @@ describe('LoginScreen', () => {
     await user.press(screen.getByRole('button', { name: 'Sign up' }));
 
     await waitFor(() => {
-      expect(mockedSignup).toHaveBeenCalledWith('a@example.com', 'hunter2');
-      expect(navigation.replace).toHaveBeenCalledWith('Main');
+      expect(navigation.navigate).toHaveBeenCalledWith('SetupProfile', {
+        email: 'a@example.com',
+        password: 'hunter2',
+      });
     });
+    expect(mockedSignup).not.toHaveBeenCalled();
+    expect(navigation.replace).not.toHaveBeenCalled();
   });
 
   it('calls ensureKeysRegistered with the authenticated user id after a successful login', async () => {
@@ -143,20 +146,6 @@ describe('LoginScreen', () => {
 
     await waitFor(() => {
       expect(mockedSaveUserId).toHaveBeenCalledWith('user-123');
-    });
-  });
-
-  it('calls ensureKeysRegistered with the authenticated user id after a successful signup', async () => {
-    mockedSignup.mockResolvedValueOnce({ token: 'tok-2', user: { id: 'user-456' } });
-    const { user } = await renderLoginScreen();
-
-    await user.press(screen.getByText(/sign up/i));
-    await user.type(screen.getByPlaceholderText('Email'), 'a@example.com');
-    await user.type(screen.getByPlaceholderText('Password'), 'hunter2');
-    await user.press(screen.getByRole('button', { name: 'Sign up' }));
-
-    await waitFor(() => {
-      expect(mockedEnsureKeysRegistered).toHaveBeenCalledWith('user-456');
     });
   });
 

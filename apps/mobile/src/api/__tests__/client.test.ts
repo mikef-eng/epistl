@@ -51,17 +51,17 @@ describe('client', () => {
   });
 
   describe('signup', () => {
-    it('POSTs to /signup with the email/password body and default base URL', async () => {
+    it('POSTs to /signup with the email/password/username body and default base URL', async () => {
       fetchMock.mockResolvedValueOnce(
         jsonResponse(201, { token: 'tok-1', user: { id: 'u1' } }),
       );
 
-      await signup('a@example.com', 'hunter2');
+      await signup('a@example.com', 'hunter2', 'alice');
 
       expect(fetchMock).toHaveBeenCalledWith('http://localhost:3000/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: 'a@example.com', password: 'hunter2' }),
+        body: JSON.stringify({ email: 'a@example.com', password: 'hunter2', username: 'alice' }),
       });
     });
 
@@ -70,7 +70,7 @@ describe('client', () => {
         jsonResponse(201, { token: 'tok-1', user: { id: 'u1' } }),
       );
 
-      const result = await signup('a@example.com', 'hunter2');
+      const result = await signup('a@example.com', 'hunter2', 'alice');
 
       expect(mockSession.saveToken).toHaveBeenCalledWith('tok-1');
       expect(result).toEqual({ token: 'tok-1', user: { id: 'u1' } });
@@ -81,10 +81,26 @@ describe('client', () => {
         jsonResponse(409, { error: 'email already registered' }),
       );
 
-      await expect(signup('a@example.com', 'hunter2')).rejects.toMatchObject({
+      await expect(signup('a@example.com', 'hunter2', 'alice')).rejects.toMatchObject({
         code: 'email already registered',
         status: 409,
       });
+      expect(mockSession.saveToken).not.toHaveBeenCalled();
+    });
+
+    // Issue #216: `apps/api/src/auth.rs`'s `/signup` handler also returns a
+    // `409` for an already-taken username (distinct from the "email already
+    // registered" case above) -- surfaced as `UsernameTakenError`, mirroring
+    // `updateUsername`'s existing handling of the same status code, so
+    // `SetupProfileScreen` can show a specific inline error.
+    it('throws a UsernameTakenError on a 409 "username already taken" response', async () => {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(409, { error: 'username already taken' }),
+      );
+
+      await expect(signup('a@example.com', 'hunter2', 'alice')).rejects.toBeInstanceOf(
+        UsernameTakenError,
+      );
       expect(mockSession.saveToken).not.toHaveBeenCalled();
     });
 
@@ -93,7 +109,7 @@ describe('client', () => {
         jsonResponse(201, { token: 'tok-1', user: { id: 'u1', email: 'a@example.com' } }),
       );
 
-      await signup('a@example.com', 'hunter2');
+      await signup('a@example.com', 'hunter2', 'alice');
 
       expect(mockSession.saveEmail).toHaveBeenCalledWith('a@example.com');
     });
@@ -101,7 +117,7 @@ describe('client', () => {
     it('does not persist an email when the user object has no email field', async () => {
       fetchMock.mockResolvedValueOnce(jsonResponse(201, { token: 'tok-1', user: { id: 'u1' } }));
 
-      await signup('a@example.com', 'hunter2');
+      await signup('a@example.com', 'hunter2', 'alice');
 
       expect(mockSession.saveEmail).not.toHaveBeenCalled();
     });
@@ -111,7 +127,7 @@ describe('client', () => {
         jsonResponse(201, { token: 'tok-1', user: { id: 'u1', username: 'alice' } }),
       );
 
-      await signup('a@example.com', 'hunter2');
+      await signup('a@example.com', 'hunter2', 'alice');
 
       expect(mockSession.saveUsername).toHaveBeenCalledWith('alice');
     });
@@ -119,7 +135,7 @@ describe('client', () => {
     it('does not persist a username when the user object has no username field', async () => {
       fetchMock.mockResolvedValueOnce(jsonResponse(201, { token: 'tok-1', user: { id: 'u1' } }));
 
-      await signup('a@example.com', 'hunter2');
+      await signup('a@example.com', 'hunter2', 'alice');
 
       expect(mockSession.saveUsername).not.toHaveBeenCalled();
     });
@@ -127,8 +143,8 @@ describe('client', () => {
     it('throws an ApiError with the "invalid input" code on 400', async () => {
       fetchMock.mockResolvedValue(jsonResponse(400, { error: 'invalid input' }));
 
-      await expect(signup('', '')).rejects.toBeInstanceOf(ApiError);
-      await expect(signup('', '')).rejects.toMatchObject({
+      await expect(signup('', '', '')).rejects.toBeInstanceOf(ApiError);
+      await expect(signup('', '', '')).rejects.toMatchObject({
         code: 'invalid input',
         status: 400,
       });

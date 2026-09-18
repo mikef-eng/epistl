@@ -6,6 +6,14 @@
 export type RootStackParamList = {
   Login: undefined;
   /**
+   * Reached from `LoginScreen`'s sign-up submit (issue #216) -- carries the
+   * entered email/password without creating the account yet. Collects the
+   * required username (and lets the user optionally pick an avatar) before
+   * actually calling `signup()`, since `POST /signup` requires a username
+   * that `LoginScreen`'s form never collected.
+   */
+  SetupProfile: { email: string; password: string };
+  /**
    * The post-login landing route: a nested `Tab.Navigator` (see
    * `MainTabParamList` below), rendered by `src/navigation/MainTabs.tsx`.
    * `Chat`/`AddContact`/`Settings` stay on this root stack (not nested

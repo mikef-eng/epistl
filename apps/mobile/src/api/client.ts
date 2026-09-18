@@ -141,14 +141,33 @@ async function requireToken(): Promise<string> {
   return token;
 }
 
-export async function signup(email: string, password: string): Promise<AuthResponse> {
+export async function signup(
+  email: string,
+  password: string,
+  username: string
+): Promise<AuthResponse> {
   const response = await fetch(`${API_BASE_URL}/signup`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password, username }),
   });
 
   if (!response.ok) {
+    // `apps/api/src/auth.rs`'s `/signup` handler returns `409` for two
+    // distinct reasons: an already-registered email (Better Auth's own
+    // check) or an already-taken username (this app's own pre-insert
+    // check, added by issue #191). Only the latter should surface as
+    // `UsernameTakenError` -- `SetupProfileScreen.tsx` (issue #216) relies
+    // on that distinction to show its "already taken" inline error instead
+    // of a generic one.
+    if (response.status === 409) {
+      const body = await parseJson(response);
+      const code = errorCodeFrom(body);
+      if (code === 'username already taken') {
+        throw new UsernameTakenError();
+      }
+      throw new ApiError(code, response.status);
+    }
     await throwApiError(response);
   }
 
