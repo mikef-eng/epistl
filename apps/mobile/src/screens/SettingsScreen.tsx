@@ -47,14 +47,17 @@ function messageFor(err: unknown): string {
   return err instanceof ApiError ? err.message : 'Something went wrong';
 }
 
-/** Client-side mirror of `apps/api/src/username.rs`'s `is_valid_username`
- * (3-32 characters, letters/digits/underscore only) -- run before ever
- * calling `updateUsername` so an obviously invalid value never reaches the
- * network, per issue #185's acceptance criteria. The server remains the
- * final authority on format regardless (its own `400 invalid_username`
- * still applies if this check is ever out of sync with it). */
+/** Client-side mirror of `apps/api/src/username.rs`'s format check, which
+ * (per issue #199) delegates directly to Better Auth's own
+ * `better_auth_core::utils::username::validate_username` -- 3-30
+ * characters, letters/digits/underscore/dot -- the same rule Better Auth's
+ * `EmailPasswordPlugin` already enforces at signup. Run before ever calling
+ * `updateUsername` so an obviously invalid value never reaches the network,
+ * per issue #185's acceptance criteria. The server remains the final
+ * authority on format regardless (its own `400 invalid_username` still
+ * applies if this check is ever out of sync with it). */
 function isValidUsernameFormat(value: string): boolean {
-  return /^[A-Za-z0-9_]{3,32}$/.test(value);
+  return /^[A-Za-z0-9_.]{3,30}$/.test(value);
 }
 
 export default function SettingsScreen({ navigation }: Props) {
@@ -151,7 +154,7 @@ export default function SettingsScreen({ navigation }: Props) {
   async function handleSaveUsername() {
     if (!isValidUsernameFormat(usernameDraft)) {
       setUsernameError(
-        'Username must be 3-32 characters: letters, numbers, and underscores only'
+        'Username must be 3-30 characters: letters, numbers, underscores, and dots only'
       );
       return;
     }
