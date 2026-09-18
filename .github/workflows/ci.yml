@@ -104,6 +104,12 @@ jobs:
       SEAWEEDFS_INTERNAL_ENDPOINT: http://localhost:8333
       SEAWEEDFS_PUBLIC_ENDPOINT: http://localhost:8333
       AVATAR_BUCKET_NAME: avatars
+      # Root .cargo/config.toml sets `rustc-wrapper = "sccache"` for the
+      # whole workspace, so sccache must be installed and on PATH before
+      # any cargo/moon step below -- see the "Install sccache" step.
+      # SCCACHE_DIR pins the on-disk cache location so the actions/cache
+      # step below can target it precisely.
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache
     steps:
       - uses: actions/checkout@v4
         with:
@@ -117,6 +123,32 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+
+      # Must run before any cargo/moon step: root .cargo/config.toml sets
+      # `rustc-wrapper = "sccache"` for the whole workspace, so every
+      # cargo invocation from here on (directly, or via `moon run api:*`)
+      # requires `sccache` already on PATH, or it fails outright.
+      - name: Install sccache
+        env:
+          SCCACHE_VERSION: "0.18.0"
+        run: |
+          curl -fsSL "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+            | tar -xz -C /tmp
+          sudo mv "/tmp/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl/sccache" /usr/local/bin/sccache
+          sccache --version
+
+      # sccache's own cache directory, keyed on Cargo.lock's hash (falling
+      # back to a partial restore on a hash miss). Persisted separately
+      # from -- and in addition to -- the Swatinem/rust-cache step below,
+      # which caches cargo's registry/target dirs, not sccache's
+      # compilation-unit cache.
+      - name: Cache sccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.SCCACHE_DIR }}
+          key: sccache-api-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            sccache-api-${{ runner.os }}-
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -168,6 +200,13 @@ jobs:
       needs.changes.result != 'success' ||
       needs.changes.outputs.quic_relay_client == 'true')
     runs-on: ubuntu-latest
+    env:
+      # Root .cargo/config.toml sets `rustc-wrapper = "sccache"` for the
+      # whole workspace, so sccache must be installed and on PATH before
+      # any cargo/moon step below -- see the "Install sccache" step.
+      # SCCACHE_DIR pins the on-disk cache location so the actions/cache
+      # step below can target it precisely.
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache
     steps:
       - uses: actions/checkout@v4
         with:
@@ -181,6 +220,33 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+
+      # Must run before any cargo/moon step: root .cargo/config.toml sets
+      # `rustc-wrapper = "sccache"` for the whole workspace, so every
+      # cargo invocation from here on (directly, or via `moon run
+      # quic-relay-client:*`) requires `sccache` already on PATH, or it
+      # fails outright.
+      - name: Install sccache
+        env:
+          SCCACHE_VERSION: "0.18.0"
+        run: |
+          curl -fsSL "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+            | tar -xz -C /tmp
+          sudo mv "/tmp/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl/sccache" /usr/local/bin/sccache
+          sccache --version
+
+      # sccache's own cache directory, keyed on Cargo.lock's hash (falling
+      # back to a partial restore on a hash miss). Persisted separately
+      # from -- and in addition to -- the Swatinem/rust-cache step below,
+      # which caches cargo's registry/target dirs, not sccache's
+      # compilation-unit cache.
+      - name: Cache sccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.SCCACHE_DIR }}
+          key: sccache-quic-relay-client-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            sccache-quic-relay-client-${{ runner.os }}-
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
