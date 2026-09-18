@@ -16,6 +16,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ApiError, listContacts, type Contact } from '../api/client';
+import Avatar from '../components/Avatar';
 import type { MainTabParamList, RootStackParamList } from '../navigation/types';
 import {
   getConversationSummaries,
@@ -340,11 +341,13 @@ export default function ConversationsScreen({ navigation }: Props) {
               onPress={() => handleOpenChat(item)}
               className="flex-row items-center border-b border-gray-100 px-4 py-4 dark:border-gray-800"
             >
-              <View className="mr-3 h-10 w-10 items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700">
-                <Text className="text-base font-semibold text-black dark:text-white">
-                  {initialFor(item.email)}
-                </Text>
-              </View>
+              <Avatar
+                userId={item.contactUserId}
+                fallbackText={initialFor(item.email)}
+                wrapperClassName="mr-3 h-10 w-10 items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700"
+                imageClassName="h-10 w-10 rounded-full"
+                textClassName="text-base font-semibold text-black dark:text-white"
+              />
               <View className="flex-1 pr-3">
                 <View className="flex-row items-center">
                   {item.hasUnread ? (

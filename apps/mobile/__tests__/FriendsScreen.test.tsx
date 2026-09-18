@@ -1,6 +1,6 @@
 import { Alert } from 'react-native';
 
-import { act, render, screen, userEvent, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, userEvent, waitFor } from '@testing-library/react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import FriendsScreen from '../src/screens/FriendsScreen';
@@ -11,6 +11,7 @@ import {
   listContacts,
   removeContact,
 } from '../src/api/client';
+import { getToken } from '../src/api/session';
 
 /** Jest has no native safe-area module; seed metrics so the provider
  * renders children immediately instead of waiting forever. */
@@ -37,14 +38,24 @@ jest.mock('../src/api/client', () => {
     removeContact: jest.fn(),
     acceptContactRequest: jest.fn(),
     declineContactRequest: jest.fn(),
+    // `../src/components/Avatar.tsx` (issue #182) also imports
+    // `API_BASE_URL` from this module -- since this whole module is
+    // mocked in this file, that import would otherwise resolve to
+    // `undefined` rather than the real client's computed default.
+    API_BASE_URL: 'http://localhost:3000',
   };
 });
+
+jest.mock('../src/api/session', () => ({
+  getToken: jest.fn(),
+}));
 
 const mockedListContacts = listContacts as jest.Mock;
 const mockedListContactRequests = listContactRequests as jest.Mock;
 const mockedRemoveContact = removeContact as jest.Mock;
 const mockedAcceptContactRequest = acceptContactRequest as jest.Mock;
 const mockedDeclineContactRequest = declineContactRequest as jest.Mock;
+const mockedGetToken = getToken as jest.Mock;
 
 const EMPTY_REQUESTS = { incoming: [], outgoing: [] };
 
@@ -123,6 +134,10 @@ describe('FriendsScreen', () => {
     // resolving without every existing Friends-section test having to know
     // about the Requests fetch.
     mockedListContactRequests.mockResolvedValue(EMPTY_REQUESTS);
+    // No session token by default -- every row's avatar (issue #182) falls
+    // back to its initial circle, matching this file's other assertions.
+    // Overridden per-test in the "row avatar" describe block below.
+    mockedGetToken.mockResolvedValue(null);
   });
 
   it('shows a loading indicator while the initial fetch is in flight', async () => {
@@ -608,6 +623,44 @@ describe('FriendsScreen', () => {
         expect(screen.getByText('request_not_found')).toBeTruthy();
       });
       expect(screen.getByText('alice@example.com')).toBeTruthy();
+    });
+  });
+
+  describe('row avatar (issue #182)', () => {
+    it('renders the initial circle when there is no avatar to show', async () => {
+      mockedListContacts.mockResolvedValueOnce({
+        contacts: [fullyKeyedContact({ user_id: 'u1', email: 'alice@example.com' })],
+      });
+
+      await renderFriendsScreen();
+
+      await waitFor(() => {
+        expect(screen.getByText('A')).toBeTruthy();
+      });
+      expect(screen.queryByTestId('avatar-image-u1')).toBeNull();
+    });
+
+    it('attempts the real avatar image and falls back to the initial circle when it fails to load', async () => {
+      mockedGetToken.mockResolvedValue('tok-1');
+      mockedListContacts.mockResolvedValueOnce({
+        contacts: [fullyKeyedContact({ user_id: 'u1', email: 'alice@example.com' })],
+      });
+
+      await renderFriendsScreen();
+
+      const image = await waitFor(() => screen.getByTestId('avatar-image-u1'));
+      expect(image.props.source).toEqual({
+        uri: 'http://localhost:3000/api/avatar/u1',
+        headers: { Authorization: 'Bearer tok-1' },
+      });
+      expect(screen.queryByText('A')).toBeNull();
+
+      fireEvent(image, 'error');
+
+      await waitFor(() => {
+        expect(screen.getByText('A')).toBeTruthy();
+      });
+      expect(screen.queryByTestId('avatar-image-u1')).toBeNull();
     });
   });
 });

@@ -13,6 +13,7 @@ import {
   acceptContactRequest,
   declineContactRequest,
   searchUsers,
+  uploadAvatar,
 } from '../client';
 
 jest.mock('../session', () => ({
@@ -577,6 +578,128 @@ describe('client', () => {
       await expect(deleteAccount()).rejects.toMatchObject({
         code: 'internal_error',
         status: 500,
+      });
+    });
+  });
+
+  describe('uploadAvatar', () => {
+    const fakeBlob = { size: 42 };
+
+    it('performs the three-step flow: upload-url, PUT bytes, confirm', async () => {
+      mockSession.getToken.mockResolvedValue('tok-10');
+      fetchMock
+        .mockResolvedValueOnce({ ok: true, blob: async () => fakeBlob })
+        .mockResolvedValueOnce(
+          jsonResponse(200, { uploadUrl: 'https://storage.example/put-url', contentType: 'image/jpeg' }),
+        )
+        .mockResolvedValueOnce({ ok: true, status: 200 })
+        .mockResolvedValueOnce(jsonResponse(200, { image: '/api/avatar/u1' }));
+
+      const result = await uploadAvatar('file:///tmp/photo.jpg');
+
+      expect(fetchMock).toHaveBeenNthCalledWith(1, 'file:///tmp/photo.jpg');
+      expect(fetchMock).toHaveBeenNthCalledWith(2, 'http://localhost:3000/api/avatar/upload-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer tok-10' },
+        body: JSON.stringify({ contentType: 'image/jpeg' }),
+      });
+      expect(fetchMock).toHaveBeenNthCalledWith(3, 'https://storage.example/put-url', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'image/jpeg' },
+        body: fakeBlob,
+      });
+      expect(fetchMock).toHaveBeenNthCalledWith(4, 'http://localhost:3000/api/avatar/confirm', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer tok-10' },
+      });
+      expect(result).toEqual({ image: '/api/avatar/u1' });
+    });
+
+    it('infers image/png for a .png uri', async () => {
+      mockSession.getToken.mockResolvedValue('tok-10');
+      fetchMock
+        .mockResolvedValueOnce({ ok: true, blob: async () => fakeBlob })
+        .mockResolvedValueOnce(
+          jsonResponse(200, { uploadUrl: 'https://storage.example/put-url', contentType: 'image/png' }),
+        )
+        .mockResolvedValueOnce({ ok: true, status: 200 })
+        .mockResolvedValueOnce(jsonResponse(200, { image: '/api/avatar/u1' }));
+
+      await uploadAvatar('file:///tmp/photo.PNG');
+
+      expect(fetchMock).toHaveBeenNthCalledWith(2, 'http://localhost:3000/api/avatar/upload-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer tok-10' },
+        body: JSON.stringify({ contentType: 'image/png' }),
+      });
+    });
+
+    it('throws an ApiError with code "no_session" when no token is stored', async () => {
+      mockSession.getToken.mockResolvedValueOnce(null);
+
+      await expect(uploadAvatar('file:///tmp/photo.jpg')).rejects.toMatchObject({
+        code: 'no_session',
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('throws an ApiError from step 1 (e.g. 400 invalid_content_type) without PUTting or confirming', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-10');
+      fetchMock
+        .mockResolvedValueOnce({ ok: true, blob: async () => fakeBlob })
+        .mockResolvedValueOnce(jsonResponse(400, { error: 'invalid_content_type' }));
+
+      await expect(uploadAvatar('file:///tmp/photo.jpg')).rejects.toMatchObject({
+        code: 'invalid_content_type',
+        status: 400,
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('throws an ApiError when the PUT to the presigned URL fails, without confirming', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-10');
+      fetchMock
+        .mockResolvedValueOnce({ ok: true, blob: async () => fakeBlob })
+        .mockResolvedValueOnce(
+          jsonResponse(200, { uploadUrl: 'https://storage.example/put-url', contentType: 'image/jpeg' }),
+        )
+        .mockResolvedValueOnce({ ok: false, status: 403 });
+
+      await expect(uploadAvatar('file:///tmp/photo.jpg')).rejects.toMatchObject({
+        status: 403,
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+    it('throws an ApiError from step 3 (e.g. 400 file_too_large)', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-10');
+      fetchMock
+        .mockResolvedValueOnce({ ok: true, blob: async () => fakeBlob })
+        .mockResolvedValueOnce(
+          jsonResponse(200, { uploadUrl: 'https://storage.example/put-url', contentType: 'image/jpeg' }),
+        )
+        .mockResolvedValueOnce({ ok: true, status: 200 })
+        .mockResolvedValueOnce(jsonResponse(400, { error: 'file_too_large' }));
+
+      await expect(uploadAvatar('file:///tmp/photo.jpg')).rejects.toMatchObject({
+        code: 'file_too_large',
+        status: 400,
+      });
+    });
+
+    it('throws an ApiError from step 3 on a 404 (object never uploaded)', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-10');
+      fetchMock
+        .mockResolvedValueOnce({ ok: true, blob: async () => fakeBlob })
+        .mockResolvedValueOnce(
+          jsonResponse(200, { uploadUrl: 'https://storage.example/put-url', contentType: 'image/jpeg' }),
+        )
+        .mockResolvedValueOnce({ ok: true, status: 200 })
+        .mockResolvedValueOnce(jsonResponse(404, { error: 'not_found' }));
+
+      await expect(uploadAvatar('file:///tmp/photo.jpg')).rejects.toMatchObject({
+        code: 'not_found',
+        status: 404,
       });
     });
   });
