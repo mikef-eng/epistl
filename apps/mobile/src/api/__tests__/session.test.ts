@@ -8,10 +8,13 @@ import {
   getUserId,
   saveEmail,
   getEmail,
+  saveAvatarPath,
+  getAvatarPath,
   clearSession,
   SESSION_TOKEN_KEY,
   SESSION_USER_ID_KEY,
   SESSION_EMAIL_KEY,
+  SESSION_AVATAR_PATH_KEY,
 } from '../session';
 
 jest.mock('expo-secure-store', () => ({
@@ -90,12 +93,35 @@ describe('session', () => {
     await expect(getEmail()).resolves.toBeNull();
   });
 
-  it('clearSession clears the token, user id, and email keys together', async () => {
+  it('saveAvatarPath persists the avatar serving path under its own session key', async () => {
+    await saveAvatarPath('/api/avatar/u1');
+
+    expect(mockSecureStore.setItemAsync).toHaveBeenCalledWith(
+      SESSION_AVATAR_PATH_KEY,
+      '/api/avatar/u1'
+    );
+  });
+
+  it('getAvatarPath reads the avatar path from secure storage', async () => {
+    mockSecureStore.getItemAsync.mockResolvedValueOnce('/api/avatar/u1');
+
+    await expect(getAvatarPath()).resolves.toBe('/api/avatar/u1');
+    expect(mockSecureStore.getItemAsync).toHaveBeenCalledWith(SESSION_AVATAR_PATH_KEY);
+  });
+
+  it('getAvatarPath resolves null when no avatar path is stored', async () => {
+    mockSecureStore.getItemAsync.mockResolvedValueOnce(null);
+
+    await expect(getAvatarPath()).resolves.toBeNull();
+  });
+
+  it('clearSession clears the token, user id, email, and avatar path keys together', async () => {
     await clearSession();
 
     expect(mockSecureStore.deleteItemAsync).toHaveBeenCalledWith(SESSION_TOKEN_KEY);
     expect(mockSecureStore.deleteItemAsync).toHaveBeenCalledWith(SESSION_USER_ID_KEY);
     expect(mockSecureStore.deleteItemAsync).toHaveBeenCalledWith(SESSION_EMAIL_KEY);
-    expect(mockSecureStore.deleteItemAsync).toHaveBeenCalledTimes(3);
+    expect(mockSecureStore.deleteItemAsync).toHaveBeenCalledWith(SESSION_AVATAR_PATH_KEY);
+    expect(mockSecureStore.deleteItemAsync).toHaveBeenCalledTimes(4);
   });
 });
