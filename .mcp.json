@@ -1,5 +1,9 @@
 {
   "mcpServers": {
+    "linear-server": {
+      "type": "http",
+      "url": "https://mcp.linear.app/mcp"
+    },
     "postgres": {
       "type": "stdio",
       "command": "docker",
