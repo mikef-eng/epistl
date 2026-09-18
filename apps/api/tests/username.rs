@@ -165,6 +165,73 @@ async fn change_username_succeeds_and_persists() {
 }
 
 #[tokio::test]
+async fn change_username_normalizes_to_lowercase() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (session_token, user_id, _email) = signup_user(&pool, state.clone(), "un-mixed").await;
+    let new_username = unique_username("un-mixed-new");
+    let mixed_case = new_username.to_uppercase();
+
+    let (status, body) = request(
+        api::app(state),
+        "PATCH",
+        "/api/username",
+        Some(&session_token),
+        Some(json!({ "username": mixed_case })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "change failed: {body:?}");
+    assert_eq!(
+        body["username"], new_username,
+        "response should reflect the lowercase-normalized username"
+    );
+
+    let persisted: String = sqlx::query_scalar("SELECT username FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_one(&pool)
+        .await
+        .expect("user row must exist");
+    assert_eq!(
+        persisted, new_username,
+        "stored username should be lowercase-normalized"
+    );
+}
+
+#[tokio::test]
+async fn change_username_case_variant_of_another_users_username_returns_409() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (_first_token, first_user_id, _first_email) =
+        signup_user(&pool, state.clone(), "un-case-taken-a").await;
+    let (second_token, _second_user_id, _second_email) =
+        signup_user(&pool, state.clone(), "un-case-taken-b").await;
+
+    let first_username: String = sqlx::query_scalar("SELECT username FROM users WHERE id = $1")
+        .bind(first_user_id)
+        .fetch_one(&pool)
+        .await
+        .expect("user row must exist");
+    let uppercased = first_username.to_uppercase();
+
+    let (status, body) = request(
+        api::app(state),
+        "PATCH",
+        "/api/username",
+        Some(&second_token),
+        Some(json!({ "username": uppercased })),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "a case-variant of an existing username should still conflict: {body:?}"
+    );
+    assert_eq!(body, json!({ "error": "username already taken" }));
+}
+
+#[tokio::test]
 async fn change_username_to_own_current_value_is_a_noop_success() {
     let pool = test_pool().await;
     let state = test_state().await;
