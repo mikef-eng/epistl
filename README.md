@@ -37,6 +37,8 @@ packages/   Shared libraries
 
 Work is tracked through GitHub Issues and role handoffs (Planner → Coder → Tester → Reviewer). See [AGENTS.md](AGENTS.md) for conventions and role playbooks, and [`docs/decisions/`](docs/decisions/) for durable architecture decisions.
 
+Any git worktree created for a concurrent agent/Coder dispatch (see [`docs/decisions/0016-concurrent-subagents-require-isolated-worktrees.md`](docs/decisions/0016-concurrent-subagents-require-isolated-worktrees.md)) belongs at `.worktrees/<name>` under the repo root (e.g. `git worktree add .worktrees/issue-123-slug`) — that directory is gitignored, disposable scratch space, not committed content.
+
 ## Claude Code
 
 Root [CLAUDE.md](CLAUDE.md) imports [AGENTS.md](AGENTS.md). Agent tooling lives under `.claude/`:
