@@ -75,3 +75,50 @@ closes.
 - This does not require every subagent invocation to use a worktree —
   only concurrent ones. A single Coder working alone continues to use
   the shared checkout as before.
+
+## Addendum (2026-09-18): shared `sccache` cache across worktrees
+
+Isolating worktrees (above) stops concurrent Coders from corrupting each
+other's filesystem/branch state, but it does nothing about the redundant
+work each worktree's own `cargo build` does: every worktree has its own
+independent `target/` directory, so N concurrent worktrees each
+recompile the same dependency graph (`aws-sdk-s3`, `tokio`, `sqlx`,
+`axum`, `better-auth`, etc.) from scratch, every time.
+
+Issue #201 addresses this by making `sccache` a required, project-wide
+Rust compiler cache (root `.cargo/config.toml` sets
+`rustc-wrapper = "sccache"` for the whole workspace `apps/api` and
+`packages/quic-relay-client` share). All worktrees — and CI — now read
+from and write to one shared `sccache` cache directory instead of each
+recompiling independently.
+
+**This does not reintroduce the lock-contention risk a shared raw
+`CARGO_TARGET_DIR` would.** The two are not the same kind of sharing:
+
+- A shared `CARGO_TARGET_DIR` would have every worktree's `cargo`
+  invocation write into the *same* `target/` directory tree, including
+  Cargo's own build-plan lock files and incremental-compilation
+  fingerprints for the whole workspace at once — concurrent `cargo`
+  processes from different worktrees would contend for that single
+  directory-level lock, and (worse) could observe or clobber each
+  other's in-progress, potentially different (different branch, different
+  dependency versions) build state.
+- `sccache` does not do this. Each worktree keeps its own independent
+  `target/` — nothing about `target/` itself is shared. `sccache` only
+  intercepts individual `rustc` invocations (one per compilation unit)
+  and caches each one's output keyed by a hash of that unit's inputs
+  (source, flags, dependency versions, etc.) in its own cache directory,
+  a store designed from the ground up for concurrent multi-process
+  reads/writes from unrelated build trees — this is exactly the property
+  distributed/parallel CI build farms already rely on `sccache` (or
+  equivalents like `ccache`) for. Two worktrees compiling the same input
+  hash concurrently either both get a cache hit (no contention, both just
+  read) or race harmlessly to populate the same cache entry (a bounded,
+  well-understood race `sccache` is designed to handle, not a directory
+  wide lock any other build has to wait behind). Two worktrees on
+  different branches compiling *different* code simply get different
+  hashes and don't interact at all.
+
+In short: isolated worktrees + one shared `sccache` cache directory gets
+the benefit (no redundant recompilation of the shared dependency graph)
+without the risk (no shared `target/`, no directory-level lock).
