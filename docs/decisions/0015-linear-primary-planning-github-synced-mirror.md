@@ -1,71 +1,95 @@
-# 0015: Linear is the primary planning surface; GitHub Issues stays a synced public mirror
+# 0015: GitHub Issues stays primary; Linear is a connected, passive internal mirror
 
 ## Context
 
-Epistl's SDLC (this file, `AGENTS.md`) previously ran entirely on GitHub
-Issues: the Planner opened a GitHub issue, and a label
-(`planning`/`ready`/`in-progress`/`blocked`/`needs-review`) tracked its
-stage through the Coder/Tester/Reviewer flow.
+`epistl` is a **public** GitHub repository. Public visibility of open
+issues — anyone can browse `is:open`, labels, and "good first issue" —
+matters for outside contribution, so GitHub Issues cannot be replaced or
+sidelined as the primary planning surface.
 
-`epistl` is a **public** GitHub repository, so GitHub Issues cannot be
-retired outright — that would remove public visibility into the backlog
-and roadmap for anyone outside a private Linear workspace. At the same
-time, GitHub Issues has no built-in workflow-state machine (hence the
-label-as-state-machine pattern) and no size cap or archiving, while
-Linear has both a real state machine and a Free-tier cap of 250
-non-archived issues per workspace that this project wants to stay under
-without ever thinking about it.
+Linear was connected (workspace + `Epistl` team, `linear-server` MCP,
+`linear@claude-plugins-official` plugin) to get a real workflow-state
+machine and automatic archiving, since GitHub Issues has neither (hence
+this project's existing label-as-state-machine convention) and Linear's
+Free tier caps a workspace at 250 non-archived issues.
 
-Linear's native GitHub integration supports genuine two-way issue sync:
-an issue created on either side is mirrored to the other automatically,
-and comments/status/labels/assignee stay in sync. This is Linear's
-documented pattern for open-source projects that want public GitHub
-Issues alongside internal Linear planning.
+Two designs were tried and rejected before this one, based on direct
+testing against the actual connected workspace (not just documentation):
+
+1. **Linear as primary, GitHub Issues as an auto-created public mirror.**
+   Rejected: Linear's GitHub integration reliably imports GitHub issues
+   into Linear (confirmed — connecting two-way sync backfilled all
+   historical issues automatically, tagged with a `Migrated` label), and
+   propagates status changes back to GitHub *for pairs the sync itself
+   created*. But it does **not** create a new GitHub issue from an
+   issue authored natively in Linear. Manually opening a same-titled
+   GitHub issue afterward doesn't merge into the original Linear issue
+   either — it gets imported as an independent, unlinked duplicate. Making
+   Linear primary would have meant either no public visibility for
+   Linear-authored work, or a manual create-then-reconcile-the-duplicate
+   step on every single issue.
+2. **Linear primary by default, GitHub Issue opened by hand only when an
+   issue should be publicly visible before completion (hybrid/opt-in).**
+   Rejected for the same reason this file exists: most issues would
+   default to Linear-only, which is the opposite of what a public,
+   contribution-friendly repo needs — the common case should be
+   public-by-default, not opt-in.
+
+Separately, a **different** Linear/GitHub feature was confirmed by
+testing and by Linear's docs: including the Linear issue identifier in a
+branch name or PR title links a PR directly to a Linear issue (no GitHub
+Issue required), with optional team-level workflow automations to
+auto-transition Linear status on push/merge. This is real and reliable,
+but doesn't help with the actual problem (public *issue* visibility) —
+it's a PR-linking feature, not an issue-creation one — so it isn't used
+here.
 
 ## Decision
 
-Linear (the `Epistl` team) is the primary surface where the
-Planner/Coder/Tester/Reviewer flow authors and tracks issues. GitHub
-Issues remains enabled on the repo and stays the public, authoritative
-record for external visibility, kept current automatically by Linear's
-two-way GitHub sync integration — nobody creates a GitHub issue by hand
-for new internal work; the sync creates the mirror.
+GitHub Issues remains exactly what it was before Linear existed: the
+single source of truth, fully public, driving the Planner/Coder/Tester/
+Reviewer flow via the existing label-based lifecycle
+(`planning`/`ready`/`in-progress`/`blocked`/`needs-review`) unchanged.
+Nothing about issue creation, branch naming (`issue-<number>-<slug>`), or
+`open-task-issue` changes.
 
-The SDLC lifecycle is modeled as Linear **workflow states**
-(`Backlog`/`Todo`/`In Progress`/`Blocked`/`In Review`/`Done`/`Canceled`/`Duplicate`),
-not Linear labels. Linear labels (`Bug`/`Feature`/`Improvement`) are
-reserved for categorization only, mirroring how GitHub's own `bug` label
-is used today.
-
-Branches are named from the Linear issue identifier
-(`<linear-id>-<short-slug>`, e.g. `epi-42-login-form`) rather than the
-GitHub issue number, since Linear is now the primary reference. PRs still
-include `Closes #<gh-number>` so GitHub's native close-on-merge keeps
-working on the mirrored issue.
+Linear stays connected via its native two-way GitHub sync, used
+one-directionally in practice: every GitHub issue (existing and future)
+syncs into Linear automatically, with no action from the Planner/Coder/
+Tester/Reviewer flow. This gives Linear a real workflow-state view and
+automatic archiving (see below) purely as an internal reporting/roadmap
+convenience. Nobody authors, edits, or manually transitions issues in
+Linear as part of this SDLC — GitHub remains the only place work is
+actually created and tracked.
 
 The `Epistl` Linear team's auto-archive period is set to 30 days after an
-issue reaches `Done`/`Canceled`/`Duplicate`, so the active-issue count
-stays low as a matter of habit well before the 250 cap could ever become
-a problem. Archived issues remain searchable and restorable.
+issue reaches a completed/canceled state, so the mirrored, non-archived
+issue count stays low without any manual archiving — confirmed working:
+the historical backfill's already-old closed issues were auto-archived
+within the same sync pass. Archived issues remain searchable and
+restorable in Linear.
 
-External contributors can still file GitHub issues directly via the
-existing `.github/ISSUE_TEMPLATE/task.yml` template — two-way sync brings
-those into Linear automatically for triage, same as any other GitHub
-issue.
+The `Blocked` custom workflow state created on the `Epistl` team during
+this exploration is left in place (harmless, no cost to keep) but is not
+part of any required workflow — GitHub's `blocked` label remains the
+actual source of truth for that state.
 
 ## Consequences
 
-- `AGENTS.md`'s Planner/Coder/Tester/Reviewer playbooks, its labels
-  table, and its branch-naming convention now describe a Linear-first
-  flow instead of a GitHub-Issues-first one.
-- `.claude/skills/open-task-issue/` creates issues via the Linear MCP
-  server (`mcp__linear-server__save_issue`) instead of `gh issue create`.
-- Nobody should re-introduce the old `planning`/`ready`/`in-progress`/
-  `blocked`/`needs-review` GitHub *labels* as the source of truth for
-  stage — that information now lives in the Linear issue's state, and
-  the GitHub mirror's labels are cosmetic/synced, not authoritative.
-- If the GitHub↔Linear sync integration is ever disconnected, this
-  decision's premise (GitHub mirror always reflects Linear) no longer
-  holds and the Planner/Coder/Tester/Reviewer flow would need to fall
-  back to GitHub Issues directly until sync is restored or this ADR is
-  revisited.
+- `AGENTS.md`, `.claude/skills/open-task-issue/`, and the Planner/Coder/
+  Tester/Reviewer agent files and slash commands are unchanged from
+  their pre-Linear form other than a short mention that Linear exists as
+  a connected mirror.
+- Nobody should point Planner/Coder/Tester/Reviewer automation at Linear
+  MCP tools (`save_issue`, state transitions, etc.) as part of the
+  regular workflow — that was tried, and reintroducing it reopens the
+  duplicate-issue problem described above. Linear MCP tools remain
+  available for ad hoc internal reporting/read queries only.
+- If a future need specifically requires an internal-only issue with no
+  public GitHub counterpart, author it directly in Linear and accept
+  that it has no GitHub mirror (the sync only pulls GitHub → Linear, not
+  the reverse) — don't attempt to backfill a GitHub issue for it later
+  without repeating the duplicate-reconciliation dance documented here.
+- If the GitHub↔Linear sync integration is ever disconnected, Linear
+  simply stops receiving new issues; nothing in the actual SDLC depends
+  on it, so there is no fallback needed.

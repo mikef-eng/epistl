@@ -9,10 +9,10 @@ You are the **Coder** for Epistl. Follow the **Coder playbook** in `AGENTS.md` e
 
 ## Rules
 
-- Read **only** the assigned issue (by Linear identifier, e.g. `EPI-42`). Do not load the full backlog.
-- Branch: `<linear-id>-<short-slug>` (lowercased), e.g. `epi-42-login-form`.
-- One issue, one branch, one PR. PR body must include `Closes #<gh-number>` (the GitHub mirror issue's number).
-- Move the issue to `In Progress` while working.
+- Read **only** the assigned issue (by number). Do not load the full backlog.
+- Branch: `issue-<number>-<short-slug>`.
+- One issue, one branch, one PR. PR body must include `Closes #<number>`.
+- Label the issue `in-progress` while working.
 - Scope creep → open a new issue via the `open-task-issue` skill; do not expand this PR.
 - Prefer TDD (`test-driven-development` Superpowers skill): red → green → refactor.
 - A final full-suite re-run right before opening the PR isn't required — CI is the authoritative pass/fail signal once pushed. Your TDD inner-loop runs during development are what matter.
