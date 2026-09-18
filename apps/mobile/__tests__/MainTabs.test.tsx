@@ -5,6 +5,7 @@ import { Text } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { listContactRequests, listContacts } from '../src/api/client';
+import { startAppSession, stopAppSession } from '../src/inbox/appSession';
 import MainTabs from '../src/navigation/MainTabs';
 import { getConversationSummaries } from '../src/storage/messages';
 import type { RootStackParamList } from '../src/navigation/types';
@@ -50,9 +51,23 @@ jest.mock('../src/storage/messages', () => ({
   getConversationSummaries: jest.fn(),
 }));
 
+// `MainTabs` starts/stops the app-level transport connection + inbox
+// listener on mount/unmount (issue #165's `../src/inbox/appSession.ts`),
+// which transitively pulls in `../src/transport/quic.ts`'s native
+// `quic-relay-client` TurboModule bindings -- unavailable under Jest, and
+// already covered directly (unmocked) by `../src/inbox/__tests__/appSession.test.ts`.
+// Mocked wholesale here so this file stays focused on navigation
+// composition.
+jest.mock('../src/inbox/appSession', () => ({
+  startAppSession: jest.fn(),
+  stopAppSession: jest.fn(),
+}));
+
 const mockedListContacts = listContacts as jest.Mock;
 const mockedListContactRequests = listContactRequests as jest.Mock;
 const mockedGetConversationSummaries = getConversationSummaries as jest.Mock;
+const mockedStartAppSession = startAppSession as jest.Mock;
+const mockedStopAppSession = stopAppSession as jest.Mock;
 
 jest.setTimeout(15000);
 
@@ -70,7 +85,7 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 
 async function renderMainStack() {
   const user = userEvent.setup();
-  await render(
+  const view = await render(
     <SafeAreaProvider initialMetrics={SAFE_AREA_METRICS}>
       <NavigationContainer>
         <Stack.Navigator initialRouteName="Main">
@@ -82,7 +97,7 @@ async function renderMainStack() {
       </NavigationContainer>
     </SafeAreaProvider>
   );
-  return { user };
+  return { user, unmount: view.unmount };
 }
 
 describe('Main tab navigator (issue #94)', () => {
@@ -182,5 +197,18 @@ describe('Main tab navigator (issue #94)', () => {
     await waitFor(() => {
       expect(screen.getByText('Chat screen stub')).toBeTruthy();
     });
+  });
+
+  it('starts the app session (transport connection + inbox listener) on mount and stops it on unmount (issue #165)', async () => {
+    const { unmount } = await renderMainStack();
+
+    await waitFor(() => {
+      expect(mockedStartAppSession).toHaveBeenCalledTimes(1);
+    });
+    expect(mockedStopAppSession).not.toHaveBeenCalled();
+
+    await unmount();
+
+    expect(mockedStopAppSession).toHaveBeenCalledTimes(1);
   });
 });
