@@ -60,6 +60,7 @@ async fn test_state() -> AppState {
         registry: api::registry::ConnectionRegistry::new(),
         nats,
         search_rate_limiter: api::search::SearchRateLimiter::new(),
+        push_notifier: std::sync::Arc::new(api::push::ExpoPushNotifier::new()),
     }
 }
 

@@ -233,6 +233,14 @@ async fn handle_send(
 /// for their *next* reconnect would be needlessly slow (issue #63). This
 /// is spawned rather than awaited so it never adds latency to the sender's
 /// own `ack` frame below.
+///
+/// Also spawns a second, independent best-effort background task (see
+/// [`notify_push_tokens_for_offline_message`], issue #168) that pushes a
+/// generic, content-free notification to every device `to` has registered
+/// in `push_tokens` (issue #166) -- the concrete "wake up the recipient's
+/// phone" behavior this offline-delivery path exists for. Spawned for the
+/// same reason as the redelivery attempt above: it must never add latency
+/// to, or fail, the sender's own `ack` frame below.
 async fn queue_for_offline_delivery(
     state: &AppState,
     sender_id: Uuid,
@@ -267,6 +275,11 @@ async fn queue_for_offline_delivery(
             let redelivery_state = state.clone();
             tokio::spawn(async move {
                 redeliver_if_now_connected(&redelivery_state, to, sequence, relay).await;
+            });
+
+            let push_state = state.clone();
+            tokio::spawn(async move {
+                notify_push_tokens_for_offline_message(&push_state, to, sender_id).await;
             });
 
             let ack = json!({ "type": "ack", "to": to });
@@ -326,6 +339,51 @@ async fn redeliver_if_now_connected(state: &AppState, to: Uuid, sequence: u64, r
         return;
     };
     let _ = stream.delete_message(sequence).await;
+}
+
+/// Best-effort push-notification fan-out for a message that was just
+/// queued for offline delivery (see [`queue_for_offline_delivery`]) --
+/// looks up every push token `to` has registered (`push_tokens`, issue
+/// #166) and attempts a push to each one independently via
+/// `state.push_notifier` (issue #167's [`crate::push::PushNotifier`]
+/// seam).
+///
+/// Only ever invoked as a spawned background task -- see
+/// `queue_for_offline_delivery`'s doc comment -- so it never adds latency
+/// to, or can fail, the sender's own `ack` frame.
+///
+/// The notification body is always the generic, content-free
+/// `"You have a new message"` (per `crate::push`'s own constraint: message
+/// content must never reach Expo). `data` carries only `fromUserId`, for a
+/// later mobile-side tap handler to deep-link into the right conversation.
+///
+/// Every failure here -- the `push_tokens` lookup erroring, no tokens
+/// registered, an individual token being rejected by Expo, a network
+/// failure -- is swallowed: nothing about this path is ever surfaced back
+/// to the sender, mirroring `crate::contacts::push_frame`'s existing
+/// best-effort convention. A failure sending to one token never prevents
+/// attempting the rest.
+async fn notify_push_tokens_for_offline_message(state: &AppState, to: Uuid, from: Uuid) {
+    let tokens: Vec<String> =
+        sqlx::query_scalar::<_, String>("SELECT token FROM push_tokens WHERE user_id = $1")
+            .bind(to)
+            .fetch_all(&state.pool)
+            .await
+            .unwrap_or_default();
+
+    let data = json!({ "type": "message", "fromUserId": from });
+
+    for token in tokens {
+        let _ = state
+            .push_notifier
+            .send_push(
+                &token,
+                "New message",
+                "You have a new message",
+                data.clone(),
+            )
+            .await;
+    }
 }
 
 fn send_error(tx: &Sender, code: &str, message: &str) -> Result<(), ()> {
@@ -394,6 +452,7 @@ mod tests {
             registry: crate::registry::ConnectionRegistry::new(),
             nats,
             search_rate_limiter: crate::search::SearchRateLimiter::new(),
+            push_notifier: std::sync::Arc::new(crate::push::ExpoPushNotifier::new()),
         }
     }
 
