@@ -6,6 +6,7 @@
 
 pub mod account;
 pub mod auth;
+pub mod avatars;
 pub mod contacts;
 pub mod db;
 pub mod keys;
@@ -27,8 +28,9 @@ pub use auth::{AppState, AuthenticatedUser};
 /// [`auth::router`], the contacts routes from [`contacts::router`], the
 /// key-storage routes from [`keys::router`], the account routes from
 /// [`account::router`], the discover-search route from [`search::router`],
-/// the push-token registration route from [`push_tokens::router`], and the
-/// `/ws` relay from [`ws::router`].
+/// the push-token registration route from [`push_tokens::router`], the
+/// avatar upload/serving routes from [`avatars::router`], and the `/ws`
+/// relay from [`ws::router`].
 pub fn app(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
@@ -38,6 +40,7 @@ pub fn app(state: AppState) -> Router {
         .merge(account::router(state.clone()))
         .merge(search::router(state.clone()))
         .merge(push_tokens::router(state.clone()))
+        .merge(avatars::router(state.clone()))
         .merge(ws::router(state))
 }
 

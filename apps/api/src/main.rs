@@ -73,6 +73,18 @@ async fn main() {
         }
     };
 
+    // Fail fast the same way as Postgres/NATS above: every avatar
+    // upload/serving route depends on a fully configured SeaweedFS client
+    // pair (issue #189), so a missing env var is as fatal as an
+    // unreachable database.
+    let avatar_store = match api::avatars::AvatarStore::from_env() {
+        Ok(avatar_store) => avatar_store,
+        Err(err) => {
+            eprintln!("startup failed: {err}");
+            std::process::exit(1);
+        }
+    };
+
     let state = AppState {
         auth,
         pool,
@@ -80,6 +92,7 @@ async fn main() {
         nats: nats_client,
         search_rate_limiter: api::search::SearchRateLimiter::new(),
         push_notifier: std::sync::Arc::new(api::push::ExpoPushNotifier::new()),
+        avatar_store,
     };
 
     // On by default (issue #114): starts a real QUIC listener alongside

@@ -94,6 +94,8 @@ async fn test_state_with_push_notifier(push_notifier: api::push::SharedPushNotif
         nats,
         search_rate_limiter: api::search::SearchRateLimiter::new(),
         push_notifier,
+        avatar_store: api::avatars::AvatarStore::from_env()
+            .expect("failed to build AvatarStore for test"),
     }
 }
 
