@@ -4,56 +4,54 @@ Epistl uses a controlled SDLC harness so humans and AI agents work through small
 
 ## Single source of truth
 
-- Every unit of work is a **Linear issue** on the `Epistl` team.
-- Linear's two-way GitHub sync integration mirrors every issue to a GitHub issue in this repo automatically (see [`docs/decisions/0015-linear-primary-planning-github-synced-mirror.md`](docs/decisions/0015-linear-primary-planning-github-synced-mirror.md)). GitHub Issues stays the public, human-readable record; never create a GitHub issue by hand for new work — let the sync create the mirror.
+- Every unit of work is a **GitHub Issue**.
 - Nothing gets built without an issue.
 - Acceptance criteria are written **before** implementation starts, never after.
+- Linear is connected as a read-only-in-practice internal mirror (see [`docs/decisions/0015-linear-primary-planning-github-synced-mirror.md`](docs/decisions/0015-linear-primary-planning-github-synced-mirror.md)) — every GitHub issue syncs into Linear automatically for internal state/reporting. Nobody authors or edits issues in Linear as part of this workflow.
 
 ## Roles and handoffs
 
 | Role | Responsibility |
 | --- | --- |
-| **Planner** | Breaks the goal into small tasks; opens Linear issues with clear goal, acceptance criteria, and out of scope. Leaves each in `Backlog`, then moves it to `Todo` when unambiguous. |
-| **Coder** | Implements **one** `Todo` issue at a time. Creates a branch, opens a PR that closes the GitHub mirror issue. Extra discoveries become new issues — not scope on the current branch. |
-| **Tester** | Runs CI, adds tests for acceptance criteria when missing, checks the PR against criteria line by line. Failures → PR comment + moves the issue to `Blocked`. Pass → moves it to `In Review`. |
+| **Planner** | Breaks the goal into small tasks; opens issues with clear goal, acceptance criteria, and out of scope. Labels `planning`, then `ready` when unambiguous. |
+| **Coder** | Implements **one** `ready` issue at a time. Creates a branch, opens a PR that closes the issue. Extra discoveries become new issues — not scope on the current branch. |
+| **Tester** | Runs CI, adds tests for acceptance criteria when missing, checks the PR against criteria line by line. Failures → PR comment + `blocked`. Pass → `needs-review`. |
 | **Reviewer** | Final pass on quality, security, conventions, and scope. Merge only when CI is green and criteria are met. |
 
-## Workflow states
+## Labels
 
-Linear workflow states on the `Epistl` team drive the SDLC — not Linear labels. Linear labels (`Bug`, `Feature`, `Improvement`) are reserved for categorization, mirroring how GitHub's own `bug` label is used today.
+| Label | Meaning |
+| --- | --- |
+| `planning` | Issue is being refined; not ready for implementation |
+| `ready` | Clear enough for the Coder |
+| `in-progress` | Actively being implemented |
+| `blocked` | Waiting on a fix or decision |
+| `needs-review` | Tester passed; awaiting Reviewer |
+| `bug` | Defect against expected behavior |
+| `backlog` | Idea not ready for Planner/Coder yet |
 
-| State | Category | Meaning |
-| --- | --- | --- |
-| `Backlog` | backlog | Idea/issue exists but may not be fully groomed yet |
-| `Todo` | unstarted | Clear enough for the Coder |
-| `In Progress` | started | Actively being implemented |
-| `Blocked` | started | Waiting on a fix or decision |
-| `In Review` | started | Tester passed; awaiting Reviewer |
-| `Done` | completed | Merged/shipped |
-| `Canceled` / `Duplicate` | canceled/duplicate | Dropped or superseded |
-
-Flow: `Backlog` → `Todo` → `In Progress` → (`Blocked` \| `In Review`) → `Done`.
+Flow: `planning` → `ready` → `in-progress` → (`blocked` \| `needs-review`) → merge/close.
 
 ## Planner playbook
 
 1. Intake the goal (MVP slice, bug cluster, or newly discovered work). Do not implement anything.
 2. Break the goal into small, independent-ish tasks (aim for under a day of work each). **Bundling**: related, low-risk changes to the same screen/user-facing surface may be combined into one issue — multiple separable, testable acceptance-criteria bullets, still one PR — rather than one issue per change (e.g. a settings screen's dark-mode toggle, nav scaffold, visual pass, log-out flow, and delete-account flow can be one issue if each piece is independently low-risk). **Hard exclusions — always stay atomic regardless of size or how related they look**: anything touching `apps/api/src/crypto/**`, `apps/api/src/auth/**`, `apps/mobile/src/crypto/**`; any database migration or data-model change; any new dependency; anything that would warrant a `docs/decisions/` entry per this file's "Architecture decisions" section. There's no fixed time-budget cap layered on top of the same-screen/low-risk gate — if a bundle grows large enough that it no longer reads as one coherent day-or-so of work, split along a natural sub-boundary rather than reverting to one-issue-per-tiny-change.
-3. For each task, open a Linear issue on the `Epistl` team using the Task template via the `open-task-issue` skill. Required sections: Goal, Acceptance criteria, Out of scope, Notes.
-4. New issues start in the `Backlog` state (Linear's default for a newly created issue) — no separate label to apply.
+3. For each task, open a GitHub issue using the Task template via the `open-task-issue` skill. Required sections: Goal, Acceptance criteria, Out of scope, Notes.
+4. Label each new issue `planning`.
 5. Self-review every acceptance criterion: it must be concrete and testable. "Add login" is bad. "User can log in with email/password; invalid credentials show an error; session persists on refresh" is good.
-6. Move an issue to `Todo` only when a Coder could implement it without asking a clarifying question.
+6. Flip an issue to `ready` only when a Coder could implement it without asking a clarifying question.
 7. Re-run this playbook after every merged milestone or when new work is discovered. Never invent mid-sprint scope for the Coder.
 
 ## Coder playbook
 
 1. Read **only** the assigned issue — do not load the whole backlog into context.
-2. Confirm the issue is in the `Todo` state (or move it to `In Progress` if you are starting work).
-3. Create a branch named `<linear-id>-<short-slug>` (e.g. `epi-42-login-form`, using the Linear issue identifier lowercased).
+2. Confirm the issue is labeled `ready` (or switch it to `in-progress` if you are starting work).
+3. Create a branch named `issue-<number>-<short-slug>` (e.g. `issue-42-login-form`).
 4. Implement **only** that issue's scope. Prefer TDD (red → green → refactor) when tests are part of the acceptance criteria. Run local checks via moon (`moon run api:check`/`api:lint`/`api:test`, `moon run mobile:lint`/`mobile:typecheck`/`mobile:test`), not raw `cargo`/`npm` — see the Tester playbook below for why.
 5. If you notice extra work, open a new issue via the `open-task-issue` skill — do not expand this branch.
 6. If the change alters the stack, how to run something, an env var, or an architectural constraint, update the relevant section of `README.md` in the same PR — see "Docs freshness" below.
-7. Open a PR that references the GitHub mirror issue with `Closes #<gh-number>` — Linear's sync reflects the resulting state change automatically once the PR merges.
-8. Keep the issue in the `In Progress` state until Tester finishes.
+7. Open a PR that references the issue with `Closes #<number>`.
+8. Keep the issue labeled `in-progress` until Tester finishes.
 
 ## Tester playbook
 
@@ -61,18 +59,18 @@ Flow: `Backlog` → `Todo` → `In Progress` → (`Blocked` \| `In Review`) → 
 2. Verify **each** acceptance criterion on the linked issue line by line — not just "does it run." Audit coverage: confirm a real test exists for each criterion and actually exercises the claimed behavior — read the test, don't just trust the PR description's claims.
 3. Add or fix tests for acceptance criteria when coverage is missing or wrong, and reasonably testable in this PR. Run anything you add or change yourself, via moon (matching CI exactly — see README's "Local commands" section): `moon run mobile:lint`, `moon run mobile:typecheck`, `moon run mobile:test` for `apps/mobile`; `moon run api:check`, `moon run api:lint`, `moon run api:test` for `apps/api`. Do not substitute raw `cargo`/`npm` invocations — moon's task definitions are the actual source of truth CI runs against (a raw command can silently diverge from it), and moon already loads `.env` for every task, so manually running `source .env`/`set -o allexport` beforehand is redundant and should also be avoided. This is new verification you're adding, not a re-check of what CI already confirmed.
 4. **Exception — repeated/probabilistic verification criteria** (e.g. a flake-reproduction loop the PR claims to have closed): CI's single pass structurally can't confirm this. Always fully independently re-run the stated N yourself, using moon's `--` passthrough (e.g. `for i in $(seq 1 40); do moon run api:test -- --lib || echo "FAILED on iteration $i"; done`) — never just audit the Coder's reported numbers or methodology. This is the one case where full duplication of the Coder's own check is intentional and required.
-5. On failure: comment on the PR with specifics and move the issue to the `Blocked` state.
-6. On pass: move the issue to the `In Review` state.
+5. On failure: comment on the PR with specifics and set the issue label to `blocked`.
+6. On pass: set the issue label to `needs-review`.
 
 ## Reviewer playbook
 
-1. Confirm CI is green and the Tester has moved the issue to `In Review`. Trust CI-green plus that state entirely for correctness — never re-run test suites yourself; spend your review effort on the diff, not on re-verifying "does it pass."
+1. Confirm CI is green and the Tester has set `needs-review`. Trust CI-green plus the Tester's `needs-review` label entirely for correctness — never re-run test suites yourself; spend your review effort on the diff, not on re-verifying "does it pass."
 2. Re-read the issue acceptance criteria against the PR diff.
 3. Check scope: nothing beyond the issue landed; discoveries should already be separate issues.
 4. Check conventions against this file and the repo's existing patterns.
 5. Check docs freshness: if the diff changes the stack, how to run something, an env var, or an architectural constraint, `README.md` must be updated in the same PR. Block merge if it isn't — see "Docs freshness" below.
 6. If the diff touches `apps/api/src/crypto/**` or `apps/api/src/auth/**`, run the `crypto-reviewer` subagent (or the `pqc-crypto-change` skill) and do **not** approve without its sign-off.
-7. Merge only when CI is green and criteria are met. Prefer squash merge; delete the branch after merge. Merging closes the GitHub mirror issue (via `Closes #<gh-number>`); Linear's sync moves the issue to `Done` automatically — no manual state change needed.
+7. Merge only when CI is green and criteria are met. Prefer squash merge; delete the branch after merge.
 
 ## Docs freshness
 
@@ -162,4 +160,4 @@ say-so.
 
 Postgres MCP is configured project-scoped in `.mcp.json` (`crystaldba/postgres-mcp` over Docker, `--network=host`, connects to the local `docker compose` Postgres by default — override via `DATABASE_URL`). **Deferred:** a NATS channel plugin — no such plugin exists in the official Claude Code marketplace as of this writing; revisit if one becomes available, rather than assuming the original "add in the same PR that stands up that service" guidance still applies to something that may not exist.
 
-Linear MCP (`linear-server`, `https://mcp.linear.app/mcp`) is configured project-scoped in `.mcp.json`, with the `linear@claude-plugins-official` plugin enabled in `.claude/settings.json`. This is what `open-task-issue` and the Planner/Coder/Tester/Reviewer playbooks use to create and transition Linear issues — see [`docs/decisions/0015-linear-primary-planning-github-synced-mirror.md`](docs/decisions/0015-linear-primary-planning-github-synced-mirror.md).
+Linear MCP (`linear-server`, `https://mcp.linear.app/mcp`) is configured project-scoped in `.mcp.json`, with the `linear@claude-plugins-official` plugin enabled in `.claude/settings.json`. GitHub Issues stays the primary, public surface the Planner/Coder/Tester/Reviewer flow operates on (see above); Linear's GitHub sync mirrors every issue into Linear automatically for internal reporting/roadmap use only — see [`docs/decisions/0015-linear-primary-planning-github-synced-mirror.md`](docs/decisions/0015-linear-primary-planning-github-synced-mirror.md).

@@ -1,5 +1,12 @@
 # Linear Adoption Implementation Plan
 
+> **Superseded:** executing this plan (Tasks 1-8 completed) surfaced that
+> Linear's GitHub sync doesn't mirror Linear-authored issues out to GitHub
+> (only GitHub → Linear works reliably), which broke the plan's core
+> assumption. All of it was reverted; see
+> [`docs/decisions/0015-linear-primary-planning-github-synced-mirror.md`](../../decisions/0015-linear-primary-planning-github-synced-mirror.md)
+> for the final decision. Kept here as a record of what was tried.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make Linear the primary Planner/Coder/Tester/Reviewer authoring surface for Epistl, with GitHub Issues staying as a publicly-visible mirror kept in sync by Linear's native two-way GitHub integration, and put in place the state/label/archive setup that keeps the Linear workspace under the Free tier's 250-active-issue cap.

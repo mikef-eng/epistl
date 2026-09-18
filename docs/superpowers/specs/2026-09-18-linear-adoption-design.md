@@ -1,5 +1,13 @@
 # Linear adoption: primary planning surface with GitHub as synced public mirror
 
+> **Superseded:** this "Linear primary" design was tried and rejected after
+> hands-on testing showed Linear's GitHub sync doesn't create a GitHub
+> mirror from a Linear-authored issue (only the reverse works). The final
+> decision — GitHub Issues stays primary, Linear is a passive internal
+> mirror — is recorded in
+> [`docs/decisions/0015-linear-primary-planning-github-synced-mirror.md`](../../decisions/0015-linear-primary-planning-github-synced-mirror.md).
+> Kept here as a record of what was explored and why it didn't work.
+
 ## Goal
 
 Adopt Linear for day-to-day issue planning/tracking while keeping GitHub

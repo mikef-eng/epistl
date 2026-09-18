@@ -6,4 +6,4 @@ Delegate to the `planner` subagent with this goal:
 
 $ARGUMENTS
 
-Follow the Planner playbook in AGENTS.md. Open Task-template Linear issues (they start in `Backlog`), then move unambiguous ones to `Todo`. Do not write application code.
+Follow the Planner playbook in AGENTS.md. Open Task-template issues labeled `planning`, then move unambiguous ones to `ready`. Do not write application code.
