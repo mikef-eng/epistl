@@ -391,6 +391,35 @@ mod tests {
     }
 
     #[test]
+    fn homebrew_present_with_install_flag_calls_the_correct_formula_for_every_brew_installable_tool(
+    ) {
+        // Each of the four brew-installable tools maps to its own formula
+        // name (`rustup` -> `rustup-init`, `moon` -> the moonrepo tap, and
+        // `node`/`sccache` -> themselves) -- assert the *exact* `brew
+        // install <formula>` call for each one individually, not just a
+        // count, so a wrong mapping for any single tool would fail here.
+        for (tool, expected_formula) in [
+            ("rustup", "rustup-init"),
+            ("node", "node"),
+            ("moon", "moonrepo/moon/moon"),
+            ("sccache", "sccache"),
+        ] {
+            let exec = FakeExecutor::new(&[("brew", "Homebrew 4.3.9")]);
+            let report = resolve_brew_install(&absent(tool), true, true, &exec);
+
+            assert_eq!(report.outcome, MacOutcome::AutoInstalled);
+            assert_eq!(
+                exec.calls(),
+                vec![(
+                    "brew".to_string(),
+                    vec!["install".to_string(), expected_formula.to_string()]
+                )],
+                "unexpected brew install call for tool {tool}"
+            );
+        }
+    }
+
+    #[test]
     fn homebrew_present_without_install_flag_only_prints_the_command() {
         let exec = FakeExecutor::new(&[("brew", "Homebrew 4.3.9")]);
         let report = resolve_brew_install(&absent("node"), true, false, &exec);
