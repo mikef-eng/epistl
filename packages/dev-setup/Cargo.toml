@@ -9,16 +9,17 @@ OS (macOS/Linux only, issue #203), auto-copies `.env.example` to `.env`
 if missing, and reports Present/Absent for the core tools README's
 "Running the stack locally" section requires (rustup, cargo/rustc, node,
 moon, docker, sccache). Detect-only by default -- two opt-in mutating
-flags exist: `--install` (OS-specific auto-install, see the follow-up
-issues) and `--start` (`docker compose up -d` + health-wait + `moon run
-api:migrate`, issue #206). See `README.md` in this directory for the
+flags exist: `--install` (apt-based Linux auto-install of rustup/moon/
+sccache, with Node.js/Docker and non-apt distros staying guide-only,
+issue #205) and `--start` (`docker compose up -d` + health-wait + `moon
+run api:migrate`, issue #206). See `README.md` in this directory for the
 full flag semantics.
 """
 
 # No external dependencies: OS detection uses `std::env::consts::OS`,
 # tool detection shells out via `std::process::Command` behind this
-# crate's own `CommandExecutor` trait (see src/checks.rs), and the one
-# CLI flag so far (`--start`) is a single boolean checked via
+# crate's own `CommandExecutor` trait (see src/checks.rs), and both CLI
+# flags so far (`--install`, `--start`) are single booleans checked via
 # `std::env::args()` directly -- not enough surface to justify pulling
 # in an argument-parsing crate.
 
