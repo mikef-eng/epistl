@@ -1,6 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import * as ImagePicker from 'expo-image-picker';
 import { colorScheme, useColorScheme } from 'nativewind';
 import { useEffect, useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
@@ -15,6 +14,7 @@ import {
   saveAvatarPath,
   saveUsername,
 } from '../api/session';
+import { pickAvatarImage } from '../avatar/pickImage';
 import Avatar from '../components/Avatar';
 import { clearIdentity } from '../crypto/identity';
 import { clearAllSessions } from '../crypto/session';
@@ -27,6 +27,7 @@ import {
   type ThemePreference,
 } from '../settings/preferences';
 import { clearAllMessages } from '../storage/messages';
+import { isValidUsernameFormat, USERNAME_FORMAT_ERROR } from '../validation/username';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
 
@@ -45,19 +46,6 @@ function initialFor(email: string): string {
 
 function messageFor(err: unknown): string {
   return err instanceof ApiError ? err.message : 'Something went wrong';
-}
-
-/** Client-side mirror of `apps/api/src/username.rs`'s format check, which
- * (per issue #199) delegates directly to Better Auth's own
- * `better_auth_core::utils::username::validate_username` -- 3-30
- * characters, letters/digits/underscore/dot -- the same rule Better Auth's
- * `EmailPasswordPlugin` already enforces at signup. Run before ever calling
- * `updateUsername` so an obviously invalid value never reaches the network,
- * per issue #185's acceptance criteria. The server remains the final
- * authority on format regardless (its own `400 invalid_username` still
- * applies if this check is ever out of sync with it). */
-function isValidUsernameFormat(value: string): boolean {
-  return /^[A-Za-z0-9_.]{3,30}$/.test(value);
 }
 
 export default function SettingsScreen({ navigation }: Props) {
@@ -153,9 +141,7 @@ export default function SettingsScreen({ navigation }: Props) {
 
   async function handleSaveUsername() {
     if (!isValidUsernameFormat(usernameDraft)) {
-      setUsernameError(
-        'Username must be 3-30 characters: letters, numbers, underscores, and dots only'
-      );
+      setUsernameError(USERNAME_FORMAT_ERROR);
       return;
     }
 
@@ -178,27 +164,26 @@ export default function SettingsScreen({ navigation }: Props) {
     }
   }
 
-  /** Opens the device's photo library (library only -- no camera capture
-   * in this issue) and, on a selection, runs issue #189's three-step
+  /** Opens the device's photo library (via `../avatar/pickImage.ts`'s
+   * shared picker, extracted in issue #216 for reuse by
+   * `SetupProfileScreen`) and, on a selection, runs issue #189's three-step
    * upload flow via `uploadAvatar`. A single loading flag spans all three
    * steps since `uploadAvatar` itself awaits them sequentially. */
   async function handlePickAvatar() {
     setAvatarError(null);
 
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
+    const picked = await pickAvatarImage();
+    if (picked.status === 'permission_denied') {
       setAvatarError('Permission to access photos is required');
       return;
     }
-
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'] });
-    if (result.canceled || result.assets.length === 0) {
+    if (picked.status === 'canceled') {
       return;
     }
 
     setAvatarUploading(true);
     try {
-      const { image } = await uploadAvatar(result.assets[0].uri);
+      const { image } = await uploadAvatar(picked.uri);
       await saveAvatarPath(image);
       setAvatarVersion((prev) => prev + 1);
     } catch (err) {

@@ -13,6 +13,7 @@ import ChatScreen from "./src/screens/ChatScreen";
 import LoginScreen from "./src/screens/LoginScreen";
 import QuicSpikeScreen from "./src/screens/QuicSpikeScreen";
 import SettingsScreen from "./src/screens/SettingsScreen";
+import SetupProfileScreen from "./src/screens/SetupProfileScreen";
 import UserProfileScreen from "./src/screens/UserProfileScreen";
 import { getThemePreference } from "./src/settings/preferences";
 
@@ -48,6 +49,14 @@ export default function App() {
       <NavigationContainer>
         <Stack.Navigator initialRouteName="Login">
           <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
+          {/* Reached from LoginScreen's sign-up submit (issue #216); builds
+              its own themed header like the four screens below, so the
+              root stack's native header is hidden here too. */}
+          <Stack.Screen
+            name="SetupProfile"
+            component={SetupProfileScreen}
+            options={{ headerShown: false }}
+          />
           {/* Its own tab headers provide Conversations/Friends' titles and
               gear icons, so the root stack's default header is hidden here
               (issue #94). */}
