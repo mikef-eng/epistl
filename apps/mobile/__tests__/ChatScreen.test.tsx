@@ -1,6 +1,6 @@
 import 'react-native-get-random-values';
 
-import { act, render, screen, userEvent, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, userEvent, waitFor } from '@testing-library/react-native';
 import * as SecureStore from 'expo-secure-store';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { x25519 } from '@noble/curves/ed25519.js';
@@ -62,6 +62,11 @@ jest.mock('../src/api/session', () => ({
 
 jest.mock('../src/api/client', () => ({
   listContacts: jest.fn(),
+  // `../src/components/Avatar.tsx` (issue #182) also imports `API_BASE_URL`
+  // from this module -- since this whole module is mocked in this file,
+  // that import would otherwise resolve to `undefined` rather than the
+  // real client's computed default.
+  API_BASE_URL: 'http://localhost:3000',
 }));
 
 jest.mock('../src/storage/messages', () => ({
@@ -245,6 +250,47 @@ describe('ChatScreen', () => {
     await waitFor(() => {
       expect(screen.getByText('hi')).toBeTruthy();
       expect(screen.getByText('hello')).toBeTruthy();
+    });
+  });
+
+  describe('header avatar (issue #182)', () => {
+    it('attempts the real avatar image for the contact and falls back to the initial circle on load failure', async () => {
+      await renderChatScreen();
+
+      const image = await waitFor(() => screen.getByTestId(`avatar-image-${CONTACT_USER_ID}`));
+      expect(image.props.source).toEqual({
+        uri: `http://localhost:3000/api/avatar/${CONTACT_USER_ID}`,
+        headers: { Authorization: 'Bearer token-123' },
+      });
+      expect(screen.queryByText('B')).toBeNull();
+
+      fireEvent(image, 'error');
+
+      await waitFor(() => {
+        expect(screen.getByText('B')).toBeTruthy();
+      });
+      expect(screen.queryByTestId(`avatar-image-${CONTACT_USER_ID}`)).toBeNull();
+    });
+
+    it('renders the initial circle directly when there is no session token yet', async () => {
+      // A null token also short-circuits `ChatScreen`'s own crypto/history
+      // setup (`setup()`'s early `if (!token) return`) -- rendered here
+      // directly rather than via `renderChatScreen()`'s helper, which waits
+      // on `getMessages` having been called, so this test only asserts on
+      // the header avatar's fallback.
+      mockedGetToken.mockResolvedValue(null);
+      const navigation = { navigate: jest.fn() };
+
+      await render(
+        <SafeAreaProvider initialMetrics={SAFE_AREA_METRICS}>
+          <ChatScreen navigation={navigation as never} route={ROUTE as never} />
+        </SafeAreaProvider>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('B')).toBeTruthy();
+      });
+      expect(screen.queryByTestId(`avatar-image-${CONTACT_USER_ID}`)).toBeNull();
     });
   });
 

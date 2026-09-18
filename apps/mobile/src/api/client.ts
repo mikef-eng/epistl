@@ -443,3 +443,92 @@ export async function deleteAccount(): Promise<void> {
     await throwApiError(response);
   }
 }
+
+/** `POST /api/avatar/upload-url`'s response shape (issue #189's step 1) --
+ * `uploadUrl` is a short-lived presigned PUT URL against the object
+ * storage backend, not this API. */
+interface AvatarUploadUrlResponse {
+  uploadUrl: string;
+  contentType: string;
+}
+
+/** `POST /api/avatar/confirm`'s response shape (issue #189's step 3) --
+ * `image` is this API's own avatar serving path (`/api/avatar/{user_id}`),
+ * the only avatar reference this app ever persists (see
+ * `../session.ts`'s `saveAvatarPath`). */
+export interface AvatarConfirmResponse {
+  image: string;
+}
+
+/** Content type inferred from the picked image's file extension, for
+ * `uploadAvatar`'s step 1 request below -- mirrors
+ * `apps/api/src/avatars.rs`'s `ALLOWED_CONTENT_TYPES` (`image/png`,
+ * `image/jpeg`). Anything other than a `.png` extension is sent as
+ * `image/jpeg`; a genuine mismatch is still caught by the server's own
+ * `400 invalid_content_type` from step 1, which surfaces as a plain
+ * `ApiError` to the caller either way. */
+function contentTypeFromUri(uri: string): string {
+  return uri.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
+}
+
+/** Uploads `uri` (a local file URI from `expo-image-picker`) as the
+ * caller's avatar, via issue #189's three-step presigned-URL flow:
+ * 1. `POST /api/avatar/upload-url` with the inferred content type, via
+ *    this file's usual API-base-URL/bearer-token request helper.
+ * 2. `PUT` the image bytes directly to the returned `uploadUrl` -- a
+ *    plain, unauthenticated HTTP PUT (deliberately not through this
+ *    file's `requireToken()`/`API_BASE_URL` helper pattern): `uploadUrl`
+ *    targets a different host entirely (the object storage backend, not
+ *    this API), and the presigned URL itself is the credential.
+ * 3. `POST /api/avatar/confirm` to finalize it, resolving with its
+ *    `{ image }` response on success.
+ *
+ * Rejects with an `ApiError` at whichever step fails first: step 1's
+ * `400 invalid_content_type`, a non-2xx step 2 PUT (`upload_failed`, no
+ * server-provided code since this response never reaches this API), or
+ * step 3's `404`/`400 file_too_large`. */
+export async function uploadAvatar(uri: string): Promise<AvatarConfirmResponse> {
+  const token = await requireToken();
+  const contentType = contentTypeFromUri(uri);
+  // Read the picked image's bytes off-device first (a local file/asset
+  // URI, not a network request against this API) so they're ready before
+  // step 1 -- the order relative to step 1's request doesn't matter
+  // functionally, since the two are independent until the PUT below.
+  const imageBlob = await (await fetch(uri)).blob();
+
+  const uploadUrlResponse = await fetch(`${API_BASE_URL}/api/avatar/upload-url`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ contentType }),
+  });
+
+  if (!uploadUrlResponse.ok) {
+    await throwApiError(uploadUrlResponse);
+  }
+
+  const { uploadUrl } = (await uploadUrlResponse.json()) as AvatarUploadUrlResponse;
+
+  const putResponse = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': contentType },
+    body: imageBlob,
+  });
+
+  if (!putResponse.ok) {
+    throw new ApiError('upload_failed', putResponse.status);
+  }
+
+  const confirmResponse = await fetch(`${API_BASE_URL}/api/avatar/confirm`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!confirmResponse.ok) {
+    await throwApiError(confirmResponse);
+  }
+
+  return (await confirmResponse.json()) as AvatarConfirmResponse;
+}

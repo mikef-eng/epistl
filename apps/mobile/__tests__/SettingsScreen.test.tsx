@@ -2,8 +2,8 @@ import { render, screen, userEvent, waitFor } from '@testing-library/react-nativ
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import SettingsScreen from '../src/screens/SettingsScreen';
-import { ApiError, deleteAccount } from '../src/api/client';
-import { clearSession, getEmail } from '../src/api/session';
+import { ApiError, deleteAccount, uploadAvatar } from '../src/api/client';
+import { clearSession, getEmail, getToken, getUserId, saveAvatarPath } from '../src/api/session';
 import {
   getNotificationsEnabled,
   getThemePreference,
@@ -11,6 +11,7 @@ import {
   saveThemePreference,
 } from '../src/settings/preferences';
 import { colorScheme } from 'nativewind';
+import * as ImagePicker from 'expo-image-picker';
 
 jest.mock('../src/api/client', () => {
   class MockApiError extends Error {
@@ -25,12 +26,26 @@ jest.mock('../src/api/client', () => {
   return {
     ApiError: MockApiError,
     deleteAccount: jest.fn(),
+    uploadAvatar: jest.fn(),
+    // `../src/components/Avatar.tsx` (issue #182) also imports
+    // `API_BASE_URL` from this module -- since this whole module is
+    // mocked in this file, that import would otherwise resolve to
+    // `undefined` rather than the real client's computed default.
+    API_BASE_URL: 'http://localhost:3000',
   };
 });
 
 jest.mock('../src/api/session', () => ({
   getEmail: jest.fn(),
+  getUserId: jest.fn(),
+  getToken: jest.fn(),
+  saveAvatarPath: jest.fn(),
   clearSession: jest.fn(),
+}));
+
+jest.mock('expo-image-picker', () => ({
+  requestMediaLibraryPermissionsAsync: jest.fn(),
+  launchImageLibraryAsync: jest.fn(),
 }));
 
 jest.mock('../src/settings/preferences', () => ({
@@ -73,6 +88,9 @@ jest.mock('../src/storage/messages', () => ({
 }));
 
 const mockedGetEmail = getEmail as jest.Mock;
+const mockedGetUserId = getUserId as jest.Mock;
+const mockedGetToken = getToken as jest.Mock;
+const mockedSaveAvatarPath = saveAvatarPath as jest.Mock;
 const mockedClearSession = clearSession as jest.Mock;
 const mockedGetThemePreference = getThemePreference as jest.Mock;
 const mockedSaveThemePreference = saveThemePreference as jest.Mock;
@@ -80,6 +98,10 @@ const mockedGetNotificationsEnabled = getNotificationsEnabled as jest.Mock;
 const mockedSaveNotificationsEnabled = saveNotificationsEnabled as jest.Mock;
 const mockedColorSchemeSet = colorScheme.set as jest.Mock;
 const mockedDeleteAccount = deleteAccount as jest.Mock;
+const mockedUploadAvatar = uploadAvatar as jest.Mock;
+const mockedRequestMediaLibraryPermissionsAsync =
+  ImagePicker.requestMediaLibraryPermissionsAsync as jest.Mock;
+const mockedLaunchImageLibraryAsync = ImagePicker.launchImageLibraryAsync as jest.Mock;
 
 function crypto() {
   return jest.requireMock('../src/crypto/identity') as { [key: string]: jest.Mock };
@@ -113,10 +135,13 @@ describe('SettingsScreen', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockedGetEmail.mockResolvedValue('a@example.com');
+    mockedGetUserId.mockResolvedValue('u1');
+    mockedGetToken.mockResolvedValue(null);
     mockedGetThemePreference.mockResolvedValue('system');
     mockedGetNotificationsEnabled.mockResolvedValue(false);
     mockedSaveThemePreference.mockResolvedValue(undefined);
     mockedSaveNotificationsEnabled.mockResolvedValue(undefined);
+    mockedSaveAvatarPath.mockResolvedValue(undefined);
     mockedClearSession.mockResolvedValue(undefined);
     mockedDeleteAccount.mockResolvedValue(undefined);
     crypto().clearIdentity.mockResolvedValue(undefined);
@@ -325,6 +350,102 @@ describe('SettingsScreen', () => {
         expect(fn).not.toHaveBeenCalled();
       }
       expect(navigation.reset).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('avatar picker/upload (issue #182)', () => {
+    function makeDeferred<T>() {
+      let resolve!: (value: T) => void;
+      let reject!: (reason?: unknown) => void;
+      const promise = new Promise<T>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      return { promise, resolve, reject };
+    }
+
+    beforeEach(() => {
+      mockedRequestMediaLibraryPermissionsAsync.mockResolvedValue({ granted: true });
+    });
+
+    it('renders the "Change avatar" control', async () => {
+      await renderSettingsScreen();
+
+      expect(screen.getByRole('button', { name: 'Change avatar' })).toBeTruthy();
+    });
+
+    it('opens the picker, shows a loading state across the upload, and updates the avatar on success', async () => {
+      mockedLaunchImageLibraryAsync.mockResolvedValueOnce({
+        canceled: false,
+        assets: [{ uri: 'file:///tmp/photo.jpg' }],
+      });
+      const deferred = makeDeferred<{ image: string }>();
+      mockedUploadAvatar.mockReturnValueOnce(deferred.promise);
+      const { user } = await renderSettingsScreen();
+
+      await user.press(screen.getByRole('button', { name: 'Change avatar' }));
+
+      await waitFor(() => {
+        expect(mockedLaunchImageLibraryAsync).toHaveBeenCalledTimes(1);
+      });
+      await waitFor(() => {
+        expect(mockedUploadAvatar).toHaveBeenCalledWith('file:///tmp/photo.jpg');
+      });
+      await waitFor(() => {
+        expect(screen.getByText('Uploading...')).toBeTruthy();
+      });
+
+      deferred.resolve({ image: '/api/avatar/u1' });
+
+      await waitFor(() => {
+        expect(mockedSaveAvatarPath).toHaveBeenCalledWith('/api/avatar/u1');
+      });
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Change avatar' })).toBeTruthy();
+      });
+      expect(screen.queryByText('Uploading...')).toBeNull();
+    });
+
+    it('does nothing when the user cancels the picker', async () => {
+      mockedLaunchImageLibraryAsync.mockResolvedValueOnce({ canceled: true, assets: null });
+      const { user } = await renderSettingsScreen();
+
+      await user.press(screen.getByRole('button', { name: 'Change avatar' }));
+
+      await waitFor(() => {
+        expect(mockedLaunchImageLibraryAsync).toHaveBeenCalledTimes(1);
+      });
+      expect(mockedUploadAvatar).not.toHaveBeenCalled();
+    });
+
+    it('shows an inline error and does not call the picker when photo library permission is denied', async () => {
+      mockedRequestMediaLibraryPermissionsAsync.mockResolvedValueOnce({ granted: false });
+      const { user } = await renderSettingsScreen();
+
+      await user.press(screen.getByRole('button', { name: 'Change avatar' }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Permission to access photos is required')).toBeTruthy();
+      });
+      expect(mockedLaunchImageLibraryAsync).not.toHaveBeenCalled();
+      expect(mockedUploadAvatar).not.toHaveBeenCalled();
+    });
+
+    it('shows an inline error and clears the loading state when uploadAvatar rejects', async () => {
+      mockedLaunchImageLibraryAsync.mockResolvedValueOnce({
+        canceled: false,
+        assets: [{ uri: 'file:///tmp/photo.jpg' }],
+      });
+      mockedUploadAvatar.mockRejectedValueOnce(new ApiError('file_too_large', 400));
+      const { user } = await renderSettingsScreen();
+
+      await user.press(screen.getByRole('button', { name: 'Change avatar' }));
+
+      await waitFor(() => {
+        expect(screen.getByText('file_too_large')).toBeTruthy();
+      });
+      expect(screen.queryByText('Uploading...')).toBeNull();
+      expect(mockedSaveAvatarPath).not.toHaveBeenCalled();
     });
   });
 });

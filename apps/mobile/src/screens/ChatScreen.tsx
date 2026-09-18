@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { type Contact, listContacts } from '../api/client';
 import { bundleFromContact, type ContactKeyBundle } from '../api/contactBundle';
 import { getToken, getUserId } from '../api/session';
+import Avatar from '../components/Avatar';
 import { ensureLocalIdentity, type Identity } from '../crypto/identity';
 import { encodeHandshakeEnvelope, encodeRatchetEnvelope } from '../crypto/envelope';
 import {
@@ -339,11 +340,13 @@ export default function ChatScreen({ navigation, route }: Props) {
         >
           <Ionicons name="arrow-back" size={24} color={headerIconColor} />
         </Pressable>
-        <View className="mr-2 h-8 w-8 items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700">
-          <Text className="text-sm font-semibold text-black dark:text-white">
-            {initialFor(email)}
-          </Text>
-        </View>
+        <Avatar
+          userId={contactUserId}
+          fallbackText={initialFor(email)}
+          wrapperClassName="mr-2 h-8 w-8 items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700"
+          imageClassName="h-8 w-8 rounded-full"
+          textClassName="text-sm font-semibold text-black dark:text-white"
+        />
         <Text className="text-lg font-semibold text-black dark:text-white">{email}</Text>
       </View>
 
