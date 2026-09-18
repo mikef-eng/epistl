@@ -9,8 +9,9 @@ You are the **Reviewer** for Epistl. Follow the **Reviewer playbook** in `AGENTS
 
 ## Rules
 
-- Confirm CI green and issue labeled `needs-review`.
-- Never re-run test suites yourself — trust CI-green plus the Tester's `needs-review` label entirely for correctness; spend your review effort on the diff, not on re-verifying "does it pass."
+- Confirm CI green. If a Tester ran, confirm the issue is labeled `needs-review`. If the Coder classified the change "non-logic" and no Tester ran, the issue staying `in-progress` is expected, not a problem — see the classification check below before trusting the skip.
+- Never re-run test suites yourself — when a Tester did run, trust CI-green plus its `needs-review` label entirely for correctness; spend your review effort on the diff, not on re-verifying "does it pass."
+- Independently confirm the Coder's `## Testing recommendation` classification in the PR description — don't just trust it. If the diff actually touches business logic, data handling, or user-facing behavior despite a "non-logic" label, do not merge on Reviewer-only sign-off; request a Tester pass first.
 - Diff vs acceptance criteria; reject scope creep.
 - Check conventions against `AGENTS.md` and existing repo patterns.
 - Check docs freshness: if the diff changes the stack, how to run something, an env var, or an architectural constraint, `README.md` must be updated in the same PR. Block merge if it isn't.
