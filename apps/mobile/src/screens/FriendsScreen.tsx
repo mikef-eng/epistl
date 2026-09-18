@@ -26,6 +26,7 @@ import {
   listContacts,
   removeContact,
 } from '../api/client';
+import Avatar from '../components/Avatar';
 import type { MainTabParamList, RootStackParamList } from '../navigation/types';
 
 /**
@@ -436,11 +437,13 @@ export default function FriendsScreen({ navigation }: Props) {
                 onLongPress={() => handleLongPressFriend(item)}
                 className={`flex-row items-center border-b border-gray-100 px-4 py-4 dark:border-gray-800 ${keysReady ? '' : 'opacity-50'}`}
               >
-                <View className="mr-3 h-10 w-10 items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700">
-                  <Text className="text-base font-semibold text-black dark:text-white">
-                    {initialFor(item.email)}
-                  </Text>
-                </View>
+                <Avatar
+                  userId={item.user_id}
+                  fallbackText={initialFor(item.email)}
+                  wrapperClassName="mr-3 h-10 w-10 items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700"
+                  imageClassName="h-10 w-10 rounded-full"
+                  textClassName="text-base font-semibold text-black dark:text-white"
+                />
                 <View className="flex-1">
                   <Text className="text-base text-black dark:text-white">{item.email}</Text>
                   {keysReady ? null : (

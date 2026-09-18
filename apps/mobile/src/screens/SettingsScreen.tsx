@@ -1,12 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import * as ImagePicker from 'expo-image-picker';
 import { colorScheme, useColorScheme } from 'nativewind';
 import { useEffect, useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ApiError, deleteAccount } from '../api/client';
-import { clearSession, getEmail } from '../api/session';
+import { ApiError, deleteAccount, uploadAvatar } from '../api/client';
+import { clearSession, getEmail, getUserId, saveAvatarPath } from '../api/session';
+import Avatar from '../components/Avatar';
 import { clearIdentity } from '../crypto/identity';
 import { clearAllSessions } from '../crypto/session';
 import type { RootStackParamList } from '../navigation/types';
@@ -27,6 +29,17 @@ const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
   { value: 'dark', label: 'Dark' },
 ];
 
+/** First letter of the account's own email, uppercased, for the avatar
+ * preview's fallback -- matches `ConversationsScreen`/`FriendsScreen`/
+ * `ChatScreen`'s existing `initialFor`. */
+function initialFor(email: string): string {
+  return email.trim().charAt(0).toUpperCase() || '?';
+}
+
+function messageFor(err: unknown): string {
+  return err instanceof ApiError ? err.message : 'Something went wrong';
+}
+
 export default function SettingsScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const { colorScheme: activeColorScheme } = useColorScheme();
@@ -35,6 +48,7 @@ export default function SettingsScreen({ navigation }: Props) {
   const headerIconColor = activeColorScheme === 'dark' ? '#FFFFFF' : '#000000';
   const [theme, setTheme] = useState<ThemePreference>('system');
   const [email, setEmail] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   // Explicit confirmation gate (issue #92): pressing "Delete account" only
   // reveals this step -- it never sends the request itself. The request is
@@ -43,19 +57,27 @@ export default function SettingsScreen({ navigation }: Props) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  // Avatar upload (issue #182). `avatarVersion` is bumped on every
+  // successful upload so `Avatar`'s `cacheBust` forces a fresh
+  // `GET /api/avatar/{user_id}` request instead of showing a stale
+  // client-cached image for the same URL.
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
+  const [avatarVersion, setAvatarVersion] = useState(0);
 
-  // Loads all three persisted values once on mount. Each is independent of
-  // the others, so a single `Promise.all` keeps the initial render simple
+  // Loads all persisted values once on mount. Each is independent of the
+  // others, so a single `Promise.all` keeps the initial render simple
   // without implying any ordering dependency between them.
   useEffect(() => {
     let cancelled = false;
-    Promise.all([getThemePreference(), getEmail(), getNotificationsEnabled()]).then(
-      ([storedTheme, storedEmail, storedNotificationsEnabled]) => {
+    Promise.all([getThemePreference(), getEmail(), getUserId(), getNotificationsEnabled()]).then(
+      ([storedTheme, storedEmail, storedUserId, storedNotificationsEnabled]) => {
         if (cancelled) {
           return;
         }
         setTheme(storedTheme);
         setEmail(storedEmail);
+        setUserId(storedUserId);
         setNotificationsEnabled(storedNotificationsEnabled);
       }
     );
@@ -77,6 +99,36 @@ export default function SettingsScreen({ navigation }: Props) {
     const next = !notificationsEnabled;
     setNotificationsEnabled(next);
     await saveNotificationsEnabled(next);
+  }
+
+  /** Opens the device's photo library (library only -- no camera capture
+   * in this issue) and, on a selection, runs issue #189's three-step
+   * upload flow via `uploadAvatar`. A single loading flag spans all three
+   * steps since `uploadAvatar` itself awaits them sequentially. */
+  async function handlePickAvatar() {
+    setAvatarError(null);
+
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      setAvatarError('Permission to access photos is required');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'] });
+    if (result.canceled || result.assets.length === 0) {
+      return;
+    }
+
+    setAvatarUploading(true);
+    try {
+      const { image } = await uploadAvatar(result.assets[0].uri);
+      await saveAvatarPath(image);
+      setAvatarVersion((prev) => prev + 1);
+    } catch (err) {
+      setAvatarError(messageFor(err));
+    } finally {
+      setAvatarUploading(false);
+    }
   }
 
   async function handleLogOut() {
@@ -140,6 +192,39 @@ export default function SettingsScreen({ navigation }: Props) {
           <Ionicons name="arrow-back" size={24} color={headerIconColor} />
         </Pressable>
         <Text className="text-lg font-semibold text-black dark:text-white">Settings</Text>
+      </View>
+
+      <View className="items-center border-b border-gray-200 px-4 py-4 dark:border-gray-700">
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Change avatar"
+          disabled={avatarUploading}
+          onPress={handlePickAvatar}
+          className="items-center"
+        >
+          {userId !== null ? (
+            <Avatar
+              userId={userId}
+              fallbackText={initialFor(email ?? '')}
+              wrapperClassName="h-20 w-20 items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700"
+              imageClassName="h-20 w-20 rounded-full"
+              textClassName="text-2xl font-semibold text-black dark:text-white"
+              cacheBust={avatarVersion}
+            />
+          ) : (
+            <View className="h-20 w-20 items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700">
+              <Text className="text-2xl font-semibold text-black dark:text-white">
+                {initialFor(email ?? '')}
+              </Text>
+            </View>
+          )}
+          <Text className="mt-2 text-sm font-semibold text-[#8B2F4B]">
+            {avatarUploading ? 'Uploading...' : 'Change avatar'}
+          </Text>
+        </Pressable>
+        {avatarError !== null ? (
+          <Text className="mt-2 text-center text-sm text-red-500">{avatarError}</Text>
+        ) : null}
       </View>
 
       <View className="border-b border-gray-200 px-4 py-4 dark:border-gray-700">
