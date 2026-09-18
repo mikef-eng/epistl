@@ -4,22 +4,24 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 description = """
-Local dev-environment checker for Epistl (issue #203): detects the host
-OS (macOS/Linux only), auto-copies `.env.example` to `.env` if missing,
-and reports Present/Absent for the core tools README's "Running the
-stack locally" section requires (rustup, cargo/rustc, node, moon,
-docker, sccache). On apt-based Linux distros, an opt-in `--install` flag
-(issue #205) auto-installs rustup/moon/sccache via their official
-installers when absent; Node.js/Docker stay guide-only, and non-apt
-distros fall back to guide-only for all five tools.
+Local dev-environment checker/bootstrapper for Epistl: detects the host
+OS (macOS/Linux only, issue #203), auto-copies `.env.example` to `.env`
+if missing, and reports Present/Absent for the core tools README's
+"Running the stack locally" section requires (rustup, cargo/rustc, node,
+moon, docker, sccache). Detect-only by default -- two opt-in mutating
+flags exist: `--install` (apt-based Linux auto-install of rustup/moon/
+sccache, with Node.js/Docker and non-apt distros staying guide-only,
+issue #205) and `--start` (`docker compose up -d` + health-wait + `moon
+run api:migrate`, issue #206). See `README.md` in this directory for the
+full flag semantics.
 """
 
 # No external dependencies: OS detection uses `std::env::consts::OS`,
 # tool detection shells out via `std::process::Command` behind this
-# crate's own `CommandExecutor` trait (see src/checks.rs), and the
-# `--install` flag (issue #205) is a single boolean check against
-# `std::env::args()` (see `has_install_flag` in src/lib.rs) -- not
-# enough surface for an argument-parsing crate to buy anything yet.
+# crate's own `CommandExecutor` trait (see src/checks.rs), and both CLI
+# flags so far (`--install`, `--start`) are single booleans checked via
+# `std::env::args()` directly -- not enough surface to justify pulling
+# in an argument-parsing crate.
 
 [lib]
 name = "dev_setup"

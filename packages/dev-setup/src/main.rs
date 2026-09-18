@@ -1,17 +1,20 @@
 //! `dev-setup`: checks a macOS/Linux dev machine against what README's
-//! "Running the stack locally" section requires (issue #203). Detect-only
-//! plus one safe filesystem auto-fix (`.env` copy), except for the
-//! opt-in `--install` path on apt-based Linux distros (issue #205),
-//! which can auto-install rustup/moon/sccache via their official
-//! installers. See those issues for what's still out of scope
-//! (`docker compose up`, migrations, non-apt distro-specific installs).
+//! "Running the stack locally" section requires (issue #203), and,
+//! opt-in via `--start`, brings up the local `docker compose` stack and
+//! runs API migrations (issue #206). Also opt-in via `--install` on
+//! apt-based Linux distros (issue #205), which can auto-install
+//! rustup/moon/sccache via their official installers. Detect-only
+//! otherwise, plus one safe filesystem auto-fix (`.env` copy) -- see
+//! those issues for what's still out of scope (non-apt distro-specific
+//! installs, etc).
 
 use std::process::ExitCode;
 
 use dev_setup::{
-    apt_available, check_os, docker_action, ensure_env_file, format_check_line,
-    format_linux_action, has_install_flag, is_required, moon_action, node_action, repo_root,
-    run_all_checks, rustup_action, sccache_action, EnvFileOutcome, SystemExecutor,
+    apt_available, check_os, check_status, docker_action, ensure_env_file, format_check_line,
+    format_linux_action, format_step_outcome, has_install_flag, is_required, maybe_run_start,
+    moon_action, node_action, repo_root, run_all_checks, rustup_action, sccache_action,
+    EnvFileOutcome, RealSleeper, StepOutcome, SystemExecutor,
 };
 
 fn main() -> ExitCode {
@@ -74,7 +77,34 @@ fn main() -> ExitCode {
         }
     }
 
-    if all_required_present {
+    // `--start` is an opt-in orchestration flag (docker compose up +
+    // health-wait + api:migrate) that never runs unless explicitly
+    // requested -- see start.rs's module doc comment.
+    let start_requested = std::env::args().skip(1).any(|arg| arg == "--start");
+    let docker_present = check_status(&checks, "docker");
+    let moon_present = check_status(&checks, "moon");
+    let sleeper = RealSleeper;
+
+    let mut start_failed = false;
+    if let Some(outcomes) = maybe_run_start(
+        start_requested,
+        &executor,
+        &sleeper,
+        docker_present,
+        moon_present,
+        &repo_root,
+    ) {
+        println!();
+        println!("Start:");
+        for outcome in &outcomes {
+            println!("{}", format_step_outcome(outcome));
+            if matches!(outcome, StepOutcome::Failure(_)) {
+                start_failed = true;
+            }
+        }
+    }
+
+    if all_required_present && !start_failed {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
