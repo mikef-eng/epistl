@@ -200,7 +200,8 @@ async fn signup_user(pool: &PgPool, state: AppState, label: &str) -> (String, Uu
                 .uri("/signup")
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    json!({ "email": email, "password": "correct-horse-battery" }).to_string(),
+                    json!({ "email": email, "password": "correct-horse-battery", "username": Uuid::new_v4().simple().to_string() })
+                        .to_string(),
                 ))
                 .unwrap(),
         )

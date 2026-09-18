@@ -67,6 +67,12 @@ pub mod user {
         pub email_verified: bool,
         pub name: Option<String>,
         pub image: Option<String>,
+        // See migrations/0008_add_username_to_users.sql. Unique, required,
+        // 3-32 chars, `^[a-zA-Z0-9_]+$` -- enforced by `signup`'s own
+        // pre-dispatch validation (issue #183), not by `better-auth`'s own
+        // built-in username-plugin support (deliberately not used here --
+        // see `signup`'s doc comment for why).
+        pub username: String,
         pub created_at: DateTimeUtc,
         pub updated_at: DateTimeUtc,
     }
@@ -190,10 +196,10 @@ impl AuthUser for user::Model {
         self.updated_at
     }
     fn username(&self) -> Option<&str> {
-        None
+        Some(&self.username)
     }
     fn display_username(&self) -> Option<&str> {
-        None
+        Some(&self.username)
     }
     fn two_factor_enabled(&self) -> bool {
         false
@@ -242,12 +248,27 @@ impl SeaOrmUserModel for user::Model {
         create_user: CreateUser,
         now: DateTime<Utc>,
     ) -> Self::ActiveModel {
+        let id = id.unwrap_or_else(Uuid::new_v4);
         user::ActiveModel {
-            id: Set(id.unwrap_or_else(Uuid::new_v4)),
+            id: Set(id),
             email: Set(create_user.email.unwrap_or_default()),
             name: Set(create_user.name),
             image: Set(create_user.image),
             email_verified: Set(create_user.email_verified.unwrap_or(false)),
+            // Unique, id-derived placeholder -- satisfies the column's
+            // `NOT NULL`/`UNIQUE` constraints (migrations/0008) at insert
+            // time without ever guessing/reusing a real username. The
+            // `/signup` handler immediately overwrites this with the
+            // caller's real, already-validated username in a follow-up
+            // `UPDATE` once it knows the new row's id (see `signup`'s doc
+            // comment for why this app doesn't route the real username
+            // through `CreateUser.username` / `better-auth`'s own
+            // username-plugin support instead). Mirrors
+            // migrations/0008_add_username_to_users.sql's own backfill
+            // technique for the same never-identity-revealing reason, and
+            // is never returned to a client -- `signup` overwrites the
+            // response's `user.username` with the real value too.
+            username: Set(id.to_string()),
             created_at: Set(now),
             updated_at: Set(now),
         }
@@ -265,6 +286,9 @@ impl SeaOrmUserModel for user::Model {
         }
         if let Some(email_verified) = update.email_verified {
             active.email_verified = Set(email_verified);
+        }
+        if let Some(username) = update.username {
+            active.username = Set(username);
         }
         active.updated_at = Set(now);
     }
@@ -689,6 +713,47 @@ struct SignupPayload {
     email: Option<String>,
     #[serde(default)]
     password: Option<String>,
+    #[serde(default)]
+    username: Option<String>,
+}
+
+const USERNAME_MIN_LEN: usize = 3;
+const USERNAME_MAX_LEN: usize = 32;
+
+/// `^[a-zA-Z0-9_]+$`, 3-32 chars (issue #183). Deliberately *not* the same
+/// rule `better-auth`'s own optional username-plugin support enforces
+/// (`better_auth_core::utils::username::validate_username`: 3-30 chars,
+/// dots also allowed, and it silently lowercases the value) -- see
+/// `signup`'s doc comment for why this app validates and stores username
+/// entirely itself instead of delegating to that.
+fn is_valid_username(username: &str) -> bool {
+    (USERNAME_MIN_LEN..=USERNAME_MAX_LEN).contains(&username.len())
+        && username
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+}
+
+fn invalid_username_response() -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({ "error": "invalid_username" })),
+    )
+        .into_response()
+}
+
+fn internal_error() -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({ "error": "internal_error" })),
+    )
+        .into_response()
+}
+
+/// True if `err` is a Postgres unique-constraint violation (SQLSTATE
+/// `23505`), as opposed to some other database failure.
+fn is_unique_violation(err: &sqlx::Error) -> bool {
+    err.as_database_error()
+        .is_some_and(|db_err| db_err.is_unique_violation())
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -699,9 +764,37 @@ struct LoginPayload {
     password: Option<String>,
 }
 
+/// Handles `POST /signup`. Requires `username` in addition to the existing
+/// `email`/`password` (issue #183): 3-32 chars, `^[a-zA-Z0-9_]+$`, checked
+/// entirely by this handler -- via [`is_valid_username`] -- *before* ever
+/// dispatching into Better Auth, so a missing/invalid-format username never
+/// calls into it at all.
+///
+/// This deliberately does not send `username` through to Better Auth's
+/// `/sign-up/email` request body, even though its `CreateUser`/`SignUpRequest`
+/// types do have a `username` field: that field is backed by `better-auth`'s
+/// own optional username-plugin support, which enforces a different rule
+/// (3-30 chars, dots also allowed) and unconditionally lowercases the value
+/// before storing it -- both of which conflict with this issue's exact
+/// 3-32/`[a-zA-Z0-9_]`/no-normalization contract. Instead, `new_active`
+/// (above) inserts every new user with a unique, id-derived placeholder
+/// username, and this handler claims the caller's real, validated username
+/// in a follow-up `UPDATE` once the row (and its id) exist, relying solely
+/// on the column's `UNIQUE` constraint (migrations/0008) -- not a separate
+/// pre-check `SELECT` -- to detect a conflict, so there's no
+/// check-then-insert race. On conflict, the user Better Auth already
+/// committed is deleted (cascading its session/account rows -- see
+/// `account.rs`) so a taken username doesn't permanently burn the caller's
+/// email address.
 async fn signup(State(state): State<AppState>, Json(payload): Json<SignupPayload>) -> Response {
     let email = payload.email.unwrap_or_default();
     let password = payload.password.unwrap_or_default();
+    let username = payload.username.unwrap_or_default();
+
+    if !is_valid_username(&username) {
+        return invalid_username_response();
+    }
+
     let name = placeholder_name(&email);
 
     let body = json!({
@@ -718,12 +811,44 @@ async fn signup(State(state): State<AppState>, Json(payload): Json<SignupPayload
                 .get("token")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            let user = parsed.get("user").cloned().unwrap_or(json!({}));
-            (
-                StatusCode::CREATED,
-                Json(json!({ "token": token, "user": user })),
-            )
-                .into_response()
+            let mut user = parsed.get("user").cloned().unwrap_or(json!({}));
+
+            let user_id = user
+                .get("id")
+                .and_then(Value::as_str)
+                .and_then(|id| Uuid::parse_str(id).ok());
+            let Some(user_id) = user_id else {
+                return internal_error();
+            };
+
+            let claim = sqlx::query("UPDATE users SET username = $1 WHERE id = $2")
+                .bind(&username)
+                .bind(user_id)
+                .execute(&state.pool)
+                .await;
+
+            match claim {
+                Ok(_) => {
+                    user["username"] = json!(username);
+                    (
+                        StatusCode::CREATED,
+                        Json(json!({ "token": token, "user": user })),
+                    )
+                        .into_response()
+                }
+                Err(err) if is_unique_violation(&err) => {
+                    let _ = sqlx::query("DELETE FROM users WHERE id = $1")
+                        .bind(user_id)
+                        .execute(&state.pool)
+                        .await;
+                    (
+                        StatusCode::CONFLICT,
+                        Json(json!({ "error": "username already taken" })),
+                    )
+                        .into_response()
+                }
+                Err(_) => internal_error(),
+            }
         }
         // The TS-compatible better-auth wire protocol returns 422 for a
         // duplicate email; this app's contract (issue #17) wants 409.

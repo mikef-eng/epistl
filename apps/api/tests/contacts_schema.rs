@@ -37,20 +37,26 @@ async fn user_and_contact_rows_round_trip() {
     let run_id = Uuid::new_v4();
     let owner_email = format!("owner-{run_id}@example.com");
     let contact_email = format!("contact-{run_id}@example.com");
+    let owner_username = Uuid::new_v4().simple().to_string();
+    let contact_username = Uuid::new_v4().simple().to_string();
 
-    let owner_id: Uuid = sqlx::query("INSERT INTO users (email) VALUES ($1) RETURNING id")
-        .bind(&owner_email)
-        .fetch_one(&pool)
-        .await
-        .expect("failed to insert owner user")
-        .get("id");
+    let owner_id: Uuid =
+        sqlx::query("INSERT INTO users (email, username) VALUES ($1, $2) RETURNING id")
+            .bind(&owner_email)
+            .bind(&owner_username)
+            .fetch_one(&pool)
+            .await
+            .expect("failed to insert owner user")
+            .get("id");
 
-    let contact_user_id: Uuid = sqlx::query("INSERT INTO users (email) VALUES ($1) RETURNING id")
-        .bind(&contact_email)
-        .fetch_one(&pool)
-        .await
-        .expect("failed to insert contact user")
-        .get("id");
+    let contact_user_id: Uuid =
+        sqlx::query("INSERT INTO users (email, username) VALUES ($1, $2) RETURNING id")
+            .bind(&contact_email)
+            .bind(&contact_username)
+            .fetch_one(&pool)
+            .await
+            .expect("failed to insert contact user")
+            .get("id");
 
     let contact_id: Uuid = sqlx::query(
         "INSERT INTO contacts (owner_user_id, contact_user_id) VALUES ($1, $2) RETURNING id",

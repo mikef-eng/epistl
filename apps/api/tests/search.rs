@@ -105,7 +105,7 @@ async fn signup_user_with_email(state: AppState, pool: &PgPool, email: &str) -> 
         "POST",
         "/signup",
         None,
-        Some(json!({ "email": email, "password": "correct-horse-battery" })),
+        Some(json!({ "email": email, "password": "correct-horse-battery", "username": Uuid::new_v4().simple().to_string() })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "signup failed: {body:?}");

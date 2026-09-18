@@ -48,6 +48,13 @@ fn unique_email(label: &str) -> String {
     format!("{label}-{}@example.com", Uuid::new_v4())
 }
 
+/// A fresh, always-valid (3-32 chars, `[a-zA-Z0-9_]`) username -- a plain
+/// UUID-v4 hex string is exactly 32 characters and never collides in
+/// practice.
+fn unique_username() -> String {
+    Uuid::new_v4().simple().to_string()
+}
+
 async fn post_json(app: Router, uri: &str, body: Value) -> (StatusCode, Value) {
     let response = app
         .oneshot(
@@ -77,16 +84,18 @@ async fn post_json(app: Router, uri: &str, body: Value) -> (StatusCode, Value) {
 async fn signup_creates_user_and_session() {
     let pool = test_pool().await;
     let email = unique_email("signup-success");
+    let username = unique_username();
 
     let (status, body) = post_json(
         test_app().await,
         "/signup",
-        json!({ "email": email, "password": "correct-horse-battery" }),
+        json!({ "email": email, "password": "correct-horse-battery", "username": username }),
     )
     .await;
 
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(body["user"]["email"], email);
+    assert_eq!(body["user"]["username"], username);
     let token = body["token"].as_str().expect("token present").to_string();
     assert!(!token.is_empty());
 
@@ -102,12 +111,13 @@ async fn signup_creates_user_and_session() {
         .expect("session row must exist");
     let user_id: Uuid = session_row.get("user_id");
 
-    let user_row = sqlx::query("SELECT email, password_hash FROM users WHERE id = $1")
+    let user_row = sqlx::query("SELECT email, username, password_hash FROM users WHERE id = $1")
         .bind(user_id)
         .fetch_one(&pool)
         .await
         .expect("user row must exist");
     assert_eq!(user_row.get::<String, _>("email"), email);
+    assert_eq!(user_row.get::<String, _>("username"), username);
     // issue #1's password_hash column is unused by this integration --
     // credentials live in the `accounts` table instead.
     assert!(user_row.get::<Option<String>, _>("password_hash").is_none());
@@ -127,12 +137,24 @@ async fn signup_creates_user_and_session() {
 #[tokio::test]
 async fn signup_duplicate_email_returns_409() {
     let email = unique_email("signup-dup");
-    let payload = json!({ "email": email, "password": "correct-horse-battery" });
+    let first_payload = json!({
+        "email": email,
+        "password": "correct-horse-battery",
+        "username": unique_username(),
+    });
+    // Regression (issue #183): a re-used email with a *different* username
+    // must still 409 on the email conflict, same as before username
+    // existed.
+    let second_payload = json!({
+        "email": email,
+        "password": "correct-horse-battery",
+        "username": unique_username(),
+    });
 
-    let (first_status, _) = post_json(test_app().await, "/signup", payload.clone()).await;
+    let (first_status, _) = post_json(test_app().await, "/signup", first_payload).await;
     assert_eq!(first_status, StatusCode::CREATED);
 
-    let (status, body) = post_json(test_app().await, "/signup", payload).await;
+    let (status, body) = post_json(test_app().await, "/signup", second_payload).await;
 
     assert_eq!(status, StatusCode::CONFLICT);
     assert!(body["error"].is_string());
@@ -143,7 +165,7 @@ async fn signup_missing_email_returns_400() {
     let (status, body) = post_json(
         test_app().await,
         "/signup",
-        json!({ "password": "correct-horse-battery" }),
+        json!({ "password": "correct-horse-battery", "username": unique_username() }),
     )
     .await;
 
@@ -156,7 +178,11 @@ async fn signup_malformed_email_returns_400() {
     let (status, body) = post_json(
         test_app().await,
         "/signup",
-        json!({ "email": "not-an-email", "password": "correct-horse-battery" }),
+        json!({
+            "email": "not-an-email",
+            "password": "correct-horse-battery",
+            "username": unique_username(),
+        }),
     )
     .await;
 
@@ -171,12 +197,145 @@ async fn signup_empty_password_returns_400() {
     let (status, body) = post_json(
         test_app().await,
         "/signup",
-        json!({ "email": email, "password": "" }),
+        json!({ "email": email, "password": "", "username": unique_username() }),
     )
     .await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(body["error"].is_string());
+}
+
+#[tokio::test]
+async fn signup_duplicate_username_returns_409() {
+    let username = unique_username();
+    let (first_status, _) = post_json(
+        test_app().await,
+        "/signup",
+        json!({
+            "email": unique_email("signup-username-dup-1"),
+            "password": "correct-horse-battery",
+            "username": username,
+        }),
+    )
+    .await;
+    assert_eq!(first_status, StatusCode::CREATED);
+
+    let (status, body) = post_json(
+        test_app().await,
+        "/signup",
+        json!({
+            "email": unique_email("signup-username-dup-2"),
+            "password": "correct-horse-battery",
+            "username": username,
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body, json!({ "error": "username already taken" }));
+}
+
+#[tokio::test]
+async fn signup_missing_username_returns_400() {
+    let (status, body) = post_json(
+        test_app().await,
+        "/signup",
+        json!({ "email": unique_email("signup-missing-username"), "password": "correct-horse-battery" }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body, json!({ "error": "invalid_username" }));
+}
+
+#[tokio::test]
+async fn signup_username_with_space_returns_400() {
+    let (status, body) = post_json(
+        test_app().await,
+        "/signup",
+        json!({
+            "email": unique_email("signup-username-space"),
+            "password": "correct-horse-battery",
+            "username": "has space",
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body, json!({ "error": "invalid_username" }));
+}
+
+#[tokio::test]
+async fn signup_username_with_invalid_symbol_returns_400() {
+    let (status, body) = post_json(
+        test_app().await,
+        "/signup",
+        json!({
+            "email": unique_email("signup-username-symbol"),
+            "password": "correct-horse-battery",
+            "username": "bad-name!",
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body, json!({ "error": "invalid_username" }));
+}
+
+#[tokio::test]
+async fn signup_username_too_short_returns_400() {
+    let (status, body) = post_json(
+        test_app().await,
+        "/signup",
+        json!({
+            "email": unique_email("signup-username-short"),
+            "password": "correct-horse-battery",
+            "username": "ab",
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body, json!({ "error": "invalid_username" }));
+}
+
+#[tokio::test]
+async fn signup_username_too_long_returns_400() {
+    let (status, body) = post_json(
+        test_app().await,
+        "/signup",
+        json!({
+            "email": unique_email("signup-username-long"),
+            "password": "correct-horse-battery",
+            "username": "a".repeat(33),
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body, json!({ "error": "invalid_username" }));
+}
+
+#[tokio::test]
+async fn signup_username_at_max_length_succeeds() {
+    // `unique_username()` is a 32-char hex string -- exactly
+    // `USERNAME_MAX_LEN` -- and, being derived from a fresh UUID each call,
+    // won't collide with itself on a re-run against a persistent dev
+    // database the way a fixed `"a".repeat(32)` literal would.
+    let username = unique_username();
+    let (status, body) = post_json(
+        test_app().await,
+        "/signup",
+        json!({
+            "email": unique_email("signup-username-maxlen"),
+            "password": "correct-horse-battery",
+            "username": username,
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(body["user"]["username"], username);
 }
 
 #[tokio::test]
@@ -188,7 +347,7 @@ async fn login_with_correct_credentials_returns_200_and_new_session() {
     let (_, signup_body) = post_json(
         test_app().await,
         "/signup",
-        json!({ "email": email, "password": password }),
+        json!({ "email": email, "password": password, "username": unique_username() }),
     )
     .await;
     let signup_token = signup_body["token"].as_str().unwrap().to_string();
@@ -223,7 +382,7 @@ async fn login_with_wrong_password_returns_401() {
     post_json(
         test_app().await,
         "/signup",
-        json!({ "email": email, "password": "correct-horse-battery" }),
+        json!({ "email": email, "password": "correct-horse-battery", "username": unique_username() }),
     )
     .await;
 
@@ -320,7 +479,7 @@ async fn protected_route_with_valid_token_returns_200() {
     let (_, signup_body) = post_json(
         api::app(state.clone()),
         "/signup",
-        json!({ "email": email, "password": "correct-horse-battery" }),
+        json!({ "email": email, "password": "correct-horse-battery", "username": unique_username() }),
     )
     .await;
     let token = signup_body["token"].as_str().unwrap().to_string();
@@ -393,7 +552,7 @@ async fn protected_route_with_expired_token_returns_401() {
     let (_, signup_body) = post_json(
         api::app(state.clone()),
         "/signup",
-        json!({ "email": email, "password": "correct-horse-battery" }),
+        json!({ "email": email, "password": "correct-horse-battery", "username": unique_username() }),
     )
     .await;
     let token = signup_body["token"].as_str().unwrap().to_string();
