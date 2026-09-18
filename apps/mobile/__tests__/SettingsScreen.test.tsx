@@ -2,8 +2,22 @@ import { render, screen, userEvent, waitFor } from '@testing-library/react-nativ
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import SettingsScreen from '../src/screens/SettingsScreen';
-import { ApiError, deleteAccount, uploadAvatar } from '../src/api/client';
-import { clearSession, getEmail, getToken, getUserId, saveAvatarPath } from '../src/api/session';
+import {
+  ApiError,
+  UsernameTakenError,
+  deleteAccount,
+  updateUsername,
+  uploadAvatar,
+} from '../src/api/client';
+import {
+  clearSession,
+  getEmail,
+  getToken,
+  getUserId,
+  getUsername,
+  saveAvatarPath,
+  saveUsername,
+} from '../src/api/session';
 import {
   getNotificationsEnabled,
   getThemePreference,
@@ -23,9 +37,16 @@ jest.mock('../src/api/client', () => {
       this.status = status;
     }
   }
+  class MockUsernameTakenError extends MockApiError {
+    constructor() {
+      super('username_taken', 409);
+    }
+  }
   return {
     ApiError: MockApiError,
+    UsernameTakenError: MockUsernameTakenError,
     deleteAccount: jest.fn(),
+    updateUsername: jest.fn(),
     uploadAvatar: jest.fn(),
     // `../src/components/Avatar.tsx` (issue #182) also imports
     // `API_BASE_URL` from this module -- since this whole module is
@@ -38,8 +59,10 @@ jest.mock('../src/api/client', () => {
 jest.mock('../src/api/session', () => ({
   getEmail: jest.fn(),
   getUserId: jest.fn(),
+  getUsername: jest.fn(),
   getToken: jest.fn(),
   saveAvatarPath: jest.fn(),
+  saveUsername: jest.fn(),
   clearSession: jest.fn(),
 }));
 
@@ -89,8 +112,11 @@ jest.mock('../src/storage/messages', () => ({
 
 const mockedGetEmail = getEmail as jest.Mock;
 const mockedGetUserId = getUserId as jest.Mock;
+const mockedGetUsername = getUsername as jest.Mock;
 const mockedGetToken = getToken as jest.Mock;
 const mockedSaveAvatarPath = saveAvatarPath as jest.Mock;
+const mockedSaveUsername = saveUsername as jest.Mock;
+const mockedUpdateUsername = updateUsername as jest.Mock;
 const mockedClearSession = clearSession as jest.Mock;
 const mockedGetThemePreference = getThemePreference as jest.Mock;
 const mockedSaveThemePreference = saveThemePreference as jest.Mock;
@@ -136,12 +162,14 @@ describe('SettingsScreen', () => {
     jest.clearAllMocks();
     mockedGetEmail.mockResolvedValue('a@example.com');
     mockedGetUserId.mockResolvedValue('u1');
+    mockedGetUsername.mockResolvedValue('alice');
     mockedGetToken.mockResolvedValue(null);
     mockedGetThemePreference.mockResolvedValue('system');
     mockedGetNotificationsEnabled.mockResolvedValue(false);
     mockedSaveThemePreference.mockResolvedValue(undefined);
     mockedSaveNotificationsEnabled.mockResolvedValue(undefined);
     mockedSaveAvatarPath.mockResolvedValue(undefined);
+    mockedSaveUsername.mockResolvedValue(undefined);
     mockedClearSession.mockResolvedValue(undefined);
     mockedDeleteAccount.mockResolvedValue(undefined);
     crypto().clearIdentity.mockResolvedValue(undefined);
@@ -204,6 +232,105 @@ describe('SettingsScreen', () => {
       await waitFor(() => {
         expect(screen.getByText('someone@example.com')).toBeTruthy();
       });
+    });
+  });
+
+  describe('username (issue #185)', () => {
+    it('renders the current username on screen load', async () => {
+      mockedGetUsername.mockResolvedValueOnce('alice');
+
+      await renderSettingsScreen();
+
+      await waitFor(() => {
+        expect(screen.getByText('@alice')).toBeTruthy();
+      });
+    });
+
+    it('successful edit updates the displayed value and persists it', async () => {
+      mockedGetUsername.mockResolvedValue('alice');
+      mockedUpdateUsername.mockResolvedValueOnce({ username: 'alice2' });
+      const { user } = await renderSettingsScreen();
+      await waitFor(() => expect(screen.getByText('@alice')).toBeTruthy());
+
+      await user.press(screen.getByRole('button', { name: 'Edit username' }));
+      await user.clear(screen.getByLabelText('Username'));
+      await user.type(screen.getByLabelText('Username'), 'alice2');
+      await user.press(screen.getByRole('button', { name: 'Save' }));
+
+      await waitFor(() => {
+        expect(mockedUpdateUsername).toHaveBeenCalledWith('alice2');
+      });
+      await waitFor(() => {
+        expect(screen.getByText('@alice2')).toBeTruthy();
+      });
+      expect(mockedSaveUsername).toHaveBeenCalledWith('alice2');
+      expect(screen.queryByLabelText('Username')).toBeNull();
+    });
+
+    it('shows a "taken" message on 409 and leaves the displayed username unchanged', async () => {
+      mockedGetUsername.mockResolvedValue('alice');
+      mockedUpdateUsername.mockRejectedValueOnce(new UsernameTakenError());
+      const { user } = await renderSettingsScreen();
+      await waitFor(() => expect(screen.getByText('@alice')).toBeTruthy());
+
+      await user.press(screen.getByRole('button', { name: 'Edit username' }));
+      await user.clear(screen.getByLabelText('Username'));
+      await user.type(screen.getByLabelText('Username'), 'taken_name');
+      await user.press(screen.getByRole('button', { name: 'Save' }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/already taken/i)).toBeTruthy();
+      });
+      expect(mockedSaveUsername).not.toHaveBeenCalled();
+      expect(screen.getByLabelText('Username')).toBeTruthy();
+    });
+
+    it('shows a generic error on a non-409 failure without getting stuck loading', async () => {
+      mockedGetUsername.mockResolvedValue('alice');
+      mockedUpdateUsername.mockRejectedValueOnce(new ApiError('invalid_username', 400));
+      const { user } = await renderSettingsScreen();
+      await waitFor(() => expect(screen.getByText('@alice')).toBeTruthy());
+
+      await user.press(screen.getByRole('button', { name: 'Edit username' }));
+      await user.clear(screen.getByLabelText('Username'));
+      await user.type(screen.getByLabelText('Username'), 'newname');
+      await user.press(screen.getByRole('button', { name: 'Save' }));
+
+      await waitFor(() => {
+        expect(screen.getByText('invalid_username')).toBeTruthy();
+      });
+      expect(mockedSaveUsername).not.toHaveBeenCalled();
+      expect(screen.queryByText('Saving...')).toBeNull();
+      expect(screen.getByRole('button', { name: 'Save' })).toBeTruthy();
+    });
+
+    it('rejects an invalid client-side value (e.g. containing a space) without calling the API', async () => {
+      mockedGetUsername.mockResolvedValue('alice');
+      const { user } = await renderSettingsScreen();
+      await waitFor(() => expect(screen.getByText('@alice')).toBeTruthy());
+
+      await user.press(screen.getByRole('button', { name: 'Edit username' }));
+      await user.clear(screen.getByLabelText('Username'));
+      await user.type(screen.getByLabelText('Username'), 'bad name');
+      await user.press(screen.getByRole('button', { name: 'Save' }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/3-32 characters/i)).toBeTruthy();
+      });
+      expect(mockedUpdateUsername).not.toHaveBeenCalled();
+    });
+
+    it('cancels without calling the API and hides the edit control', async () => {
+      mockedGetUsername.mockResolvedValue('alice');
+      const { user } = await renderSettingsScreen();
+      await waitFor(() => expect(screen.getByText('@alice')).toBeTruthy());
+
+      await user.press(screen.getByRole('button', { name: 'Edit username' }));
+      await user.press(screen.getByRole('button', { name: 'Cancel' }));
+
+      expect(mockedUpdateUsername).not.toHaveBeenCalled();
+      expect(screen.queryByLabelText('Username')).toBeNull();
+      expect(screen.getByText('@alice')).toBeTruthy();
     });
   });
 

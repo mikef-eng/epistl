@@ -3,6 +3,7 @@ import * as contactsStorage from '../../storage/contacts';
 import {
   ApiError,
   IncomingRequestExistsError,
+  UsernameTakenError,
   signup,
   login,
   listContacts,
@@ -15,6 +16,7 @@ import {
   declineContactRequest,
   searchUsers,
   uploadAvatar,
+  updateUsername,
 } from '../client';
 
 jest.mock('../session', () => ({
@@ -22,6 +24,7 @@ jest.mock('../session', () => ({
   getToken: jest.fn(),
   clearToken: jest.fn(),
   saveEmail: jest.fn(),
+  saveUsername: jest.fn(),
 }));
 
 jest.mock('../../storage/contacts', () => ({
@@ -103,6 +106,24 @@ describe('client', () => {
       expect(mockSession.saveEmail).not.toHaveBeenCalled();
     });
 
+    it("persists the authenticated user's username via the session module (issue #185)", async () => {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(201, { token: 'tok-1', user: { id: 'u1', username: 'alice' } }),
+      );
+
+      await signup('a@example.com', 'hunter2');
+
+      expect(mockSession.saveUsername).toHaveBeenCalledWith('alice');
+    });
+
+    it('does not persist a username when the user object has no username field', async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse(201, { token: 'tok-1', user: { id: 'u1' } }));
+
+      await signup('a@example.com', 'hunter2');
+
+      expect(mockSession.saveUsername).not.toHaveBeenCalled();
+    });
+
     it('throws an ApiError with the "invalid input" code on 400', async () => {
       fetchMock.mockResolvedValue(jsonResponse(400, { error: 'invalid input' }));
 
@@ -151,6 +172,24 @@ describe('client', () => {
       await login('a@example.com', 'hunter2');
 
       expect(mockSession.saveEmail).not.toHaveBeenCalled();
+    });
+
+    it("persists the authenticated user's username via the session module (issue #185)", async () => {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(200, { token: 'tok-2', user: { id: 'u1', username: 'alice' } }),
+      );
+
+      await login('a@example.com', 'hunter2');
+
+      expect(mockSession.saveUsername).toHaveBeenCalledWith('alice');
+    });
+
+    it('does not persist a username when the user object has no username field', async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse(200, { token: 'tok-2', user: {} }));
+
+      await login('a@example.com', 'hunter2');
+
+      expect(mockSession.saveUsername).not.toHaveBeenCalled();
     });
 
     it('throws an ApiError with the "invalid credentials" code on 401', async () => {
@@ -646,6 +685,63 @@ describe('client', () => {
       fetchMock.mockResolvedValueOnce(jsonResponse(500, { error: 'internal_error' }));
 
       await expect(deleteAccount()).rejects.toMatchObject({
+        code: 'internal_error',
+        status: 500,
+      });
+    });
+  });
+
+  describe('updateUsername', () => {
+    it('throws an ApiError with code "no_session" when no token is stored', async () => {
+      mockSession.getToken.mockResolvedValueOnce(null);
+
+      await expect(updateUsername('alice')).rejects.toMatchObject({ code: 'no_session' });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('PATCHes /api/username with the username body and Authorization header', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-11');
+      fetchMock.mockResolvedValueOnce(jsonResponse(200, { username: 'alice' }));
+
+      const result = await updateUsername('alice');
+
+      expect(fetchMock).toHaveBeenCalledWith('http://localhost:3000/api/username', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer tok-11',
+        },
+        body: JSON.stringify({ username: 'alice' }),
+      });
+      expect(result).toEqual({ username: 'alice' });
+    });
+
+    it('throws a UsernameTakenError on 409', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-11');
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(409, { error: 'username already taken' }),
+      );
+
+      const rejection = await updateUsername('alice').catch((err) => err);
+      expect(rejection).toBeInstanceOf(UsernameTakenError);
+      expect(rejection).toMatchObject({ status: 409 });
+    });
+
+    it('throws a plain ApiError with code "invalid_username" on 400', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-11');
+      fetchMock.mockResolvedValueOnce(jsonResponse(400, { error: 'invalid_username' }));
+
+      const rejection = await updateUsername('a').catch((err) => err);
+      expect(rejection).toBeInstanceOf(ApiError);
+      expect(rejection).not.toBeInstanceOf(UsernameTakenError);
+      expect(rejection).toMatchObject({ code: 'invalid_username', status: 400 });
+    });
+
+    it('throws an ApiError on a non-2xx, non-409 response (e.g. network/internal failure)', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-11');
+      fetchMock.mockResolvedValueOnce(jsonResponse(500, { error: 'internal_error' }));
+
+      await expect(updateUsername('alice')).rejects.toMatchObject({
         code: 'internal_error',
         status: 500,
       });
