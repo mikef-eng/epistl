@@ -74,13 +74,15 @@ Flow: `planning` → `ready` → `in-progress` → (`blocked` \| `needs-review`)
 
 ## Docs freshness
 
-`README.md` must stay accurate as the system grows — it's the first thing a human or agent reads. A PR is **not** done if it changes any of the following without updating the matching README section:
+`README.md` must stay accurate as the system grows — it's the first thing a human or agent reads, and it must stay **brief**: a one-line Stack table entry, a short setup step, a pointer. It is not the place for wiring detail, rationale, gotchas, or file-level pointers — that all belongs in [`docs/architecture/overview.md`](docs/architecture/overview.md), the living technical reference README links out to. A PR is **not** done if it changes any of the following without updating the matching docs:
 
-- The stack (new dependency, service, or library) → update the Stack table.
-- How to run or configure something (new env var, new local command, new setup step) → update Local commands / setup instructions.
-- An architectural constraint (data flow, storage boundaries, protocol choices) → update the relevant section and, if it's a durable decision, add or update a file in `docs/decisions/`.
+- The stack (new dependency, service, or library) → add a one-line Stack table row in README, and add/extend the corresponding section in `docs/architecture/overview.md` with the actual rationale, wiring, and file pointers.
+- How to run or configure something (new env var, new local command, new setup step) → add the short step/command to README's "Running the stack locally" or "Local commands", and put the *why* (or any gotcha a contributor would otherwise have to rediscover) in `docs/architecture/overview.md`'s "Local development environment" section, linked from README.
+- An architectural constraint (data flow, storage boundaries, protocol choices) → update the relevant `docs/architecture/overview.md` section, and if it's a durable decision (not just an implementation detail), add or update a file in `docs/decisions/` too.
 
-Coder updates the docs in the same PR; Reviewer blocks merge if they're stale relative to the diff.
+Test: if a docs edit would make a README line longer than roughly one sentence, or would require explaining *why* rather than just *what*, it belongs in `docs/architecture/overview.md` instead — write it there and add/update a one-line pointer in README rather than inlining it.
+
+Coder updates the docs in the same PR; Reviewer blocks merge if either file is stale relative to the diff, or if detail was added to README that should have gone in `docs/architecture/overview.md`.
 
 ## CI job scoping
 
