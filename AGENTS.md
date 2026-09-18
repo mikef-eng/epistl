@@ -7,6 +7,7 @@ Epistl uses a controlled SDLC harness so humans and AI agents work through small
 - Every unit of work is a **GitHub Issue**.
 - Nothing gets built without an issue.
 - Acceptance criteria are written **before** implementation starts, never after.
+- Linear is connected as a read-only-in-practice internal mirror (see [`docs/decisions/0015-linear-primary-planning-github-synced-mirror.md`](docs/decisions/0015-linear-primary-planning-github-synced-mirror.md)) — every GitHub issue syncs into Linear automatically for internal state/reporting. Nobody authors or edits issues in Linear as part of this workflow.
 
 ## Roles and handoffs
 
@@ -103,6 +104,7 @@ Coder updates the docs in the same PR; Reviewer blocks merge if they're stale re
 - [`docs/decisions/0012-mobile-local-storage-uses-drizzle-going-forward.md`](docs/decisions/0012-mobile-local-storage-uses-drizzle-going-forward.md)
 - [`docs/decisions/0013-quic-relay-client-android-native-build-bootstrap.md`](docs/decisions/0013-quic-relay-client-android-native-build-bootstrap.md)
 - [`docs/decisions/0014-quic-relay-client-ios-native-build-bootstrap.md`](docs/decisions/0014-quic-relay-client-ios-native-build-bootstrap.md)
+- [`docs/decisions/0015-linear-primary-planning-github-synced-mirror.md`](docs/decisions/0015-linear-primary-planning-github-synced-mirror.md)
 
 Add a new numbered file here for any future decision with real cost-of-change (data model, protocol, storage boundaries) — not for routine implementation choices.
 
@@ -157,3 +159,5 @@ like everything else — don't let `/ui` edits merge to `main` on their own
 say-so.
 
 Postgres MCP is configured project-scoped in `.mcp.json` (`crystaldba/postgres-mcp` over Docker, `--network=host`, connects to the local `docker compose` Postgres by default — override via `DATABASE_URL`). **Deferred:** a NATS channel plugin — no such plugin exists in the official Claude Code marketplace as of this writing; revisit if one becomes available, rather than assuming the original "add in the same PR that stands up that service" guidance still applies to something that may not exist.
+
+Linear MCP (`linear-server`, `https://mcp.linear.app/mcp`) is configured project-scoped in `.mcp.json`, with the `linear@claude-plugins-official` plugin enabled in `.claude/settings.json`. GitHub Issues stays the primary, public surface the Planner/Coder/Tester/Reviewer flow operates on (see above); Linear's GitHub sync mirrors every issue into Linear automatically for internal reporting/roadmap use only — see [`docs/decisions/0015-linear-primary-planning-github-synced-mirror.md`](docs/decisions/0015-linear-primary-planning-github-synced-mirror.md).
