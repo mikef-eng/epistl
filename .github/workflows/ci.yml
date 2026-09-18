@@ -19,6 +19,7 @@ jobs:
       api: ${{ steps.filter.outputs.api }}
       mobile: ${{ steps.filter.outputs.mobile }}
       quic_relay_client: ${{ steps.filter.outputs.quic_relay_client }}
+      dev_setup: ${{ steps.filter.outputs.dev_setup }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -52,6 +53,12 @@ jobs:
             echo "quic_relay_client=true" >> "$GITHUB_OUTPUT"
           else
             echo "quic_relay_client=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if echo "$CHANGED" | grep -qE '^(packages/dev-setup/|Cargo\.toml$|Cargo\.lock$|\.github/workflows/ci\.yml$|\.moon/)'; then
+            echo "dev_setup=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "dev_setup=false" >> "$GITHUB_OUTPUT"
           fi
 
   api:
@@ -272,6 +279,88 @@ jobs:
 
       - name: Test
         run: moon run quic-relay-client:test
+
+      # Informational only (never fails the job) -- lets a human check the
+      # warm-cache behavior the actions/cache step above enables: on a
+      # cache-hit run (same Cargo.lock, same OS), "Cache hits" here should
+      # be > 0.
+      - name: Show sccache stats
+        if: always()
+        run: sccache --show-stats || true
+
+  dev-setup:
+    name: dev-setup
+    needs: changes
+    if: >-
+      !cancelled() &&
+      (github.event_name != 'pull_request' ||
+      needs.changes.result != 'success' ||
+      needs.changes.outputs.dev_setup == 'true')
+    runs-on: ubuntu-latest
+    env:
+      # Root .cargo/config.toml sets `rustc-wrapper = "sccache"` for the
+      # whole workspace, so sccache must be installed and on PATH before
+      # any cargo/moon step below -- see the "Install sccache" step.
+      # SCCACHE_DIR pins the on-disk cache location so the actions/cache
+      # step below can target it precisely.
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # moon needs full history to resolve a merge base with `main`
+          # for its changed-files/task-graph detection; a shallow clone
+          # makes `moon run` fail outright (see moonrepo.dev/docs/guides/ci).
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      # Must run before any cargo/moon step: root .cargo/config.toml sets
+      # `rustc-wrapper = "sccache"` for the whole workspace, so every
+      # cargo invocation from here on (directly, or via `moon run
+      # dev-setup:*`) requires `sccache` already on PATH, or it fails
+      # outright.
+      - name: Install sccache
+        env:
+          SCCACHE_VERSION: "0.18.0"
+        run: |
+          curl -fsSL "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+            | tar -xz -C /tmp
+          sudo mv "/tmp/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl/sccache" /usr/local/bin/sccache
+          sccache --version
+
+      # sccache's own cache directory, keyed on Cargo.lock's hash (falling
+      # back to a partial restore on a hash miss). Persisted separately
+      # from -- and in addition to -- the Swatinem/rust-cache step below,
+      # which caches cargo's registry/target dirs, not sccache's
+      # compilation-unit cache.
+      - name: Cache sccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.SCCACHE_DIR }}
+          key: sccache-dev-setup-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            sccache-dev-setup-${{ runner.os }}-
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/dev-setup -> ../../target
+
+      - name: Install moon
+        uses: moonrepo/setup-toolchain@v0
+
+      - name: Format
+        run: moon run dev-setup:check
+
+      - name: Clippy
+        run: moon run dev-setup:lint
+
+      - name: Test
+        run: moon run dev-setup:test
 
       # Informational only (never fails the job) -- lets a human check the
       # warm-cache behavior the actions/cache step above enables: on a
