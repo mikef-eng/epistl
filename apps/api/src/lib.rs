@@ -11,6 +11,7 @@ pub mod db;
 pub mod keys;
 pub mod nats;
 pub mod push;
+pub mod push_tokens;
 pub mod quic;
 pub mod registry;
 pub mod relay;
@@ -26,7 +27,8 @@ pub use auth::{AppState, AuthenticatedUser};
 /// [`auth::router`], the contacts routes from [`contacts::router`], the
 /// key-storage routes from [`keys::router`], the account routes from
 /// [`account::router`], the discover-search route from [`search::router`],
-/// and the `/ws` relay from [`ws::router`].
+/// the push-token registration route from [`push_tokens::router`], and the
+/// `/ws` relay from [`ws::router`].
 pub fn app(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
@@ -35,6 +37,7 @@ pub fn app(state: AppState) -> Router {
         .merge(keys::router(state.clone()))
         .merge(account::router(state.clone()))
         .merge(search::router(state.clone()))
+        .merge(push_tokens::router(state.clone()))
         .merge(ws::router(state))
 }
 
