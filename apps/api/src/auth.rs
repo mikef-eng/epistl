@@ -67,6 +67,8 @@ pub mod user {
         pub email_verified: bool,
         pub name: Option<String>,
         pub image: Option<String>,
+        pub username: String,
+        pub display_username: Option<String>,
         pub created_at: DateTimeUtc,
         pub updated_at: DateTimeUtc,
     }
@@ -190,10 +192,10 @@ impl AuthUser for user::Model {
         self.updated_at
     }
     fn username(&self) -> Option<&str> {
-        None
+        Some(self.username.as_str())
     }
     fn display_username(&self) -> Option<&str> {
-        None
+        self.display_username.as_deref()
     }
     fn two_factor_enabled(&self) -> bool {
         false
@@ -248,6 +250,8 @@ impl SeaOrmUserModel for user::Model {
             name: Set(create_user.name),
             image: Set(create_user.image),
             email_verified: Set(create_user.email_verified.unwrap_or(false)),
+            username: Set(create_user.username.unwrap_or_default()),
+            display_username: Set(create_user.display_username),
             created_at: Set(now),
             updated_at: Set(now),
         }
@@ -265,6 +269,12 @@ impl SeaOrmUserModel for user::Model {
         }
         if let Some(email_verified) = update.email_verified {
             active.email_verified = Set(email_verified);
+        }
+        if let Some(username) = update.username {
+            active.username = Set(username);
+        }
+        if let Some(display_username) = update.display_username {
+            active.display_username = Set(Some(display_username));
         }
         active.updated_at = Set(now);
     }
@@ -693,6 +703,8 @@ struct SignupPayload {
     email: Option<String>,
     #[serde(default)]
     password: Option<String>,
+    #[serde(default)]
+    username: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -707,11 +719,59 @@ async fn signup(State(state): State<AppState>, Json(payload): Json<SignupPayload
     let email = payload.email.unwrap_or_default();
     let password = payload.password.unwrap_or_default();
     let name = placeholder_name(&email);
+    let username = payload.username.unwrap_or_default();
+
+    // Better Auth's own `EmailPasswordPlugin` treats `username` as optional
+    // (nothing in the library itself requires it) -- reject a missing/empty
+    // one ourselves, before dispatching, so it surfaces as a clear error
+    // instead of hitting this app's own `NOT NULL` constraint downstream.
+    if username.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "username required" })),
+        )
+            .into_response();
+    }
+
+    // Better Auth's own duplicate-detection only checks `email` before
+    // insert, not `username` -- without this, a duplicate username would be
+    // indistinguishable from any other insert failure (both come back as a
+    // generic 422 from `/sign-up/email`). Pre-check against this app's own
+    // pool, mirroring the same check-before-insert pattern Better Auth uses
+    // internally for email (see `better-auth-api`'s `sign_up_core`).
+    let normalized_username = username.to_lowercase();
+    match sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)")
+        .bind(&normalized_username)
+        .fetch_one(&state.pool)
+        .await
+    {
+        Ok(true) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({ "error": "username already taken" })),
+            )
+                .into_response();
+        }
+        Ok(false) => {}
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "internal error" })),
+            )
+                .into_response();
+        }
+    }
 
     let body = json!({
         "email": email,
         "password": password,
         "name": name,
+        // Better Auth's wire field is literally `username` -- no rename
+        // needed. Passed through as provided (not pre-normalized): Better
+        // Auth's own `validate_username`/`normalize_username` (3-30 chars,
+        // `[a-zA-Z0-9_.]`, lowercased) validate and normalize it before
+        // storage -- do not reimplement that here.
+        "username": username,
     });
     let resp = dispatch(&state.auth, "/sign-up/email", &body).await;
 

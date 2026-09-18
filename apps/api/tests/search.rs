@@ -98,6 +98,16 @@ async fn request(
     (status, json)
 }
 
+/// A username satisfying Better Auth's own `validate_username` (3-30 chars,
+/// `[a-zA-Z0-9_.]`), unique per call. This module's tests only care about
+/// controlling `email` precisely, so the username itself is just a random
+/// valid placeholder.
+fn unique_username() -> String {
+    let mut username = format!("user_{}", Uuid::new_v4().simple());
+    username.truncate(30);
+    username
+}
+
 /// Signs a fresh user up with a caller-chosen email (rather than a
 /// randomly-labelled one), so tests can control prefixes precisely.
 /// Returns `(token, user_id)`.
@@ -107,7 +117,7 @@ async fn signup_user_with_email(state: AppState, pool: &PgPool, email: &str) -> 
         "POST",
         "/signup",
         None,
-        Some(json!({ "email": email, "password": "correct-horse-battery" })),
+        Some(json!({ "email": email, "password": "correct-horse-battery", "username": unique_username() })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "signup failed: {body:?}");
