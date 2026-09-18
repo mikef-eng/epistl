@@ -1,8 +1,9 @@
-import { act, render, screen, userEvent, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, userEvent, waitFor } from '@testing-library/react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import ConversationsScreen from '../src/screens/ConversationsScreen';
 import { listContacts } from '../src/api/client';
+import { getToken } from '../src/api/session';
 import { getConversationSummaries, searchMessages } from '../src/storage/messages';
 
 /** Jest has no native safe-area module; seed metrics so the provider
@@ -26,6 +27,11 @@ jest.mock('../src/api/client', () => {
   return {
     ApiError,
     listContacts: jest.fn(),
+    // `../src/components/Avatar.tsx` (issue #182) also imports
+    // `API_BASE_URL` from this module -- since this whole module is
+    // mocked in this file, that import would otherwise resolve to
+    // `undefined` rather than the real client's computed default.
+    API_BASE_URL: 'http://localhost:3000',
   };
 });
 
@@ -34,9 +40,14 @@ jest.mock('../src/storage/messages', () => ({
   searchMessages: jest.fn(),
 }));
 
+jest.mock('../src/api/session', () => ({
+  getToken: jest.fn(),
+}));
+
 const mockedListContacts = listContacts as jest.Mock;
 const mockedGetConversationSummaries = getConversationSummaries as jest.Mock;
 const mockedSearchMessages = searchMessages as jest.Mock;
+const mockedGetToken = getToken as jest.Mock;
 
 // CI runs each test file in its own worker process, and this file's first
 // render pays the one-time cost of registering RN/Reanimated native-module
@@ -94,6 +105,12 @@ async function renderConversationsScreen(navigation = makeNavigation()) {
 describe('ConversationsScreen', () => {
   beforeEach(() => {
     jest.resetAllMocks();
+    // No session token by default -- every row's avatar (issue #182) falls
+    // back to its initial circle, matching this file's other assertions
+    // (e.g. `screen.getByText('alice@example.com')`) which don't otherwise
+    // care about avatar rendering. Overridden per-test in the "row avatar"
+    // describe block below.
+    mockedGetToken.mockResolvedValue(null);
   });
 
   it('shows a loading indicator while the initial fetch is in flight', async () => {
@@ -394,6 +411,46 @@ describe('ConversationsScreen', () => {
         expect(screen.getAllByText('alice@example.com')).toHaveLength(1);
       });
       expect(screen.queryByText('bob@example.com')).toBeNull();
+    });
+  });
+
+  describe('row avatar (issue #182)', () => {
+    it('renders the initial circle when there is no avatar to show', async () => {
+      mockedGetConversationSummaries.mockResolvedValueOnce([summary({ contactUserId: 'u1' })]);
+      mockedListContacts.mockResolvedValueOnce({
+        contacts: [contact({ user_id: 'u1', email: 'alice@example.com' })],
+      });
+
+      await renderConversationsScreen();
+
+      await waitFor(() => {
+        expect(screen.getByText('A')).toBeTruthy();
+      });
+      expect(screen.queryByTestId('avatar-image-u1')).toBeNull();
+    });
+
+    it('attempts the real avatar image and falls back to the initial circle when it fails to load', async () => {
+      mockedGetToken.mockResolvedValue('tok-1');
+      mockedGetConversationSummaries.mockResolvedValueOnce([summary({ contactUserId: 'u1' })]);
+      mockedListContacts.mockResolvedValueOnce({
+        contacts: [contact({ user_id: 'u1', email: 'alice@example.com' })],
+      });
+
+      await renderConversationsScreen();
+
+      const image = await waitFor(() => screen.getByTestId('avatar-image-u1'));
+      expect(image.props.source).toEqual({
+        uri: 'http://localhost:3000/api/avatar/u1',
+        headers: { Authorization: 'Bearer tok-1' },
+      });
+      expect(screen.queryByText('A')).toBeNull();
+
+      fireEvent(image, 'error');
+
+      await waitFor(() => {
+        expect(screen.getByText('A')).toBeTruthy();
+      });
+      expect(screen.queryByTestId('avatar-image-u1')).toBeNull();
     });
   });
 });
