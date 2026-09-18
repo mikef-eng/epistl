@@ -1,4 +1,5 @@
 import * as session from '../session';
+import * as contactsStorage from '../../storage/contacts';
 import {
   ApiError,
   IncomingRequestExistsError,
@@ -22,7 +23,12 @@ jest.mock('../session', () => ({
   saveEmail: jest.fn(),
 }));
 
+jest.mock('../../storage/contacts', () => ({
+  upsertContacts: jest.fn(),
+}));
+
 const mockSession = session as jest.Mocked<typeof session>;
+const mockContactsStorage = contactsStorage as jest.Mocked<typeof contactsStorage>;
 
 function jsonResponse(status: number, body: unknown): Response {
   return {
@@ -171,7 +177,14 @@ describe('client', () => {
       mockSession.getToken.mockResolvedValueOnce('tok-3');
       fetchMock.mockResolvedValueOnce(
         jsonResponse(200, {
-          contacts: [{ user_id: 'u2', email: 'b@example.com', added_at: '2026-01-01T00:00:00Z' }],
+          contacts: [
+            {
+              user_id: 'u2',
+              email: 'b@example.com',
+              username: 'bee',
+              added_at: '2026-01-01T00:00:00Z',
+            },
+          ],
         }),
       );
 
@@ -182,7 +195,14 @@ describe('client', () => {
         headers: { Authorization: 'Bearer tok-3' },
       });
       expect(result).toEqual({
-        contacts: [{ user_id: 'u2', email: 'b@example.com', added_at: '2026-01-01T00:00:00Z' }],
+        contacts: [
+          {
+            user_id: 'u2',
+            email: 'b@example.com',
+            username: 'bee',
+            added_at: '2026-01-01T00:00:00Z',
+          },
+        ],
       });
     });
 
@@ -194,6 +214,56 @@ describe('client', () => {
         code: 'unauthorized',
         status: 401,
       });
+    });
+
+    it('upserts the returned contacts into the local username cache (issue #174)', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-3');
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(200, {
+          contacts: [
+            {
+              user_id: 'u2',
+              email: 'b@example.com',
+              username: 'bee',
+              added_at: '2026-01-01T00:00:00Z',
+            },
+          ],
+        }),
+      );
+
+      await listContacts();
+
+      expect(mockContactsStorage.upsertContacts).toHaveBeenCalledWith([
+        { userId: 'u2', username: 'bee' },
+      ]);
+    });
+
+    it('does not throw when the local username cache upsert fails', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-3');
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(200, {
+          contacts: [
+            {
+              user_id: 'u2',
+              email: 'b@example.com',
+              username: 'bee',
+              added_at: '2026-01-01T00:00:00Z',
+            },
+          ],
+        }),
+      );
+      mockContactsStorage.upsertContacts.mockRejectedValueOnce(new Error('disk full'));
+
+      await expect(listContacts()).resolves.toBeDefined();
+    });
+
+    it('does not upsert into the local cache on a failed fetch', async () => {
+      mockSession.getToken.mockResolvedValueOnce('stale-token');
+      fetchMock.mockResolvedValueOnce(jsonResponse(401, { error: 'unauthorized' }));
+
+      await expect(listContacts()).rejects.toBeInstanceOf(ApiError);
+
+      expect(mockContactsStorage.upsertContacts).not.toHaveBeenCalled();
     });
   });
 

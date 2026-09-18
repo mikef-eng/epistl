@@ -183,6 +183,7 @@ function contactRecord(contact: TestContact): Contact {
   return {
     user_id: contact.userId,
     email: `${contact.userId}@example.com`,
+    username: contact.userId,
     added_at: '2024-01-01T00:00:00.000Z',
     x25519_public_key_b64: bytesToBase64(contact.x25519Keys.publicKey),
     kyber_public_key_b64: bytesToBase64(contact.kyberKeys.publicKey),

@@ -104,6 +104,7 @@ pub fn router(state: AppState) -> Router {
 struct ContactRow {
     user_id: Uuid,
     email: String,
+    username: String,
     added_at: DateTime<Utc>,
     x25519_public_key: Option<Vec<u8>>,
     kyber_public_key: Option<Vec<u8>>,
@@ -115,6 +116,7 @@ struct ContactRow {
 struct ContactView {
     user_id: Uuid,
     email: String,
+    username: String,
     added_at: DateTime<Utc>,
     x25519_public_key_b64: Option<String>,
     kyber_public_key_b64: Option<String>,
@@ -127,6 +129,7 @@ impl From<ContactRow> for ContactView {
         ContactView {
             user_id: row.user_id,
             email: row.email,
+            username: row.username,
             added_at: row.added_at,
             x25519_public_key_b64: row.x25519_public_key.map(|bytes| BASE64.encode(bytes)),
             kyber_public_key_b64: row.kyber_public_key.map(|bytes| BASE64.encode(bytes)),
@@ -150,6 +153,7 @@ async fn list_contacts(user: AuthenticatedUser, State(state): State<AppState>) -
         SELECT
             c.contact_user_id AS user_id,
             u.email AS email,
+            u.username AS username,
             c.created_at AS added_at,
             k.x25519_public_key AS x25519_public_key,
             k.kyber_public_key AS kyber_public_key,
