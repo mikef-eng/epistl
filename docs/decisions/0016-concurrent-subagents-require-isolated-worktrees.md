@@ -43,9 +43,15 @@ leave uncommitted changes) to run **concurrently** against this repo,
 the orchestrator — not the subagents — is responsible for isolation: it
 must create a dedicated `git worktree add` per concurrent dispatch
 *before* launching each one, and tell that subagent to do its work there
-instead of in the shared primary checkout. The orchestrator removes the
-worktree once that subagent's task is done (PR opened, or task
-abandoned).
+instead of in the shared primary checkout. Each such worktree must be
+created at `.worktrees/<name>` under the repo root (e.g.
+`git worktree add .worktrees/issue-123-slug`), never under `/tmp` or any
+other location — the repo's own disk has more free space than `/tmp` in
+practice, and co-locating worktrees under the repo makes them easy to
+find and clean up in bulk. `.worktrees/` is gitignored, so worktree
+contents are never accidentally tracked or staged. The orchestrator
+removes the worktree once that subagent's task is done (PR opened, or
+task abandoned).
 
 This is an orchestration-level rule, not a change to the Coder/Tester/
 Reviewer playbooks themselves. Sequential dispatch — one Coder finishing

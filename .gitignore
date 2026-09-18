@@ -2,6 +2,9 @@
 .moon/cache
 .moon/docker
 
+# Agent/Coder git worktrees (see docs/decisions/0016-concurrent-subagents-require-isolated-worktrees.md)
+/.worktrees/
+
 # Rust
 /target
 **/*.rs.bk
