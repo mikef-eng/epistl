@@ -9,7 +9,7 @@
  * for the chat WebSocket relay) can derive their URL from it instead of
  * introducing a second, independent env var.
  */
-import { getToken, saveEmail, saveToken } from './session';
+import { getToken, saveEmail, saveToken, saveUsername } from './session';
 
 export const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000';
 
@@ -126,6 +126,13 @@ function emailOf(user: AuthUser): string | null {
   return typeof user.email === 'string' ? user.email : null;
 }
 
+/** Extracts the authenticated user's username from an `AuthResponse.user`
+ * (issue #185) -- mirrors `emailOf` above verbatim, now that
+ * `apps/api/src/auth.rs`'s `user::Model` serializes a `username` field. */
+function usernameOf(user: AuthUser): string | null {
+  return typeof user.username === 'string' ? user.username : null;
+}
+
 async function requireToken(): Promise<string> {
   const token = await getToken();
   if (!token) {
@@ -151,6 +158,10 @@ export async function signup(email: string, password: string): Promise<AuthRespo
   if (signupEmail !== null) {
     await saveEmail(signupEmail);
   }
+  const signupUsername = usernameOf(data.user);
+  if (signupUsername !== null) {
+    await saveUsername(signupUsername);
+  }
   return data;
 }
 
@@ -170,6 +181,10 @@ export async function login(email: string, password: string): Promise<AuthRespon
   const loginEmail = emailOf(data.user);
   if (loginEmail !== null) {
     await saveEmail(loginEmail);
+  }
+  const loginUsername = usernameOf(data.user);
+  if (loginUsername !== null) {
+    await saveUsername(loginUsername);
   }
   return data;
 }
@@ -442,6 +457,55 @@ export async function deleteAccount(): Promise<void> {
   if (!response.ok) {
     await throwApiError(response);
   }
+}
+
+/** `PATCH /api/username`'s success response shape (issue #184's endpoint) --
+ * the server normalizes to lowercase, so `username` here may differ in case
+ * from what was submitted. */
+export interface UpdateUsernameResponse {
+  username: string;
+}
+
+/** Thrown by `updateUsername` specifically for the `409` "already taken"
+ * case, so the caller (`SettingsScreen`'s username edit control, issue #185)
+ * can show a distinct "already taken" message instead of a generic error --
+ * mirrors `IncomingRequestExistsError` above. Deliberately does not carry
+ * the server's own `error` body text (`"username already taken"`, with
+ * spaces, unlike every other endpoint's snake_case codes) since the caller
+ * supplies its own copy either way. */
+export class UsernameTakenError extends ApiError {
+  constructor() {
+    super('username_taken', 409);
+    this.name = 'UsernameTakenError';
+  }
+}
+
+/** Changes the caller's own username (issue #184's `PATCH /api/username`).
+ * Resolves with the (possibly lowercased) stored username on success. The
+ * caller is responsible for client-side format validation before calling
+ * this -- this function always sends the request and lets the server be
+ * the final authority on both format (`400 invalid_username`) and
+ * uniqueness (`409`, surfaced here as `UsernameTakenError`). */
+export async function updateUsername(username: string): Promise<UpdateUsernameResponse> {
+  const token = await requireToken();
+
+  const response = await fetch(`${API_BASE_URL}/api/username`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ username }),
+  });
+
+  if (!response.ok) {
+    if (response.status === 409) {
+      throw new UsernameTakenError();
+    }
+    await throwApiError(response);
+  }
+
+  return (await response.json()) as UpdateUsernameResponse;
 }
 
 /** `POST /api/avatar/upload-url`'s response shape (issue #189's step 1) --

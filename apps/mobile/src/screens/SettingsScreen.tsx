@@ -6,8 +6,15 @@ import { useEffect, useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ApiError, deleteAccount, uploadAvatar } from '../api/client';
-import { clearSession, getEmail, getUserId, saveAvatarPath } from '../api/session';
+import { ApiError, UsernameTakenError, deleteAccount, updateUsername, uploadAvatar } from '../api/client';
+import {
+  clearSession,
+  getEmail,
+  getUserId,
+  getUsername,
+  saveAvatarPath,
+  saveUsername,
+} from '../api/session';
 import Avatar from '../components/Avatar';
 import { clearIdentity } from '../crypto/identity';
 import { clearAllSessions } from '../crypto/session';
@@ -40,6 +47,16 @@ function messageFor(err: unknown): string {
   return err instanceof ApiError ? err.message : 'Something went wrong';
 }
 
+/** Client-side mirror of `apps/api/src/username.rs`'s `is_valid_username`
+ * (3-32 characters, letters/digits/underscore only) -- run before ever
+ * calling `updateUsername` so an obviously invalid value never reaches the
+ * network, per issue #185's acceptance criteria. The server remains the
+ * final authority on format regardless (its own `400 invalid_username`
+ * still applies if this check is ever out of sync with it). */
+function isValidUsernameFormat(value: string): boolean {
+  return /^[A-Za-z0-9_]{3,32}$/.test(value);
+}
+
 export default function SettingsScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const { colorScheme: activeColorScheme } = useColorScheme();
@@ -49,6 +66,17 @@ export default function SettingsScreen({ navigation }: Props) {
   const [theme, setTheme] = useState<ThemePreference>('system');
   const [email, setEmail] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
+  const [username, setUsername] = useState<string | null>(null);
+  // Username edit control (issue #185): tap-to-edit, matching the delete
+  // account confirmation step's inline `TextInput` pattern below.
+  // `usernameDraft`/`usernameError` are reset each time editing starts;
+  // `usernameError` is deliberately left in place across a failed submit so
+  // the user can see why before retrying, and cleared again once they
+  // start over.
+  const [editingUsername, setEditingUsername] = useState(false);
+  const [usernameDraft, setUsernameDraft] = useState('');
+  const [usernameError, setUsernameError] = useState<string | null>(null);
+  const [usernameSaving, setUsernameSaving] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   // Explicit confirmation gate (issue #92): pressing "Delete account" only
   // reveals this step -- it never sends the request itself. The request is
@@ -70,14 +98,21 @@ export default function SettingsScreen({ navigation }: Props) {
   // without implying any ordering dependency between them.
   useEffect(() => {
     let cancelled = false;
-    Promise.all([getThemePreference(), getEmail(), getUserId(), getNotificationsEnabled()]).then(
-      ([storedTheme, storedEmail, storedUserId, storedNotificationsEnabled]) => {
+    Promise.all([
+      getThemePreference(),
+      getEmail(),
+      getUserId(),
+      getUsername(),
+      getNotificationsEnabled(),
+    ]).then(
+      ([storedTheme, storedEmail, storedUserId, storedUsername, storedNotificationsEnabled]) => {
         if (cancelled) {
           return;
         }
         setTheme(storedTheme);
         setEmail(storedEmail);
         setUserId(storedUserId);
+        setUsername(storedUsername);
         setNotificationsEnabled(storedNotificationsEnabled);
       }
     );
@@ -99,6 +134,45 @@ export default function SettingsScreen({ navigation }: Props) {
     const next = !notificationsEnabled;
     setNotificationsEnabled(next);
     await saveNotificationsEnabled(next);
+  }
+
+  function handleStartUsernameEdit() {
+    setUsernameDraft(username ?? '');
+    setUsernameError(null);
+    setEditingUsername(true);
+  }
+
+  function handleCancelUsernameEdit() {
+    setEditingUsername(false);
+    setUsernameDraft('');
+    setUsernameError(null);
+  }
+
+  async function handleSaveUsername() {
+    if (!isValidUsernameFormat(usernameDraft)) {
+      setUsernameError(
+        'Username must be 3-32 characters: letters, numbers, and underscores only'
+      );
+      return;
+    }
+
+    setUsernameError(null);
+    setUsernameSaving(true);
+    try {
+      const result = await updateUsername(usernameDraft);
+      setUsername(result.username);
+      await saveUsername(result.username);
+      setEditingUsername(false);
+    } catch (err) {
+      // Failure (409 already-taken or otherwise): leave the previously
+      // displayed username untouched, stay in edit mode, and surface an
+      // inline error -- never leave `usernameSaving` stuck `true`.
+      setUsernameError(
+        err instanceof UsernameTakenError ? 'That username is already taken' : messageFor(err)
+      );
+    } finally {
+      setUsernameSaving(false);
+    }
   }
 
   /** Opens the device's photo library (library only -- no camera capture
@@ -262,6 +336,60 @@ export default function SettingsScreen({ navigation }: Props) {
           Account
         </Text>
         <Text className="text-base text-black dark:text-white">{email ?? ''}</Text>
+
+        <View className="mt-3">
+          {editingUsername ? (
+            <View>
+              <TextInput
+                accessibilityLabel="Username"
+                placeholder="Username"
+                autoCapitalize="none"
+                autoCorrect={false}
+                value={usernameDraft}
+                onChangeText={setUsernameDraft}
+                className="mb-2 rounded-lg border border-gray-300 px-3 py-2 text-black dark:border-gray-600 dark:text-white"
+              />
+              {usernameError !== null ? (
+                <Text className="mb-2 text-sm text-red-500">{usernameError}</Text>
+              ) : null}
+              <View className="flex-row">
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={handleCancelUsernameEdit}
+                  className="mr-2 flex-1 items-center rounded-lg bg-gray-200 py-2 dark:bg-gray-700"
+                >
+                  <Text className="text-base font-semibold text-black dark:text-white">
+                    Cancel
+                  </Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: usernameSaving }}
+                  disabled={usernameSaving}
+                  onPress={handleSaveUsername}
+                  className="flex-1 items-center rounded-lg bg-[#8B2F4B] py-2"
+                >
+                  <Text className="text-base font-semibold text-white">
+                    {usernameSaving ? 'Saving...' : 'Save'}
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : (
+            <View className="flex-row items-center justify-between">
+              <Text className="text-base text-black dark:text-white">
+                {username !== null ? `@${username}` : ''}
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Edit username"
+                onPress={handleStartUsernameEdit}
+              >
+                <Text className="text-sm font-semibold text-[#8B2F4B]">Edit</Text>
+              </Pressable>
+            </View>
+          )}
+        </View>
       </View>
 
       <View className="border-b border-gray-200 px-4 py-4 dark:border-gray-700">

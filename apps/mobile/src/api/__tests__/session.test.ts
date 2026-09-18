@@ -8,12 +8,15 @@ import {
   getUserId,
   saveEmail,
   getEmail,
+  saveUsername,
+  getUsername,
   saveAvatarPath,
   getAvatarPath,
   clearSession,
   SESSION_TOKEN_KEY,
   SESSION_USER_ID_KEY,
   SESSION_EMAIL_KEY,
+  SESSION_USERNAME_KEY,
   SESSION_AVATAR_PATH_KEY,
 } from '../session';
 
@@ -93,6 +96,25 @@ describe('session', () => {
     await expect(getEmail()).resolves.toBeNull();
   });
 
+  it('saveUsername persists the username under its own session key', async () => {
+    await saveUsername('alice');
+
+    expect(mockSecureStore.setItemAsync).toHaveBeenCalledWith(SESSION_USERNAME_KEY, 'alice');
+  });
+
+  it('getUsername reads the username from secure storage', async () => {
+    mockSecureStore.getItemAsync.mockResolvedValueOnce('alice');
+
+    await expect(getUsername()).resolves.toBe('alice');
+    expect(mockSecureStore.getItemAsync).toHaveBeenCalledWith(SESSION_USERNAME_KEY);
+  });
+
+  it('getUsername resolves null when no username is stored', async () => {
+    mockSecureStore.getItemAsync.mockResolvedValueOnce(null);
+
+    await expect(getUsername()).resolves.toBeNull();
+  });
+
   it('saveAvatarPath persists the avatar serving path under its own session key', async () => {
     await saveAvatarPath('/api/avatar/u1');
 
@@ -115,13 +137,14 @@ describe('session', () => {
     await expect(getAvatarPath()).resolves.toBeNull();
   });
 
-  it('clearSession clears the token, user id, email, and avatar path keys together', async () => {
+  it('clearSession clears the token, user id, email, username, and avatar path keys together', async () => {
     await clearSession();
 
     expect(mockSecureStore.deleteItemAsync).toHaveBeenCalledWith(SESSION_TOKEN_KEY);
     expect(mockSecureStore.deleteItemAsync).toHaveBeenCalledWith(SESSION_USER_ID_KEY);
     expect(mockSecureStore.deleteItemAsync).toHaveBeenCalledWith(SESSION_EMAIL_KEY);
+    expect(mockSecureStore.deleteItemAsync).toHaveBeenCalledWith(SESSION_USERNAME_KEY);
     expect(mockSecureStore.deleteItemAsync).toHaveBeenCalledWith(SESSION_AVATAR_PATH_KEY);
-    expect(mockSecureStore.deleteItemAsync).toHaveBeenCalledTimes(4);
+    expect(mockSecureStore.deleteItemAsync).toHaveBeenCalledTimes(5);
   });
 });
