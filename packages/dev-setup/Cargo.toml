@@ -4,20 +4,24 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 description = """
-Local dev-environment checker for Epistl (issue #203): detects the host
-OS (macOS/Linux only), auto-copies `.env.example` to `.env` if missing,
-and reports Present/Absent for the core tools README's "Running the
-stack locally" section requires (rustup, cargo/rustc, node, moon,
-docker, sccache). Detect-only in this issue -- no installs, no mutating
-docker/moon actions; see the issue for the follow-up, OS-specific
-install-flow work this scaffolds toward.
+Local dev-environment checker for Epistl: detects the host OS
+(macOS/Linux only), auto-copies `.env.example` to `.env` if missing, and
+reports Present/Absent for the core tools README's "Running the stack
+locally" section requires (rustup, cargo/rustc, node, moon, docker,
+sccache) (issue #203). On macOS (issue #204), also detects Homebrew and,
+only when given an explicit opt-in `--install` flag, auto-installs
+whichever of rustup/node/moon/sccache it found absent via `brew install`;
+Docker and the Xcode/CocoaPods/Android Studio/NDK native toolchain stay
+detect-and-guide-only always, never auto-installed. A plain `dev-setup`
+invocation with no flags never installs anything, on any OS.
 """
 
 # No external dependencies: OS detection uses `std::env::consts::OS`,
 # tool detection shells out via `std::process::Command` behind this
-# crate's own `CommandExecutor` trait (see src/checks.rs), and this
-# issue's acceptance criteria don't call for any CLI flags/arguments, so
-# there's nothing here an argument-parsing crate would buy.
+# crate's own `CommandExecutor` trait (see src/checks.rs), and the sole
+# CLI flag this crate accepts (`--install`, issue #204) is checked with
+# a plain `std::env::args()` scan (see `install_flag_set` in src/lib.rs)
+# rather than pulling in an argument-parsing crate for one boolean flag.
 
 [lib]
 name = "dev_setup"

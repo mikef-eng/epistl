@@ -7,8 +7,9 @@
 use std::process::ExitCode;
 
 use dev_setup::{
-    check_os, ensure_env_file, format_check_line, is_required, repo_root, run_all_checks,
-    EnvFileOutcome, SystemExecutor,
+    check_os, ensure_env_file, format_check_line, format_mac_report_line, install_flag_set,
+    is_required, repo_root, run_all_checks, run_macos_checks, EnvFileOutcome, SystemEnvironment,
+    SystemExecutor,
 };
 
 fn main() -> ExitCode {
@@ -17,6 +18,8 @@ fn main() -> ExitCode {
         eprintln!("{message}");
         return ExitCode::FAILURE;
     }
+
+    let install_flag = install_flag_set(std::env::args());
 
     let repo_root = repo_root();
 
@@ -39,6 +42,22 @@ fn main() -> ExitCode {
         println!("{}", format_check_line(check));
         if is_required(check.name) && !check.status.is_present() {
             all_required_present = false;
+        }
+    }
+
+    if os == "macos" {
+        println!();
+        println!("macOS-specific checks (pass --install to auto-install via Homebrew where safe):");
+        let environment = SystemEnvironment;
+        let mac_reports = run_macos_checks(&checks, install_flag, &executor, &environment);
+        for report in &mac_reports {
+            println!("{}", report.message);
+        }
+
+        println!();
+        println!("macOS summary:");
+        for report in &mac_reports {
+            println!("{}", format_mac_report_line(report));
         }
     }
 
