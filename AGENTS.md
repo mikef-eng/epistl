@@ -106,6 +106,7 @@ Coder updates the docs in the same PR; Reviewer blocks merge if they're stale re
 - [`docs/decisions/0014-quic-relay-client-ios-native-build-bootstrap.md`](docs/decisions/0014-quic-relay-client-ios-native-build-bootstrap.md)
 - [`docs/decisions/0015-linear-primary-planning-github-synced-mirror.md`](docs/decisions/0015-linear-primary-planning-github-synced-mirror.md)
 - [`docs/decisions/0016-concurrent-subagents-require-isolated-worktrees.md`](docs/decisions/0016-concurrent-subagents-require-isolated-worktrees.md)
+- [`docs/decisions/0017-minio-object-storage-for-avatars.md`](docs/decisions/0017-minio-object-storage-for-avatars.md)
 
 Add a new numbered file here for any future decision with real cost-of-change (data model, protocol, storage boundaries) — not for routine implementation choices.
 
