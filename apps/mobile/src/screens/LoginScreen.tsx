@@ -2,7 +2,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
 
-import { ApiError, login, signup, type AuthUser } from '../api/client';
+import { ApiError, login, type AuthUser } from '../api/client';
 import { saveUserId } from '../api/session';
 import { ensureKeysRegistered } from '../crypto/keyRegistration';
 import type { RootStackParamList } from '../navigation/types';
@@ -37,20 +37,30 @@ export default function LoginScreen({ navigation }: Props) {
       return;
     }
 
+    if (mode === 'signup') {
+      // Issue #216: `POST /signup` requires a `username` this form never
+      // collects, so sign-up no longer calls `signup()` directly here --
+      // `SetupProfileScreen` collects the required username (and an
+      // optional avatar) first, carrying this entered email/password along
+      // without creating the account yet.
+      navigation.navigate('SetupProfile', { email, password });
+      return;
+    }
+
     setError(null);
     setSubmitting(true);
     try {
-      const data = mode === 'login' ? await login(email, password) : await signup(email, password);
+      const data = await login(email, password);
       const userId = userIdOf(data.user);
       if (userId !== null) {
         // Persisted so later screens (e.g. `ChatScreen`, issue #41) can
         // identify "self" for PQXDH session establishment and envelope AAD
-        // binding without re-deriving it from the login/signup response.
+        // binding without re-deriving it from the login response.
         await saveUserId(userId);
         // `ensureKeysRegistered` already swallows its own errors (network,
-        // etc.) so a failed upload never blocks login/signup from
-        // completing; this `catch` is defense-in-depth in case that
-        // contract is ever violated.
+        // etc.) so a failed upload never blocks login from completing;
+        // this `catch` is defense-in-depth in case that contract is ever
+        // violated.
         await ensureKeysRegistered(userId).catch(() => undefined);
       }
       navigation.replace('Main');
