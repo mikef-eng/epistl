@@ -146,6 +146,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "better-auth",
+ "better-auth-core",
  "chrono",
  "dotenvy",
  "futures-util",

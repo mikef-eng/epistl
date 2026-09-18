@@ -24,6 +24,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::patch;
 use axum::{Json, Router};
+use better_auth_core::utils::username::{normalize_username, validate_username};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -57,14 +58,6 @@ struct ChangeUsernamePayload {
     username: Option<String>,
 }
 
-/// Same format rule as signup: 3-32 characters, `^[a-zA-Z0-9_]+$`.
-fn is_valid_username(username: &str) -> bool {
-    (3..=32).contains(&username.len())
-        && username
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
 fn is_username_unique_violation(err: &sqlx::Error) -> bool {
     match err {
         sqlx::Error::Database(db_err) => {
@@ -80,17 +73,26 @@ async fn change_username(
     Json(payload): Json<ChangeUsernamePayload>,
 ) -> Response {
     let username = payload.username.unwrap_or_default();
-    if !is_valid_username(&username) {
+    // Delegates to Better Auth's own public `validate_username` (issue
+    // #199) rather than maintaining a second, independently-drifting
+    // regex/length check -- this is the exact same 3-30 character,
+    // `[a-zA-Z0-9_.]` rule `EmailPasswordPlugin` enforces at signup (see
+    // `auth::signup`'s comment), so a username Better Auth accepts at
+    // signup can never later be rejected here for a value that isn't even
+    // changing. All three of its error variants (`TooShort`, `TooLong`,
+    // `Invalid`) map to the same `400 invalid_username` response, matching
+    // this endpoint's existing single-error-code contract (the mobile
+    // client only branches on 409 vs. everything-else, per issue #185).
+    if validate_username(&username).is_err() {
         return bad_request("invalid_username");
     }
 
-    // Normalized to lowercase the same way Better Auth's own
-    // `validate_username`/`normalize_username` normalizes usernames set at
-    // signup (see `auth::signup`'s comment) -- keeps `users.username`
-    // consistently lowercase so the `UNIQUE` constraint actually catches
-    // case-variant duplicates instead of letting e.g. "Alice" and "alice"
-    // coexist as distinct rows.
-    let normalized = username.to_lowercase();
+    // Normalized the same way Better Auth's own `normalize_username`
+    // normalizes usernames set at signup (see `auth::signup`'s comment) --
+    // keeps `users.username` consistently lowercase so the `UNIQUE`
+    // constraint actually catches case-variant duplicates instead of
+    // letting e.g. "Alice" and "alice" coexist as distinct rows.
+    let normalized = normalize_username(&username);
 
     let updated = sqlx::query_scalar::<_, String>(
         r#"

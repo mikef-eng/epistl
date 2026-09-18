@@ -315,7 +315,46 @@ describe('SettingsScreen', () => {
       await user.press(screen.getByRole('button', { name: 'Save' }));
 
       await waitFor(() => {
-        expect(screen.getByText(/3-32 characters/i)).toBeTruthy();
+        expect(screen.getByText(/3-30 characters/i)).toBeTruthy();
+      });
+      expect(mockedUpdateUsername).not.toHaveBeenCalled();
+    });
+
+    // Issue #199: dots are allowed by Better Auth's own `validate_username`,
+    // which `apps/api/src/username.rs` now delegates to -- a dot-containing
+    // value must pass this client-side check and reach the API.
+    it('accepts a client-side value containing a dot and calls the API', async () => {
+      mockedGetUsername.mockResolvedValue('alice');
+      mockedUpdateUsername.mockResolvedValueOnce({ username: 'alice.jones' });
+      const { user } = await renderSettingsScreen();
+      await waitFor(() => expect(screen.getByText('@alice')).toBeTruthy());
+
+      await user.press(screen.getByRole('button', { name: 'Edit username' }));
+      await user.clear(screen.getByLabelText('Username'));
+      await user.type(screen.getByLabelText('Username'), 'alice.jones');
+      await user.press(screen.getByRole('button', { name: 'Save' }));
+
+      await waitFor(() => {
+        expect(mockedUpdateUsername).toHaveBeenCalledWith('alice.jones');
+      });
+    });
+
+    // Issue #199: the ceiling dropped from 32 to Better Auth's own
+    // 30-character limit -- a 31-32 character value, which used to pass
+    // this client-side check, must now be rejected before ever calling the
+    // API.
+    it('rejects a 31-32 character client-side value without calling the API', async () => {
+      mockedGetUsername.mockResolvedValue('alice');
+      const { user } = await renderSettingsScreen();
+      await waitFor(() => expect(screen.getByText('@alice')).toBeTruthy());
+
+      await user.press(screen.getByRole('button', { name: 'Edit username' }));
+      await user.clear(screen.getByLabelText('Username'));
+      await user.type(screen.getByLabelText('Username'), 'a'.repeat(31));
+      await user.press(screen.getByRole('button', { name: 'Save' }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/3-30 characters/i)).toBeTruthy();
       });
       expect(mockedUpdateUsername).not.toHaveBeenCalled();
     });
