@@ -102,17 +102,38 @@ async fn test_state_with_push_notifier(push_notifier: api::push::SharedPushNotif
 /// mirroring `recv_frame`/`assert_no_further_message`'s pattern for
 /// WebSocket frames above, so a push-notification assertion is just as
 /// deterministic as a frame assertion instead of polling a shared `Vec`.
+///
+/// `fail_tokens` lets a test simulate Expo rejecting (or a network error
+/// on) specific tokens -- the call is still recorded (an attempt was
+/// still made) but `send_push` returns `Err` for those tokens, so a test
+/// can assert that one token failing doesn't prevent the others from
+/// being attempted (issue #168's "attempted independently" criterion).
 #[derive(Clone)]
 struct MockPushNotifier {
     calls: tokio::sync::mpsc::UnboundedSender<(String, Value)>,
+    fail_tokens: std::collections::HashSet<String>,
 }
 
 impl MockPushNotifier {
     /// Returns a fresh `(notifier, receiver)` pair -- the receiver is what
     /// the test awaits `recv_push_call`/`assert_no_push_call` on.
     fn new() -> (Self, tokio::sync::mpsc::UnboundedReceiver<(String, Value)>) {
+        Self::new_with_failing_tokens(std::collections::HashSet::new())
+    }
+
+    /// Same as [`Self::new`], but `send_push` will return `Err` (while
+    /// still recording the call) for any token in `fail_tokens`.
+    fn new_with_failing_tokens(
+        fail_tokens: std::collections::HashSet<String>,
+    ) -> (Self, tokio::sync::mpsc::UnboundedReceiver<(String, Value)>) {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        (Self { calls: tx }, rx)
+        (
+            Self {
+                calls: tx,
+                fail_tokens,
+            },
+            rx,
+        )
     }
 }
 
@@ -127,10 +148,17 @@ impl api::push::PushNotifier for MockPushNotifier {
         Box<dyn std::future::Future<Output = Result<(), api::push::PushError>> + Send + 'a>,
     > {
         let calls = self.calls.clone();
+        let should_fail = self.fail_tokens.contains(token);
         let token = token.to_string();
         Box::pin(async move {
             let _ = calls.send((token, data));
-            Ok(())
+            if should_fail {
+                Err(api::push::PushError::RequestFailed(
+                    "mock push failure".to_string(),
+                ))
+            } else {
+                Ok(())
+            }
         })
     }
 }
@@ -1046,6 +1074,62 @@ async fn send_to_offline_contact_with_multiple_push_tokens_notifies_each_one() {
     assert_eq!(
         received_tokens,
         std::collections::HashSet::from([device_token_a, device_token_b])
+    );
+    assert_no_push_call(&mut push_calls).await;
+}
+
+/// Acceptance criterion (issue #168): a push failure on one of a
+/// recipient's multiple registered tokens does not prevent sending to the
+/// others -- each token is attempted independently. Simulates a rejected
+/// token (e.g. `DeviceNotRegistered`, a network failure) via
+/// `MockPushNotifier::new_with_failing_tokens`, and asserts the other
+/// token is still attempted, and that none of this is visible to the
+/// sender (the `ack` still succeeds normally).
+#[tokio::test]
+#[serial]
+async fn send_to_offline_contact_attempts_other_tokens_after_one_fails() {
+    let pool = test_pool().await;
+    let device_token_failing = format!("ExponentPushToken[{}]", Uuid::new_v4());
+    let device_token_ok = format!("ExponentPushToken[{}]", Uuid::new_v4());
+    let (notifier, mut push_calls) =
+        MockPushNotifier::new_with_failing_tokens(std::collections::HashSet::from([
+            device_token_failing.clone(),
+        ]));
+    let state = test_state_with_push_notifier(std::sync::Arc::new(notifier)).await;
+    let (sender_token, sender_id, _sender_email) =
+        signup_user(&pool, state.clone(), "push-fail-sender").await;
+    let (recipient_token, recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "push-fail-recipient").await;
+    add_contact(state.clone(), &sender_token, &recipient_email).await;
+    register_push_token(state.clone(), &recipient_token, &device_token_failing).await;
+    register_push_token(state.clone(), &recipient_token, &device_token_ok).await;
+
+    let addr = spawn_server(state).await;
+    let mut sender_ws = connect_ws(addr, &sender_token).await;
+    // Note: the recipient never connects.
+
+    let body_b64 = BASE64.encode(b"queued while offline, one of two tokens will fail");
+    sender_ws
+        .send(WsMessage::text(
+            json!({ "type": "send", "to": recipient_id, "body_b64": body_b64 }).to_string(),
+        ))
+        .await
+        .expect("failed to send frame");
+
+    // The sender's ack must succeed regardless of the eventual per-token
+    // push outcome, since the push send is spawned rather than awaited.
+    let ack = recv_json(&mut sender_ws).await;
+    assert_eq!(ack, json!({ "type": "ack", "to": recipient_id }));
+
+    let mut received_tokens = std::collections::HashSet::new();
+    for _ in 0..2 {
+        let (token, data) = recv_push_call(&mut push_calls).await;
+        assert_eq!(data, json!({ "type": "message", "fromUserId": sender_id }));
+        received_tokens.insert(token);
+    }
+    assert_eq!(
+        received_tokens,
+        std::collections::HashSet::from([device_token_failing, device_token_ok])
     );
     assert_no_push_call(&mut push_calls).await;
 }
