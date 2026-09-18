@@ -12,6 +12,7 @@ import { getToken } from '../src/api/session';
 import { ensureLocalIdentity, PREKEY_SIGNATURE_CONTEXT } from '../src/crypto/identity';
 import { encodeHandshakeEnvelope, encodeRatchetEnvelope } from '../src/crypto/envelope';
 import { deriveNextSendingMessageKey, initiateSession } from '../src/crypto/session';
+import { inboxStore, startInboxListener, stopInboxListener } from '../src/inbox/listener';
 import ChatScreen from '../src/screens/ChatScreen';
 import { getMessages, markContactMessagesRead, saveMessage } from '../src/storage/messages';
 import { transportStore, type ConnectionStatus, type IncomingFrame } from '../src/transport/store';
@@ -28,6 +29,18 @@ import { base64ToBytes, bytesToBase64, utf8ToBytes } from '../src/utils/base64';
 // store implementation in `src/transport/__tests__/store.test.ts`; this
 // file only checks that `ChatScreen` wires the four statuses to the banner
 // correctly and that message handling is unaffected by reconnects.
+//
+// `../src/inbox/listener.ts` itself is *not* mocked here: since it
+// consumes this same mocked `transportStore` instance (Jest mocks are keyed
+// by resolved file path, so `ChatScreen.tsx`'s and `listener.ts`'s both
+// resolve to this one mock) and this file already mocks/exercises every one
+// of the listener's other dependencies (`../src/api/client`'s
+// `listContacts`, `../src/api/session`'s `getUserId`, `../src/storage/messages`'s
+// `saveMessage`) the same way `ChatScreen.tsx` itself does, running the real
+// listener end-to-end reproduces exactly what `../src/navigation/MainTabs.tsx`
+// does in the real app (issue #165): `socket.receive(...)` below decodes via
+// the real listener, which publishes to `inboxStore`, which `ChatScreen`
+// renders -- not a direct decode inside `ChatScreen` anymore.
 jest.mock('../src/transport/store', () => {
   const { Store } = jest.requireActual('@tanstack/react-store');
   return {
@@ -177,7 +190,6 @@ async function renderChatScreen(socket: ChatSocketHarness = createChatSocketHarn
   );
   const user = userEvent.setup();
   await waitFor(() => expect(mockedGetMessages).toHaveBeenCalledWith(CONTACT_USER_ID));
-  await waitFor(() => expect(mockedConnect).toHaveBeenCalledWith(mockedGetToken));
   return { navigation, user, socket, unmount: view.unmount };
 }
 
@@ -187,11 +199,18 @@ describe('ChatScreen', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockSecureStore.__store.clear();
+    // Fresh start for the listener's own caches (identity/self-user-id,
+    // contacts) each test -- see the `jest.mock('../src/transport/store', ...)`
+    // comment above for why the real listener is used, unmocked, in this
+    // file. `stopInboxListener()` before `startInboxListener()` also drops
+    // any subscription left over from the previous test.
+    stopInboxListener();
     mockedGetToken.mockResolvedValue('token-123');
     mockedGetUserId.mockResolvedValue(ALICE_USER_ID);
     mockedGetMessages.mockResolvedValue([]);
     mockedSaveMessage.mockResolvedValue(undefined);
     mockedMarkContactMessagesRead.mockResolvedValue(undefined);
+    startInboxListener();
     bob = buildContact();
     mockedListContacts.mockResolvedValue({ contacts: [bob.contact] });
   });
@@ -561,24 +580,32 @@ describe('ChatScreen', () => {
     });
   });
 
-  it('closes the WebSocket connection when the screen unmounts', async () => {
+  it('does not open or close the transport connection itself (ownership moved to the app level, issue #165)', async () => {
     const { socket, unmount } = await renderChatScreen();
 
     await unmount();
 
-    expect(socket.close).toHaveBeenCalled();
+    // `../src/inbox/appSession.ts` (`../src/navigation/MainTabs.tsx`'s
+    // mount/unmount) now owns `connect`/`close` -- `ChatScreen` mounting or
+    // unmounting must not touch either action, so the connection stays open
+    // across navigating away from a contact's chat.
+    expect(mockedConnect).not.toHaveBeenCalled();
+    expect(socket.close).not.toHaveBeenCalled();
   });
 
   it('does not drop a legitimate frame for a newly-opened contact after switching directly from a different contact\'s chat', async () => {
-    // `transportStore` is a module-wide singleton (see the `jest.mock` at
-    // the top of this file, mirroring the real `../src/transport/store`):
-    // its `lastFrame` is not reset on unmount, exactly like the real
-    // store's `close()` action. This reproduces that carry-over instead of
-    // the `createChatSocketHarness()` helper's usual reset, so the
-    // `processedFrameRef` guard in `ChatScreen.tsx` gets a genuinely stale
-    // `lastFrame` (Bob's) seeded into a freshly-mounted screen for a
-    // *different* contact (Carol) -- the scenario the guard's comment says
-    // it must not mishandle.
+    // Both `transportStore` and `inboxStore` are module-wide singletons
+    // (see the `jest.mock` at the top of this file, mirroring the real
+    // `../src/transport/store`): neither's last-published value is reset on
+    // unmount, exactly like the real store's `close()` action (which now,
+    // post-issue-#165, isn't even called by `ChatScreen` unmounting -- see
+    // the test above). This reproduces that carry-over instead of the
+    // `createChatSocketHarness()` helper's usual reset, so both
+    // `ChatScreen.tsx`'s `processedFrameRef` guard (for `transportStore`'s
+    // `lastFrame`) and its `processedInboxEventRef` guard (for
+    // `inboxStore`'s `lastEvent`) get genuinely stale values (Bob's) seeded
+    // into a freshly-mounted screen for a *different* contact (Carol) -- the
+    // scenario both guards' comments say they must not mishandle.
     const { socket: bobSocket, unmount } = await renderChatScreen();
     const aliceIdentity = await ensureLocalIdentity();
 
@@ -610,11 +637,14 @@ describe('ChatScreen', () => {
     await waitFor(() => expect(screen.getByText('hi from bob')).toBeTruthy());
 
     // Leave Bob's chat. This is the real `close()` action's behavior too:
-    // it does not clear `transportStore`'s `lastFrame`, so Bob's frame is
-    // still sitting there.
+    // it does not clear `transportStore`'s `lastFrame`, so Bob's frame (and
+    // `inboxStore`'s published outcome for it) are still sitting there.
     await unmount();
     expect(transportStore.state.lastFrame).toEqual(
       expect.objectContaining({ type: 'message', from: CONTACT_USER_ID })
+    );
+    expect(inboxStore.state.lastEvent).toEqual(
+      expect.objectContaining({ contactUserId: CONTACT_USER_ID, status: 'saved' })
     );
 
     // Switch directly to a different contact's (Carol's) chat.
@@ -630,8 +660,8 @@ describe('ChatScreen', () => {
 
     // A genuinely new frame from Carol, delivered after Carol's screen has
     // mounted, must still be rendered -- not swallowed because it happens
-    // to arrive into a store whose `lastFrame` was non-null (Bob's) at
-    // mount time.
+    // to arrive into stores whose `lastFrame`/`lastEvent` were both
+    // non-null (Bob's) at mount time.
     const carolHandshake = initiateSession({
       contactUserId: ALICE_USER_ID,
       selfUserId: CAROL_USER_ID,

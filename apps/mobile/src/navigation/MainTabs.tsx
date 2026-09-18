@@ -2,9 +2,11 @@ import { Ionicons } from '@expo/vector-icons';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useColorScheme } from 'nativewind';
+import { useEffect } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { startAppSession, stopAppSession } from '../inbox/appSession';
 import ConversationsScreen from '../screens/ConversationsScreen';
 import FriendsScreen from '../screens/FriendsScreen';
 import type { MainTabParamList } from './types';
@@ -101,8 +103,21 @@ function ThemedTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
  * header for the `Main` route itself is hidden in `App.tsx`. The bottom tab
  * bar itself is `ThemedTabBar` above, not React Navigation's default chrome
  * (frontend-polish spec, B1).
+ *
+ * This is also where the transport connection + app-level inbox listener
+ * are owned (issue #165's `../inbox/appSession.ts`): opened once on mount,
+ * closed once on unmount -- see that module's doc comment for why this
+ * component's mount/unmount lifecycle is the right place for that, instead
+ * of `ChatScreen.tsx`'s former per-screen `connect`/`close`.
  */
 export default function MainTabs() {
+  useEffect(() => {
+    startAppSession();
+    return () => {
+      stopAppSession();
+    };
+  }, []);
+
   return (
     <Tab.Navigator
       screenOptions={{ headerShown: false }}
