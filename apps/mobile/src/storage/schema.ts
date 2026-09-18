@@ -18,3 +18,18 @@ export const messages = sqliteTable('messages', {
   // haven't been read yet.
   readAt: text('read_at'),
 });
+
+/**
+ * Caches each contact's `username` locally (issue #174), so a message
+ * sender's display name is available for an offline push notification
+ * without a network round-trip. `userId` is unique -- one row per contact,
+ * upserted whenever a `GET /api/contacts` fetch succeeds (see
+ * `storage/contacts.ts::upsertContacts`). Deliberately narrow: `username`
+ * only, not a general-purpose contact directory (see that issue's "Out of
+ * scope").
+ */
+export const contacts = sqliteTable('contacts', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  userId: text('user_id').notNull().unique(),
+  username: text('username').notNull(),
+});
