@@ -31,7 +31,7 @@ apps/
   api/      Rust Axum API
 packages/   Shared libraries
   quic-relay-client/   Rust/Quinn QUIC client crate (quic_ping spike + QuicConnection persistent-connection API; see Stack table)
-  dev-setup/           Rust CLI that checks a macOS/Linux dev machine against what's needed to run Epistl locally -- OS gate, `.env` auto-copy, and rustup/node/moon/docker/sccache reporting (issue #203); on apt-based Linux distros, opt-in `--install` auto-installs rustup/moon/sccache via their official installers, with Node.js/Docker and non-apt distros staying guide-only (issue #205); also an opt-in `--start` flag that runs `docker compose up -d`, waits for Postgres/NATS/SeaweedFS health, then `moon run api:migrate` (issue #206); see `packages/dev-setup/README.md` and "Running the stack locally" below
+  dev-setup/           Rust CLI that checks a macOS/Linux dev machine against what's needed to run Epistl locally -- OS gate, `.env` auto-copy, and rustup/node/moon/docker/sccache reporting (issue #203). Opt-in `--install` auto-installs missing tools where it's safe to do so: on macOS, via Homebrew for rustup/node/moon/sccache, with Docker (GUI installer) and Xcode/CocoaPods/Android Studio/the Android NDK staying detect-and-guide-only always (issue #204); on apt-based Linux distros, via each tool's official installer for rustup/moon/sccache, with Node.js/Docker and non-apt distros staying guide-only (issue #205). Also an opt-in `--start` flag that runs `docker compose up -d`, waits for Postgres/NATS/SeaweedFS health, then `moon run api:migrate` (issue #206). A plain `dev-setup` invocation with no flags never installs or starts anything, on any OS. See `packages/dev-setup/README.md` and "Running the stack locally" below
 ```
 
 ## Development harness
