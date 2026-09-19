@@ -5,7 +5,7 @@ description: Required PR body Coverage table mapping each acceptance criterion t
 
 # PR coverage table
 
-Every lane-agent PR body must include:
+Every **lane-agent** PR body (`api` / `mobile` / `native`) must include:
 
 ## Coverage
 
@@ -19,11 +19,13 @@ Also include:
 
 ## Lane
 
-`api` | `mobile` | `native`
+`api` | `mobile` | `native` | `chore`
 
 ## Testing recommendation
 
 - **Logic-affecting** (default for any `apps/*/src/**`, migrations, assertion changes), or
 - **Non-logic (config/CI/docs/tooling only)** — merge-gate may verify without expecting a full coverage table of product tests.
 
-`merge-gate` checks each Coverage row points at a real test that exercises the claimed behavior — it does not re-derive the table from scratch.
+**Chore PRs** (`## Lane: chore`) omit the Coverage table and `Closes #N`. Use `## Testing recommendation: non-logic` instead. Keep this skill and [`.github/PULL_REQUEST_TEMPLATE.md`](../../.github/PULL_REQUEST_TEMPLATE.md) lane values in sync.
+
+`merge-gate` checks each Coverage row points at a real test that exercises the claimed behavior — it does not re-derive the table from scratch. For chore PRs it skips the Coverage check and still enforces scope and docs freshness.
