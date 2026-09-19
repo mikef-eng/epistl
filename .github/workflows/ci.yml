@@ -277,3 +277,29 @@ jobs:
 
       - name: Test
         run: moon run mobile:test
+
+  # Single required status check for branch protection. Path-filtered
+  # jobs (rust / mobile) may be skipped; this job always runs and fails
+  # only if a needed job failed (skipped is OK).
+  ci:
+    name: ci
+    if: always()
+    needs: [changes, rust, mobile]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Aggregate
+        run: |
+          set -e
+          if [ "${{ needs.changes.result }}" != "success" ]; then
+            echo "changes failed: ${{ needs.changes.result }}"
+            exit 1
+          fi
+          if [ "${{ needs.rust.result }}" != "success" ] && [ "${{ needs.rust.result }}" != "skipped" ]; then
+            echo "rust failed: ${{ needs.rust.result }}"
+            exit 1
+          fi
+          if [ "${{ needs.mobile.result }}" != "success" ] && [ "${{ needs.mobile.result }}" != "skipped" ]; then
+            echo "mobile failed: ${{ needs.mobile.result }}"
+            exit 1
+          fi
+          echo "All required jobs passed or were correctly skipped."
