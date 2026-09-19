@@ -2,6 +2,7 @@
 name = "quic-relay-client"
 version = "0.1.0"
 edition = "2021"
+license = "AGPL-3.0-only"
 publish = false
 description = """
 Rust client for `apps/api`'s real QUIC listener (issue #73), exposed to
