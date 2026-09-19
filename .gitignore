@@ -2,8 +2,10 @@
 .moon/cache
 .moon/docker
 
-# Agent/Coder git worktrees (see docs/decisions/0016-concurrent-subagents-require-isolated-worktrees.md)
-/.worktrees/
+# Claude Code `isolation: worktree` checkouts (see ADR 0016 addendum 2026-09-19).
+# Historical hand-rolled path `.worktrees/` kept ignored for any leftover trees.
+.claude/worktrees/
+.worktrees/
 
 # Rust
 /target

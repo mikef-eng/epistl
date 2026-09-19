@@ -54,12 +54,27 @@ An open PR with `Closes #N` means in-progress; PR review/CI state replaces the o
 
 1. Branch: `issue-<number>-<short-slug>` (e.g. `issue-42-login-form`). Chore branches use `chore-<short-slug>`.
 2. Local checks via **moon only** (`moon run api:check` / `api:lint` / `api:test`, `moon run mobile:lint` / `mobile:typecheck` / `mobile:test`, etc.) — never raw `cargo`/`npm` as a substitute. Moon loads `.env`; do not `source .env` first.
-3. Scope creep → new issue via `open-task-issue`; do not expand the current PR.
+3. Scope creep → new issue via `open-task-issue`; do not expand the current PR. Prefer state `backlog` when the spill is later-work.
 4. **Docs freshness**: if a change alters the stack, how to run something, an env var, or an architectural constraint, update `README.md` (one-line) and put detail in [`docs/architecture/overview.md`](docs/architecture/overview.md) in the same PR. Durable decisions go in `docs/decisions/`.
 5. **Crypto gate**: anything touching `apps/api/src/crypto/**`, `apps/api/src/auth/**`, or `apps/mobile/src/crypto/**` requires the `pqc-crypto-change` skill and `crypto-reviewer` sign-off before merge.
 6. Never poll CI with `sleep` / repeated `gh pr checks`. Lane agents push and stop; `ci-watch` runs one blocking `gh run watch`.
 7. **Ceremony proportional to diff.** Product work uses issues + Coverage. Harness / docs / CI / root-config (`.claude/**`, `.github/**`, `docs/**`, `*.md`, `.moon/**`, `.gitignore`, `docker-compose.yml`, `.env.example`) is the **chore** lane: direct PR by the orchestrator, no issue, no `Closes #N`, no Coverage table (`## Testing recommendation: non-logic` instead). Spec/plan only for product features touching ≥3 files of new logic.
 8. Prefer `Read` / `Grep` / `Glob` over shell `cat` / `grep` / `find` / `sed`. Do not prefix every Bash call with `cd` — use absolute paths or the worktree cwd.
+9. **TDD (iron law):** no production code without a failing test first for features, bug fixes, and behavior changes. Mechanics live in the `test-driven-development` skill. Bugs also run `systematic-debugging` (root cause) before the fix.
+
+## Worktree recovery
+
+Claude Code `isolation: worktree` creates trees under `.claude/worktrees/` (gitignored). A crashed/rate-limited lane can leave a **locked** tree that `git worktree prune` will not remove. Reap with:
+
+```bash
+git worktree unlock .claude/worktrees/<name>
+git worktree remove --force .claude/worktrees/<name>
+git worktree prune
+# then delete ancestor-of-main debris branches if any:
+git branch -D issue-<n>-<slug>   # only when it has zero unique commits vs main
+```
+
+`/ship` preflight must detect an existing `issue-<n>-*` branch or matching worktree and offer resume-or-reset before dispatching.
 
 ## Architecture decisions
 

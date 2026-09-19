@@ -35,7 +35,15 @@ alone does not fix this — worktrees isolate the filesystem/branch, not a
 shared external resource like a database that multiple worktrees'
 `moon run api:test` invocations still point at.
 
-## Decision
+## Decision (historical — superseded)
+
+> **Superseded for isolation mechanics** by the 2026-09-19 addendum and
+> ADR [0019](0019-harness-area-lanes.md): lane agents now set
+> `isolation: worktree`, and the runtime creates trees under
+> `.claude/worktrees/` (not `.worktrees/`). Do **not** hand-roll
+> `git worktree add .worktrees/<name>` for lane dispatches. The
+> concurrent-isolation requirement and the shared-Postgres constraint
+> below still apply.
 
 Whenever an orchestrating session dispatches more than one write-capable
 subagent (`coder`, or any subagent expected to switch branches / commit /
@@ -134,7 +142,8 @@ without the risk (no shared `target/`, no directory-level lock).
 ADR [0019](0019-harness-area-lanes.md) moves concurrent lane agents onto
 Claude Code's native `isolation: worktree` frontmatter. The orchestrator
 no longer hand-rolls `git worktree add .worktrees/<name>` before each
-dispatch — the runtime creates and cleans up the worktree.
+dispatch — the runtime creates and cleans up the worktree under
+`.claude/worktrees/` (tracked in `.gitignore`).
 
 **What still applies from this decision:**
 
@@ -145,3 +154,5 @@ dispatch — the runtime creates and cleans up the worktree.
   remain free to run in parallel.
 - Shared `sccache` across worktrees remains required (see addendum
   above).
+- Locked orphan worktrees must be unlocked before remove — see
+  `AGENTS.md` "Worktree recovery".

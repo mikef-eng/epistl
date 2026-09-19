@@ -26,11 +26,9 @@ Never substitute raw `cargo`. Never `source .env` first.
 
 ## Gotchas
 
-- `DATABASE_URL` and `NATS_URL` required for integration tests. Shared local Postgres — only one `api-dev` lane at a time.
+- `DATABASE_URL` and `NATS_URL` required for integration tests. Shared local Postgres — only one `api-dev` lane at a time (until #219 lands).
 - `sccache` must be on `PATH` (required project-wide).
-- Prefer `Read`/`Grep`/`Glob`; use absolute paths in Bash (cd does not persist between Bash calls in subagents).
-- Docs: stack/env/run changes → `README.md` one-liner + detail in `docs/architecture/overview.md`.
 
 ## See also
 
-`docs/architecture/overview.md` (Backend, NATS, Object storage, Local development).
+`docs/architecture/overview.md` (Backend, NATS, Object storage, Local development). Shared invariants (docs freshness, tools) live in `AGENTS.md`.

@@ -20,6 +20,7 @@ moon run quic-relay-client:test
 moon run dev-setup:check
 moon run dev-setup:lint
 moon run dev-setup:test
+moon run dev-setup:bootstrap-lint   # shellcheck on bootstrap.sh
 ```
 
 `sccache` required on `PATH`. Shared Cargo workspace with `apps/api` — a lockfile bump may affect both.
@@ -27,5 +28,7 @@ moon run dev-setup:test
 ## Gotchas
 
 - Android/iOS native build bootstrap: see ADRs 0013 / 0014 and `docs/architecture/overview.md`.
-- Prefer `Read`/`Grep`/`Glob`; absolute paths in Bash.
-- Docs freshness for stack/env/run or bootstrap changes.
+
+## See also
+
+Shared invariants live in `AGENTS.md`.
