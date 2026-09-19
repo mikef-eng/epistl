@@ -12,7 +12,7 @@ Orchestrate shipping GitHub issue(s) $ARGUMENTS as the **lead dispatcher** (you 
    - `QUIC relay client:` / `dev-setup:` / `packages/quic-relay-client` / `packages/dev-setup` / `apps/mobile/modules/quic-relay-client` → `native-dev`
    - Ambiguous → ask once; default to the path that matches Out of scope / Notes.
    - Chore / harness titles (`Harness:`, etc.) → do **not** dispatch; tell the human to use the chore route.
-4. **One-api-lane rule:** dispatch at most one `api-dev` at a time. Mobile/native may run in parallel with each other and with a single api lane.
+4. **Parallelism:** mobile, native, ui, and api lanes may all run concurrently. Per-worktree Postgres + NATS isolation (issue #219) means multiple `api-dev` lanes no longer collide. After each api-dev PR merges, remind the human to run `moon run api:db-prune` or `moon run api:db-drop` to clean up worktree databases.
 5. Dispatch each lane in background with the **full issue body inlined** in the prompt (title, goal, AC, out of scope, notes). Tell it not to re-fetch the issue. If the issue has the `bug` label, tell the lane to run `systematic-debugging` (root cause) before TDD.
 6. When a lane returns a PR URL: run `ci-watch` on that PR, then `merge-gate`. If merge-gate blocks, stop that issue and report; continue other issues.
 7. Report final PR URLs, merge status per issue.

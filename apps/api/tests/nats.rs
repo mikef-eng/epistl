@@ -53,10 +53,7 @@ async fn publishes_and_receives_on_a_plain_subject() {
 
 #[tokio::test]
 async fn ensure_offline_stream_configures_a_transient_work_queue() {
-    use api::nats::{
-        self, DEFAULT_OFFLINE_QUEUE_MAX_AGE_SECS, OFFLINE_QUEUE_MAX_AGE_SECS_VAR,
-        OFFLINE_STREAM_NAME,
-    };
+    use api::nats::{self, DEFAULT_OFFLINE_QUEUE_MAX_AGE_SECS, OFFLINE_QUEUE_MAX_AGE_SECS_VAR};
     use async_nats::jetstream::stream::{RetentionPolicy, StorageType};
 
     let client = api::nats::connect_with(&test_nats_url())
@@ -64,12 +61,11 @@ async fn ensure_offline_stream_configures_a_transient_work_queue() {
         .expect("failed to connect to NATS");
     let jetstream = async_nats::jetstream::new(client);
 
-    // Start from a clean slate: docker-compose's NATS volume persists
-    // across local `cargo test` runs, so a stream left over from an
-    // earlier run (possibly with a different `max_age`) must not make
-    // this assertion pass or fail on stale config. Ignored if the stream
-    // doesn't already exist.
-    let _ = jetstream.delete_stream(OFFLINE_STREAM_NAME).await;
+    // Derive the effective stream name for this worktree (or base name on the
+    // primary checkout). Start from a clean slate so stale config from a
+    // previous run doesn't interfere.
+    let stream_name = api::nats::effective_stream_name();
+    let _ = jetstream.delete_stream(&stream_name).await;
 
     let mut stream = nats::ensure_offline_stream(&jetstream)
         .await
@@ -79,7 +75,9 @@ async fn ensure_offline_stream_configures_a_transient_work_queue() {
 
     assert_eq!(info.config.retention, RetentionPolicy::WorkQueue);
     assert_eq!(info.config.storage, StorageType::File);
-    assert_eq!(info.config.subjects, vec!["epistl.offline.*".to_string()]);
+    // Subjects must match the effective per-worktree filter (or the base
+    // filter on the primary checkout).
+    assert_eq!(info.config.subjects, api::nats::effective_stream_subjects());
 
     let expected_max_age_secs = std::env::var(OFFLINE_QUEUE_MAX_AGE_SECS_VAR)
         .ok()

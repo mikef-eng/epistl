@@ -16,7 +16,11 @@ async fn main() {
     // Silently a no-op if no .env file is found (e.g. in CI).
     dotenvy::dotenv().ok();
 
-    let database_url = match env_database_url() {
+    // Derive the effective database URL for this process: uses DATABASE_URL
+    // as-is on the primary checkout; rewrites the DB name to the worktree-
+    // specific name when EPISTL_WORKTREE_SLUG (or the git worktree path)
+    // indicates an isolated lane is active.
+    let database_url = match db::effective_database_url() {
         Ok(url) => url,
         Err(err) => {
             eprintln!("startup failed: {err}");
@@ -28,7 +32,7 @@ async fn main() {
     // has nothing useful to do without it. This pool backs tables the app
     // owns outright (e.g. `contacts`) rather than tables mediated through
     // `better-auth`'s own SeaORM connection below.
-    let pool = match db::connect().await {
+    let pool = match db::connect_with(&database_url).await {
         Ok(pool) => pool,
         Err(err) => {
             eprintln!("startup failed: {err}");
@@ -112,8 +116,4 @@ async fn main() {
         .await
         .expect("failed to bind listener");
     axum::serve(listener, app).await.expect("server error");
-}
-
-fn env_database_url() -> Result<String, String> {
-    std::env::var(db::DATABASE_URL_VAR).map_err(|_| format!("{} must be set", db::DATABASE_URL_VAR))
 }

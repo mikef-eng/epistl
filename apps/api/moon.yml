@@ -21,6 +21,24 @@ tasks:
     args: ["run", "--bin", "migrate"]
     options:
       cache: false
+  db-drop:
+    command: "cargo"
+    # Drops the current worktree's derived Postgres DB and NATS stream.
+    # Refuses to run without an active worktree slug (EPISTL_WORKTREE_SLUG
+    # or a .claude/worktrees/<name> checkout) so it can never drop the base DB.
+    args: ["run", "--bin", "migrate", "--", "--drop"]
+    options:
+      cache: false
+      runInCI: false
+  db-prune:
+    command: "cargo"
+    # Drops every <base_db>_wt_* database (and its NATS stream) whose git
+    # worktree no longer exists. Pass --dry-run to list without dropping:
+    #   moon run api:db-prune -- --dry-run
+    args: ["run", "--bin", "migrate", "--", "--prune"]
+    options:
+      cache: false
+      runInCI: false
   test:
     command: "cargo"
     args: ["test"]
