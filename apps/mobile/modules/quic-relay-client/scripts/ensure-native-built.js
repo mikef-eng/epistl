@@ -154,7 +154,7 @@ function ndkMissingError() {
   return new Error(
     'Android NDK not found: set ANDROID_NDK_HOME (or ANDROID_NDK_ROOT) to an installed NDK, ' +
       'or install one under your Android SDK (ANDROID_HOME/ANDROID_SDK_ROOT) via, e.g.:\n' +
-      '  sdkmanager --install "ndk;27.0.12077973"\n' +
+      '  sdkmanager --install "ndk;27.1.12297006"\n' +
       'Re-run the Android build once that finishes.'
   );
 }

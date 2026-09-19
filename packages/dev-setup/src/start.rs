@@ -1,10 +1,8 @@
-//! The opt-in `--start` action (issue #206): brings up the local
-//! `docker compose` stack (Postgres, NATS, SeaweedFS), waits for each
-//! service to report healthy, then runs `moon run api:migrate`. This is
-//! the one mutating action `dev-setup` performs against Docker/moon --
-//! it never runs unless the caller explicitly passes `--start`, matching
-//! the "no mutation without explicit opt-in" pattern `--install`
-//! established for the OS-specific issues.
+//! The opt-in `--start` action: brings up the local `docker compose`
+//! stack (Postgres, NATS, SeaweedFS), waits for each service to report
+//! healthy, then runs `moon run api:migrate`. Never runs unless the
+//! caller explicitly passes `--start` (or answers yes to the interactive
+//! prompt in `main.rs`).
 //!
 //! `docker-compose.yml` already declares a healthcheck for each of the
 //! three services (`pg_isready`, `wget .../healthz`, `curl
