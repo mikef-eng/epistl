@@ -1,0 +1,31 @@
+name: Feature request
+description: Propose a new feature or improvement (unvetted ask)
+title: "[feature]: "
+labels: ["feature-request", "backlog"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Feature requests land as `feature-request` + `backlog`. Maintainers triage them into accepted `enhancement` work or close them. External pull requests are not accepted — see [CONTRIBUTING.md](../blob/main/CONTRIBUTING.md).
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem are you trying to solve?
+      placeholder: I want to … but currently I have to …
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How would you like it to work?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you thought about (optional).
+    validations:
+      required: false

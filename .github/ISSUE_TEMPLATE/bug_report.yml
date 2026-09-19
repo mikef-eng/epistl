@@ -1,0 +1,53 @@
+name: Bug report
+description: Report a defect against expected behavior
+title: "[bug]: "
+labels: ["bug", "backlog"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. Security / crypto vulnerabilities must **not** be reported here — see [SECURITY.md](../blob/main/SECURITY.md).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you observe?
+      placeholder: The app crashed when opening a conversation with…
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: Minimal steps to reproduce.
+      placeholder: |
+        1. …
+        2. …
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      multiple: true
+      options:
+        - Android
+        - iOS
+        - API / backend
+        - Other / unclear
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Commit or version
+      description: Git commit SHA, tag, or approximate date of the build you used.
+    validations:
+      required: false

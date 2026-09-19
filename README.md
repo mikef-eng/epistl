@@ -117,3 +117,11 @@ moon run dev-setup:test
 All Rust commands above require [`sccache`](https://github.com/mozilla/sccache) on `PATH` (see "Running the stack locally", step 1) — without it they fail immediately with an "executable `sccache` not found" error.
 
 CI (`.github/workflows/ci.yml`) runs these same `moon run` tasks, so a green local run is a reliable predictor of a green CI run. See [`docs/architecture/overview.md`](docs/architecture/overview.md) for anything not covered here.
+
+## Contributing
+
+Epistl is in early development and is **not accepting pull requests** at this time. Bug reports and feature requests via GitHub Issues are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Please report security issues privately via [SECURITY.md](SECURITY.md).
+
+## License
+
+Epistl is licensed under the [GNU Affero General Public License v3.0 only](LICENSE) (AGPL-3.0-only). Because the relay is network-facing, AGPL §13 applies: this public repository is the corresponding source for any publicly offered instance.

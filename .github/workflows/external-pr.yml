@@ -1,0 +1,46 @@
+name: Decline external PRs
+
+# Enforces CONTRIBUTING.md: no external pull requests during early
+# development. Must use pull_request_target (fork PRs get a write token
+# against the base repo). Must NEVER checkout the fork head — that would
+# run untrusted code with base-repo secrets. The decline body is inlined
+# so this works even before CONTRIBUTING.md lands on default branch.
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  decline:
+    name: decline-external-pr
+    if: >-
+      !contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                github.event.pull_request.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Comment and close
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$(cat <<'EOF'
+          Thanks for the pull request.
+
+          Epistl is in **active early development** and is **not accepting external pull requests** at this time. Development is driven by an internal agent harness; outside code PRs bypass that flow.
+
+          We **do** welcome:
+
+          - Bug reports via the [Bug report](https://github.com/mikef-eng/epistl/issues/new?template=bug_report.yml) form
+          - Feature requests via the [Feature request](https://github.com/mikef-eng/epistl/issues/new?template=feature_request.yml) form
+
+          Please report security issues privately — see [SECURITY.md](https://github.com/mikef-eng/epistl/blob/main/SECURITY.md).
+
+          More detail: [CONTRIBUTING.md](https://github.com/mikef-eng/epistl/blob/main/CONTRIBUTING.md).
+
+          Closing this PR now.
+          EOF
+          )"
+          gh pr close "$PR_NUMBER" --repo "$REPO"
