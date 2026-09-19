@@ -2,13 +2,15 @@
 
 <!-- What does this PR do, and why? -->
 
-Closes #<!-- issue number, if applicable -->
+Closes #<!-- issue number, if applicable; omit for chore -->
 
 ## Lane
 
-<!-- api | mobile | native -->
+<!-- api | mobile | native | chore -->
 
 ## Coverage
+
+<!-- Required for api / mobile / native. For chore: omit this section or use a single n/a row. -->
 
 | Acceptance criterion | Test |
 | --- | --- |
@@ -16,11 +18,11 @@ Closes #<!-- issue number, if applicable -->
 
 ## Testing recommendation
 
-<!-- Logic-affecting — recommend full Coverage table | Non-logic (config/CI/docs/tooling only) -->
+<!-- Logic-affecting — recommend full Coverage table | Non-logic (config/CI/docs/tooling only) — use for chore -->
 
 ## Checklist
 
-- [ ] Every acceptance criterion is covered in the Coverage table (or marked n/a with reason)
+- [ ] Every acceptance criterion is covered in the Coverage table (or marked n/a with reason) — skip for chore
 - [ ] `README.md` / `docs/architecture/overview.md` updated if this PR changes the stack, how to run something, an env var, or an architectural constraint
 - [ ] If this PR touches `apps/api/src/crypto/**`, `apps/api/src/auth/**`, or `apps/mobile/src/crypto/**`: the `pqc-crypto-change` checklist was run and `crypto-reviewer` sign-off is attached below
 

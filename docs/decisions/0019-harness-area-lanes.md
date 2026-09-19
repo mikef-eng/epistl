@@ -87,3 +87,21 @@ is enforced by `/ship`'s one-api-lane rule.
 - Anyone reading old docs that mention Coder/Tester/Reviewer should
   treat those names as historical; the live flow is in `AGENTS.md` and
   this decision.
+
+## Addendum: chore lane
+
+Harness / docs / CI / root-config work (`.claude/**`, `.github/**`,
+`docs/**`, `*.md`, `.moon/**`, and root config such as `.gitignore`,
+`docker-compose.yml`, `.env.example`) has no owning product lane. Before
+this addendum, invariant 7 said those edits were "direct," but every
+lane agent still required `Closes #N` and a Coverage table — so
+orchestrator-owned work either invented a fake issue or contradicted
+the agents. Issue #220's Notes hit this exactly: labeled `ready`, yet
+required to be implemented "by the orchestrator/human directly, NOT by
+a lane agent," with a `Harness:` title prefix that `/ship` cannot route.
+
+**Decision:** formalize a `chore` lane owned by the orchestrator.
+Chore PRs need no issue, no `Closes #N`, and no Coverage table; they
+use `## Lane: chore` and `## Testing recommendation: non-logic`, then
+`/gate`. They still go through a PR and CI so there is a revert point
+and a green gate. Chore work never enters `/ship`.
