@@ -128,3 +128,20 @@ recompiling independently.
 In short: isolated worktrees + one shared `sccache` cache directory gets
 the benefit (no redundant recompilation of the shared dependency graph)
 without the risk (no shared `target/`, no directory-level lock).
+
+## Addendum (2026-09-19): mechanical isolation superseded by `isolation: worktree`
+
+ADR [0019](0019-harness-area-lanes.md) moves concurrent lane agents onto
+Claude Code's native `isolation: worktree` frontmatter. The orchestrator
+no longer hand-rolls `git worktree add .worktrees/<name>` before each
+dispatch — the runtime creates and cleans up the worktree.
+
+**What still applies from this decision:**
+
+- Concurrent write-capable agents must not share one checkout.
+- `api:test` still shares one local Postgres (and NATS). `/ship`
+  therefore dispatches **at most one `api-dev` lane at a time** until
+  per-worktree DB/NATS isolation lands. Mobile, native, and ui lanes
+  remain free to run in parallel.
+- Shared `sccache` across worktrees remains required (see addendum
+  above).

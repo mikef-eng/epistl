@@ -18,5 +18,5 @@ Run this before opening or approving a PR that touches post-quantum crypto, tran
 
 ## After the checklist
 
-- Coder: fix gaps before opening the PR.
+- Lane agent (`api-dev` / `mobile-dev`): fix gaps before opening the PR.
 - `crypto-reviewer`: block merge until every item is satisfied or explicitly waived in the issue Notes with rationale.
