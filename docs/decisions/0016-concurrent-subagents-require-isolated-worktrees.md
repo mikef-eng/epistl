@@ -148,11 +148,23 @@ dispatch — the runtime creates and cleans up the worktree under
 **What still applies from this decision:**
 
 - Concurrent write-capable agents must not share one checkout.
-- `api:test` still shares one local Postgres (and NATS). `/ship`
-  therefore dispatches **at most one `api-dev` lane at a time** until
-  per-worktree DB/NATS isolation lands. Mobile, native, and ui lanes
-  remain free to run in parallel.
 - Shared `sccache` across worktrees remains required (see addendum
   above).
 - Locked orphan worktrees must be unlocked before remove — see
   `AGENTS.md` "Worktree recovery".
+
+**Addendum (2026-09-19): per-worktree Postgres + NATS isolation (#219)**
+
+The remaining shared-resource constraint — one local Postgres database and
+one NATS JetStream stream shared by all concurrent `api-dev` lanes — is
+resolved by issue #219. `apps/api/src/db.rs::effective_database_url()`
+rewrites `DATABASE_URL`'s database name to `<base_db>_wt_<slug>` when a
+worktree slug is active (derived from `EPISTL_WORKTREE_SLUG` env var or the
+`.claude/worktrees/<name>` git worktree path). The migrate binary creates the
+database on demand before running migrations (idempotent, race-safe). NATS
+stream names and subjects are similarly suffixed. `/ship` may now dispatch
+multiple `api-dev` lanes concurrently; the "at most one `api-dev` lane at a
+time" rule from ADR 0019 is lifted. Cleanup happens via
+`moon run api:db-drop` (per worktree) and `moon run api:db-prune` (orphan
+sweep). See `docs/architecture/overview.md` (Per-worktree isolation) for
+the full derivation and setup details.

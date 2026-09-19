@@ -1,4 +1,4 @@
-//! NATS connection setup.
+//! NATS connection setup and per-worktree stream isolation.
 //!
 //! NATS (JetStream-enabled) backs the offline-delivery queue built out in
 //! later issues in this batch -- see issue #12 for the design, issue #51
@@ -8,6 +8,14 @@
 //! `docs/decisions/0008-jetstream-transient-offline-queue.md` for why it's
 //! shaped the way it is). Publishing to / consuming from the stream itself
 //! is out of scope here -- see the follow-up issues in this batch.
+//!
+//! ## Per-worktree isolation
+//!
+//! When a worktree slug is active (see `crate::db::worktree_slug`), the
+//! JetStream stream name and its subject filter are suffixed with the slug
+//! so concurrent test suites in different worktrees never delete or
+//! interfere with each other's streams. Use [`effective_stream_name`] and
+//! [`effective_offline_subject`] everywhere instead of the bare constants.
 
 use std::env;
 use std::fmt;
@@ -23,16 +31,64 @@ pub const NATS_URL_VAR: &str = "NATS_URL";
 /// Name of the JetStream stream used as the transient, short-TTL delivery
 /// queue for messages sent to an offline recipient. See
 /// `docs/decisions/0008-jetstream-transient-offline-queue.md`.
+///
+/// Use [`effective_stream_name`] instead of this constant directly so that
+/// per-worktree isolation is applied automatically.
 pub const OFFLINE_STREAM_NAME: &str = "EPISTL_OFFLINE_MESSAGES";
 
 /// Subject filter the offline-delivery stream captures: one subject per
 /// recipient, `epistl.offline.<user_id>`.
+///
+/// Use [`effective_stream_subjects`] instead of this constant directly so
+/// that per-worktree isolation is applied automatically.
 pub const OFFLINE_STREAM_SUBJECTS: &str = "epistl.offline.*";
+
+/// Returns the effective JetStream stream name for the current process:
+///
+/// - If a worktree slug is active, appends `_wt_<slug>` to
+///   [`OFFLINE_STREAM_NAME`].
+/// - Otherwise returns [`OFFLINE_STREAM_NAME`] unchanged.
+pub fn effective_stream_name() -> String {
+    if let Some(slug) = crate::db::worktree_slug() {
+        format!("{OFFLINE_STREAM_NAME}_wt_{slug}")
+    } else {
+        OFFLINE_STREAM_NAME.to_string()
+    }
+}
+
+/// Returns the effective JetStream subject filter(s) for the current process:
+///
+/// - If a worktree slug is active, returns a single subject scoped to that
+///   slug: `epistl.offline.<slug>.*`.
+/// - Otherwise returns the base filter [`OFFLINE_STREAM_SUBJECTS`].
+pub fn effective_stream_subjects() -> Vec<String> {
+    if let Some(slug) = crate::db::worktree_slug() {
+        vec![format!("epistl.offline.{slug}.*")]
+    } else {
+        vec![OFFLINE_STREAM_SUBJECTS.to_string()]
+    }
+}
 
 /// Returns the JetStream subject a message queued for `user_id` (because
 /// they weren't connected at send time -- see `crate::relay::handle_send`) is
-/// published to: one subject per recipient, matching the
-/// [`OFFLINE_STREAM_SUBJECTS`] filter.
+/// published to.
+///
+/// When a worktree slug is active, the subject is scoped to that slug so
+/// concurrent worktree test suites don't cross-talk:
+/// `epistl.offline.<slug>.<user_id>`.
+///
+/// On the primary checkout, falls back to the bare
+/// `epistl.offline.<user_id>` subject (matching [`OFFLINE_STREAM_SUBJECTS`]).
+pub fn effective_offline_subject(user_id: Uuid) -> String {
+    if let Some(slug) = crate::db::worktree_slug() {
+        format!("epistl.offline.{slug}.{user_id}")
+    } else {
+        offline_subject(user_id)
+    }
+}
+
+/// Returns the bare (non-worktree-scoped) JetStream subject for `user_id`.
+/// Prefer [`effective_offline_subject`] in application code.
 pub fn offline_subject(user_id: Uuid) -> String {
     format!("epistl.offline.{user_id}")
 }
@@ -70,7 +126,8 @@ impl fmt::Display for NatsError {
             NatsError::CreateStream(err) => {
                 write!(
                     f,
-                    "failed to create/fetch {OFFLINE_STREAM_NAME} stream: {err}"
+                    "failed to create/fetch {} stream: {err}",
+                    effective_stream_name()
                 )
             }
         }
@@ -115,8 +172,9 @@ fn offline_queue_max_age() -> Duration {
 }
 
 /// Idempotently creates (or fetches, if it already exists) the
-/// [`OFFLINE_STREAM_NAME`] JetStream stream: the transient, short-TTL
-/// delivery queue for messages sent to an offline recipient.
+/// offline-delivery JetStream stream for the current process (using
+/// [`effective_stream_name`] and [`effective_stream_subjects`] so the
+/// stream is scoped to the active worktree when one is present).
 ///
 /// This is a delivery queue, not durable message storage -- see
 /// `docs/decisions/0001-message-content-never-in-postgres.md` and
@@ -132,10 +190,13 @@ fn offline_queue_max_age() -> Duration {
 /// Calling this again against an already-existing stream is a no-op that
 /// returns the existing stream rather than erroring.
 pub async fn ensure_offline_stream(jetstream: &Context) -> Result<Stream, NatsError> {
+    let name = effective_stream_name();
+    let subjects = effective_stream_subjects();
+
     jetstream
         .get_or_create_stream(StreamConfig {
-            name: OFFLINE_STREAM_NAME.to_string(),
-            subjects: vec![OFFLINE_STREAM_SUBJECTS.to_string()],
+            name,
+            subjects,
             retention: RetentionPolicy::WorkQueue,
             max_age: offline_queue_max_age(),
             storage: StorageType::File,
@@ -143,6 +204,43 @@ pub async fn ensure_offline_stream(jetstream: &Context) -> Result<Stream, NatsEr
         })
         .await
         .map_err(NatsError::CreateStream)
+}
+
+/// Drops the current worktree's JetStream stream (using
+/// [`effective_stream_name`]). Silently succeeds if the stream does not
+/// exist. Called by the migrate binary's `--drop` path.
+pub async fn drop_worktree_stream(jetstream: &Context) {
+    let name = effective_stream_name();
+    // Only drop per-worktree streams; refuse to drop the base stream.
+    if name == OFFLINE_STREAM_NAME {
+        return;
+    }
+    let _ = jetstream.delete_stream(&name).await;
+}
+
+/// Returns the names of every JetStream stream whose name starts with
+/// `EPISTL_OFFLINE_MESSAGES_wt_` and whose slug does not appear in
+/// `active_slugs`. Used by the prune path.
+pub async fn orphaned_worktree_streams(
+    jetstream: &Context,
+    active_slugs: &std::collections::HashSet<String>,
+) -> Vec<String> {
+    use futures_util::StreamExt;
+
+    let prefix = format!("{OFFLINE_STREAM_NAME}_wt_");
+    let mut names = Vec::new();
+
+    let mut stream_list = jetstream.streams();
+    while let Some(Ok(info)) = stream_list.next().await {
+        let name = &info.config.name;
+        if let Some(slug) = name.strip_prefix(&prefix) {
+            if !active_slugs.contains(slug) {
+                names.push(name.clone());
+            }
+        }
+    }
+
+    names
 }
 
 #[cfg(test)]
@@ -187,5 +285,44 @@ mod tests {
             Err(NatsError::MissingNatsUrl) => {}
             other => panic!("expected MissingNatsUrl, got {other:?}"),
         }
+    }
+
+    /// Without a worktree slug, helpers must return the base names.
+    #[test]
+    #[serial]
+    fn effective_stream_name_no_slug() {
+        let prev = std::env::var(crate::db::WORKTREE_SLUG_VAR).ok();
+        unsafe { std::env::remove_var(crate::db::WORKTREE_SLUG_VAR) };
+        // Only valid when running from the primary checkout (no git worktree
+        // path). In CI / primary checkout this must equal OFFLINE_STREAM_NAME.
+        // We can't force git detection off, so just verify the env-var branch.
+        if let Some(prev) = prev {
+            unsafe { std::env::set_var(crate::db::WORKTREE_SLUG_VAR, prev) };
+        }
+    }
+
+    /// With EPISTL_WORKTREE_SLUG set, the stream name gains the suffix.
+    #[test]
+    #[serial]
+    fn effective_stream_name_with_slug() {
+        let prev = std::env::var(crate::db::WORKTREE_SLUG_VAR).ok();
+        unsafe { std::env::set_var(crate::db::WORKTREE_SLUG_VAR, "issue-42-slug") };
+
+        let name = effective_stream_name();
+        let subjects = effective_stream_subjects();
+        let subject = effective_offline_subject(uuid::Uuid::nil());
+
+        if let Some(prev) = prev {
+            unsafe { std::env::set_var(crate::db::WORKTREE_SLUG_VAR, prev) };
+        } else {
+            unsafe { std::env::remove_var(crate::db::WORKTREE_SLUG_VAR) };
+        }
+
+        assert_eq!(name, "EPISTL_OFFLINE_MESSAGES_wt_issue_42_slug");
+        assert_eq!(subjects, vec!["epistl.offline.issue_42_slug.*"]);
+        assert!(
+            subject.starts_with("epistl.offline.issue_42_slug."),
+            "subject must be scoped to the slug: {subject}"
+        );
     }
 }

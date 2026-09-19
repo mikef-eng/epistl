@@ -26,8 +26,12 @@ Never substitute raw `cargo`. Never `source .env` first.
 
 ## Gotchas
 
-- `DATABASE_URL` and `NATS_URL` required for integration tests. Shared local Postgres — only one `api-dev` lane at a time (until #219 lands).
+- `DATABASE_URL` and `NATS_URL` required for integration tests. Per-worktree Postgres + NATS isolation (#219) allows multiple concurrent `api-dev` lanes — each worktree derives its own DB (`<base_db>_wt_<slug>`) and NATS stream automatically. The Postgres role must have `CREATEDB`.
 - `sccache` must be on `PATH` (required project-wide).
+
+## Per-worktree isolation
+
+`moon run api:migrate` creates the worktree-specific database on demand (no manual setup). After a PR merges, run `moon run api:db-drop` to drop the current worktree's DB + NATS stream, or `moon run api:db-prune` to sweep all orphaned worktree databases at once. See `docs/architecture/overview.md` (Per-worktree isolation) for the derivation and `EPISTL_WORKTREE_SLUG` env var details.
 
 ## See also
 

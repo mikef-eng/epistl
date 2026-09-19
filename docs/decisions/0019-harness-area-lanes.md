@@ -60,9 +60,10 @@ uses haiku; `crypto-reviewer` uses opus; `merge-gate` uses sonnet at low
 effort.
 
 **Parallelism:** mobile, native, and ui lanes may run concurrently.
-At most one `api-dev` lane runs at a time until per-worktree Postgres /
-NATS isolation lands (tracked separately) — `api:test` still shares one
-local database.
+`api-dev` lanes may also run concurrently now that per-worktree Postgres /
+NATS isolation has landed (issue #219) — each worktree derives its own
+database name and NATS stream from the worktree slug, so concurrent
+`api:test` runs never collide.
 
 **Ceremony:** harness/docs/config edits are made directly by the lead —
 no brainstorm/plan. Spec/plan skills are reserved for product features
@@ -82,8 +83,7 @@ is enforced by `/ship`'s one-api-lane rule.
 - Shared context per turn shrinks; lane detail loads only where used.
 - Orchestrator share of spend should fall substantially if sessions are
   cleared between batches.
-- Mobile/native/ui parallelize immediately; concurrent api lanes wait
-  on the follow-up isolation work.
+- Mobile, native, ui, and (since issue #219) api lanes all parallelize.
 - Anyone reading old docs that mention Coder/Tester/Reviewer should
   treat those names as historical; the live flow is in `AGENTS.md` and
   this decision.
