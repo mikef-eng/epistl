@@ -105,3 +105,15 @@ Chore PRs need no issue, no `Closes #N`, and no Coverage table; they
 use `## Lane: chore` and `## Testing recommendation: non-logic`, then
 `/gate`. They still go through a PR and CI so there is a revert point
 and a green gate. Chore work never enters `/ship`.
+
+## Enforcement
+
+Lane agents (`api-dev` / `mobile-dev` / `native-dev`) cannot stop while
+their PR is missing `## Coverage` (with ≥1 data row), `## Lane`, or
+`## Testing recommendation`. A `SubagentStop` hook in
+`.claude/settings.json` runs `.claude/hooks/require-coverage.sh` (matcher
+`api-dev|mobile-dev|native-dev`). Exit code 2 blocks the stop and feeds
+stderr back to the agent. Chore / ui / gate agents never match.
+`merge-gate` still verifies that named Coverage tests actually exercise
+the claimed acceptance criteria — the hook only enforces section
+presence.
