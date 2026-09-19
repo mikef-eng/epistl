@@ -73,8 +73,9 @@ are preloaded into lane agents instead.
 
 **Worktree isolation:** lane agents set `isolation: worktree` in
 frontmatter. ADR 0016's mechanical hand-rolling of worktrees by the
-orchestrator is superseded; its shared-Postgres constraint remains and
-is enforced by `/ship`'s one-api-lane rule.
+orchestrator is superseded. The shared-Postgres / NATS constraint from
+ADR 0016 is resolved by issue #219 (per-worktree DB + stream names);
+`/ship` may dispatch multiple `api-dev` lanes concurrently.
 
 ## Consequences
 
