@@ -14,115 +14,135 @@ jobs:
   changes:
     name: changes
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    # Runs on both pull_request and push so squash-merges only re-run
+    # what the squashed commit actually touched (paths-filter uses
+    # github.event.before on push).
+    permissions:
+      contents: read
+      pull-requests: write
     outputs:
-      api: ${{ steps.filter.outputs.api }}
-      mobile: ${{ steps.filter.outputs.mobile }}
-      quic_relay_client: ${{ steps.filter.outputs.quic_relay_client }}
-      dev_setup: ${{ steps.filter.outputs.dev_setup }}
+      mobile: ${{ steps.resolve.outputs.mobile }}
+      rust_projects: ${{ steps.resolve.outputs.rust_projects }}
+      crypto: ${{ steps.filter.outputs.crypto }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Determine which projects changed
+      - name: Path filter
         id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          # .github/workflows/ci.yml is intentionally NOT in any project
+          # filter — a workflow-only edit is handled via ci_self below
+          # (cheap smoke: dev-setup + mobile), not a full fan-out.
+          filters: |
+            api:
+              - 'apps/api/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '.cargo/**'
+              - '.moon/**'
+            quic-relay-client:
+              - 'packages/quic-relay-client/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '.cargo/**'
+              - '.moon/**'
+            dev-setup:
+              - 'packages/dev-setup/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '.cargo/**'
+              - '.moon/**'
+            mobile:
+              - 'apps/mobile/**'
+              - '.moon/**'
+            ci_self:
+              - '.github/workflows/ci.yml'
+            crypto:
+              - 'apps/api/src/crypto/**'
+              - 'apps/api/src/auth/**'
+              - 'apps/mobile/src/crypto/**'
+
+      - name: Resolve matrix + mobile
+        id: resolve
+        env:
+          API: ${{ steps.filter.outputs.api }}
+          QUIC: ${{ steps.filter.outputs.quic-relay-client }}
+          DEV_SETUP: ${{ steps.filter.outputs.dev-setup }}
+          MOBILE: ${{ steps.filter.outputs.mobile }}
+          CI_SELF: ${{ steps.filter.outputs.ci_self }}
         run: |
-          CHANGED=$(git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}")
+          projects='[]'
+          mobile="$MOBILE"
 
-          echo "Changed files:"
-          echo "$CHANGED"
-
-          # apps/api and packages/quic-relay-client share one Cargo
-          # workspace (root Cargo.toml / Cargo.lock) -- a dependency bump
-          # in either project's manifest can change the shared lockfile's
-          # resolved versions for the other, so both must react to it.
-          if echo "$CHANGED" | grep -qE '^(apps/api/|Cargo\.toml$|Cargo\.lock$|\.github/workflows/ci\.yml$|\.moon/)'; then
-            echo "api=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "api=false" >> "$GITHUB_OUTPUT"
+          if [ "$API" = "true" ]; then
+            projects=$(echo "$projects" | jq -c '. + ["api"]')
+          fi
+          if [ "$QUIC" = "true" ]; then
+            projects=$(echo "$projects" | jq -c '. + ["quic-relay-client"]')
+          fi
+          if [ "$DEV_SETUP" = "true" ]; then
+            projects=$(echo "$projects" | jq -c '. + ["dev-setup"]')
           fi
 
-          if echo "$CHANGED" | grep -qE '^(apps/mobile/|\.github/workflows/ci\.yml$|\.moon/)'; then
-            echo "mobile=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "mobile=false" >> "$GITHUB_OUTPUT"
+          # Workflow-only edit: smoke the cheapest Rust leg + mobile so
+          # the shared matrix setup stays validated without burning api.
+          if [ "$CI_SELF" = "true" ] && [ "$projects" = "[]" ] && [ "$mobile" != "true" ]; then
+            projects='["dev-setup"]'
+            mobile=true
           fi
 
-          if echo "$CHANGED" | grep -qE '^(packages/quic-relay-client/|Cargo\.toml$|Cargo\.lock$|\.github/workflows/ci\.yml$|\.moon/)'; then
-            echo "quic_relay_client=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "quic_relay_client=false" >> "$GITHUB_OUTPUT"
-          fi
+          echo "rust_projects=$projects" >> "$GITHUB_OUTPUT"
+          echo "mobile=$mobile" >> "$GITHUB_OUTPUT"
+          echo "Resolved rust_projects=$projects mobile=$mobile"
 
-          if echo "$CHANGED" | grep -qE '^(packages/dev-setup/|Cargo\.toml$|Cargo\.lock$|\.github/workflows/ci\.yml$|\.moon/)'; then
-            echo "dev_setup=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "dev_setup=false" >> "$GITHUB_OUTPUT"
+      - name: Crypto-review notice
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.filter.outputs.crypto == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          MARKER="<!-- crypto-review-notice -->"
+          if gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate --jq '.[].body' \
+              | grep -qF "$MARKER"; then
+            echo "Notice already posted, skipping."
+            exit 0
           fi
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$MARKER
+          This PR touches \`apps/api/src/crypto/**\`, \`apps/api/src/auth/**\`, or \`apps/mobile/src/crypto/**\`. Per [AGENTS.md](../blob/main/AGENTS.md), \`merge-gate\` must not merge without \`crypto-reviewer\` sign-off (run the \`pqc-crypto-change\` checklist first)."
 
-  api:
-    name: api
+  rust:
+    name: rust (${{ matrix.project }})
     needs: changes
-    # Runs on: non-PR events (push to main, unconditional); changes-job
-    # failure (fail open, never silently skip on a broken filter); or a
-    # PR that actually touched api's paths per the changes job's output.
     if: >-
       !cancelled() &&
-      (github.event_name != 'pull_request' ||
-      needs.changes.result != 'success' ||
-      needs.changes.outputs.api == 'true')
+      needs.changes.result == 'success' &&
+      needs.changes.outputs.rust_projects != '[]'
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: epistl
-          POSTGRES_PASSWORD: epistl
-          POSTGRES_DB: epistl
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U epistl -d epistl"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 5
-    # NATS is deliberately *not* declared above as a GH Actions `services:`
-    # container: that block only lets you pass extra `docker create`
-    # OPTIONS, with no way to supply the `-js -sd /data -m 8222` CMD args
-    # `nats-server` needs to enable JetStream + monitoring -- see the
-    # "Start NATS" step below instead, which runs the same image the same
-    # way `docker-compose.yml` does for local dev.
+    strategy:
+      fail-fast: false
+      matrix:
+        project: ${{ fromJSON(needs.changes.outputs.rust_projects) }}
     env:
       DATABASE_URL: postgres://epistl:epistl@localhost:5432/epistl
-      # Not a real secret -- only used against the ephemeral CI Postgres
-      # service. `better-auth` requires at least 32 bytes.
       AUTH_SECRET: ci-only-secret-do-not-use-in-prod-32+
       NATS_URL: nats://localhost:4222
-      # Not real credentials -- only used against the ephemeral CI
-      # SeaweedFS container started below, matching
-      # `docker/seaweedfs-s3-config.json`'s checked-in identity (the same
-      # one `.env.example` documents for local dev). The API always runs
-      # as a host process (never containerized, even in local dev), so
-      # both endpoints are `localhost` here, same as `NATS_URL` above --
-      # see issue #189 / `docs/decisions/0018-seaweedfs-object-storage-for-avatars.md`.
       SEAWEEDFS_S3_ACCESS_KEY: epistl
       SEAWEEDFS_S3_SECRET_KEY: epistl-seaweedfs-dev-secret
       SEAWEEDFS_INTERNAL_ENDPOINT: http://localhost:8333
       SEAWEEDFS_PUBLIC_ENDPOINT: http://localhost:8333
       AVATAR_BUCKET_NAME: avatars
-      # Root .cargo/config.toml sets `rustc-wrapper = "sccache"` for the
-      # whole workspace, so sccache must be installed and on PATH before
-      # any cargo/moon step below -- see the "Install sccache" step.
-      # SCCACHE_DIR pins the on-disk cache location so the actions/cache
-      # step below can target it precisely.
+      # Root .cargo/config.toml sets rustc-wrapper = sccache for the whole
+      # workspace. SCCACHE_DIR pins the on-disk cache so actions/cache
+      # can target it; one shared key serves all matrix legs.
       SCCACHE_DIR: ${{ github.workspace }}/.sccache
     steps:
       - uses: actions/checkout@v4
         with:
-          # moon needs full history to resolve a merge base with `main`
-          # for its changed-files/task-graph detection; a shallow clone
-          # makes `moon run` fail outright (see moonrepo.dev/docs/guides/ci).
+          # moon needs full history to resolve a merge base with main.
           fetch-depth: 0
           filter: blob:none
 
@@ -131,10 +151,6 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      # Must run before any cargo/moon step: root .cargo/config.toml sets
-      # `rustc-wrapper = "sccache"` for the whole workspace, so every
-      # cargo invocation from here on (directly, or via `moon run api:*`)
-      # requires `sccache` already on PATH, or it fails outright.
       - name: Install sccache
         env:
           SCCACHE_VERSION: "0.18.0"
@@ -144,28 +160,50 @@ jobs:
           sudo mv "/tmp/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl/sccache" /usr/local/bin/sccache
           sccache --version
 
-      # sccache's own cache directory, keyed on Cargo.lock's hash (falling
-      # back to a partial restore on a hash miss). Persisted separately
-      # from -- and in addition to -- the Swatinem/rust-cache step below,
-      # which caches cargo's registry/target dirs, not sccache's
-      # compilation-unit cache.
       - name: Cache sccache
         uses: actions/cache@v4
         with:
           path: ${{ env.SCCACHE_DIR }}
-          key: sccache-api-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          key: sccache-rust-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            sccache-api-${{ runner.os }}-
+            sccache-rust-${{ runner.os }}-
 
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+      # Registry + git only — no target/. Compilation units live in
+      # sccache; caching target/ was the 2 GB thrash that blew the
+      # 10 GB Actions cache quota.
+      - name: Cache cargo registry
+        uses: actions/cache@v4
         with:
-          workspaces: apps/api -> ../../target
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-registry-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-registry-${{ runner.os }}-
 
       - name: Install moon
         uses: moonrepo/setup-toolchain@v0
 
+      - name: Install shellcheck
+        if: matrix.project == 'dev-setup'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+
+      # Postgres / NATS / SeaweedFS only for the api leg. Conditional
+      # docker run (not services:) so non-api matrix legs skip them.
+      - name: Start Postgres
+        if: matrix.project == 'api'
+        run: |
+          docker run -d --name postgres \
+            -e POSTGRES_USER=epistl \
+            -e POSTGRES_PASSWORD=epistl \
+            -e POSTGRES_DB=epistl \
+            -p 5432:5432 \
+            postgres:16
+          timeout 30s sh -c \
+            'until docker exec postgres pg_isready -U epistl -d epistl >/dev/null 2>&1; do sleep 1; done'
+
       - name: Start NATS (JetStream)
+        if: matrix.project == 'api'
         run: |
           docker run -d --name nats \
             -p 4222:4222 -p 8222:8222 \
@@ -173,11 +211,8 @@ jobs:
           timeout 30s sh -c \
             'until wget -qO- http://localhost:8222/healthz >/dev/null 2>&1; do sleep 1; done'
 
-      # Same reason NATS isn't a `services:` container above: `services:`
-      # has no way to pass `weed mini`'s CMD args, only extra `docker
-      # create` options -- so this runs the exact same image/command/config
-      # mount `docker-compose.yml`'s `seaweedfs` service uses for local dev.
       - name: Start SeaweedFS
+        if: matrix.project == 'api'
         run: |
           docker run -d --name seaweedfs \
             -p 8333:8333 -p 9333:9333 \
@@ -188,190 +223,18 @@ jobs:
             'until curl -fs http://localhost:9333/cluster/status >/dev/null 2>&1; do sleep 1; done'
 
       - name: Format
-        run: moon run api:check
+        run: moon run ${{ matrix.project }}:check
 
       - name: Clippy
-        run: moon run api:lint
-
-      # api:test depends on api:migrate (see apps/api/moon.yml), so
-      # migrations run automatically as part of this task graph.
-      - name: Test
-        run: moon run api:test
-
-      # Informational only (never fails the job) -- lets a human check the
-      # warm-cache behavior the actions/cache step above enables: on a
-      # cache-hit run (same Cargo.lock, same OS), "Cache hits" here should
-      # be > 0.
-      - name: Show sccache stats
-        if: always()
-        run: sccache --show-stats || true
-
-  quic-relay-client:
-    name: quic-relay-client
-    needs: changes
-    if: >-
-      !cancelled() &&
-      (github.event_name != 'pull_request' ||
-      needs.changes.result != 'success' ||
-      needs.changes.outputs.quic_relay_client == 'true')
-    runs-on: ubuntu-latest
-    env:
-      # Root .cargo/config.toml sets `rustc-wrapper = "sccache"` for the
-      # whole workspace, so sccache must be installed and on PATH before
-      # any cargo/moon step below -- see the "Install sccache" step.
-      # SCCACHE_DIR pins the on-disk cache location so the actions/cache
-      # step below can target it precisely.
-      SCCACHE_DIR: ${{ github.workspace }}/.sccache
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # moon needs full history to resolve a merge base with `main`
-          # for its changed-files/task-graph detection; a shallow clone
-          # makes `moon run` fail outright (see moonrepo.dev/docs/guides/ci).
-          fetch-depth: 0
-          filter: blob:none
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      # Must run before any cargo/moon step: root .cargo/config.toml sets
-      # `rustc-wrapper = "sccache"` for the whole workspace, so every
-      # cargo invocation from here on (directly, or via `moon run
-      # quic-relay-client:*`) requires `sccache` already on PATH, or it
-      # fails outright.
-      - name: Install sccache
-        env:
-          SCCACHE_VERSION: "0.18.0"
-        run: |
-          curl -fsSL "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
-            | tar -xz -C /tmp
-          sudo mv "/tmp/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl/sccache" /usr/local/bin/sccache
-          sccache --version
-
-      # sccache's own cache directory, keyed on Cargo.lock's hash (falling
-      # back to a partial restore on a hash miss). Persisted separately
-      # from -- and in addition to -- the Swatinem/rust-cache step below,
-      # which caches cargo's registry/target dirs, not sccache's
-      # compilation-unit cache.
-      - name: Cache sccache
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.SCCACHE_DIR }}
-          key: sccache-quic-relay-client-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            sccache-quic-relay-client-${{ runner.os }}-
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: packages/quic-relay-client -> ../../target
-
-      - name: Install moon
-        uses: moonrepo/setup-toolchain@v0
-
-      - name: Format
-        run: moon run quic-relay-client:check
-
-      - name: Clippy
-        run: moon run quic-relay-client:lint
+        run: moon run ${{ matrix.project }}:lint
 
       - name: Test
-        run: moon run quic-relay-client:test
-
-      # Informational only (never fails the job) -- lets a human check the
-      # warm-cache behavior the actions/cache step above enables: on a
-      # cache-hit run (same Cargo.lock, same OS), "Cache hits" here should
-      # be > 0.
-      - name: Show sccache stats
-        if: always()
-        run: sccache --show-stats || true
-
-  dev-setup:
-    name: dev-setup
-    needs: changes
-    if: >-
-      !cancelled() &&
-      (github.event_name != 'pull_request' ||
-      needs.changes.result != 'success' ||
-      needs.changes.outputs.dev_setup == 'true')
-    runs-on: ubuntu-latest
-    env:
-      # Root .cargo/config.toml sets `rustc-wrapper = "sccache"` for the
-      # whole workspace, so sccache must be installed and on PATH before
-      # any cargo/moon step below -- see the "Install sccache" step.
-      # SCCACHE_DIR pins the on-disk cache location so the actions/cache
-      # step below can target it precisely.
-      SCCACHE_DIR: ${{ github.workspace }}/.sccache
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # moon needs full history to resolve a merge base with `main`
-          # for its changed-files/task-graph detection; a shallow clone
-          # makes `moon run` fail outright (see moonrepo.dev/docs/guides/ci).
-          fetch-depth: 0
-          filter: blob:none
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      # Must run before any cargo/moon step: root .cargo/config.toml sets
-      # `rustc-wrapper = "sccache"` for the whole workspace, so every
-      # cargo invocation from here on (directly, or via `moon run
-      # dev-setup:*`) requires `sccache` already on PATH, or it fails
-      # outright.
-      - name: Install sccache
-        env:
-          SCCACHE_VERSION: "0.18.0"
-        run: |
-          curl -fsSL "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
-            | tar -xz -C /tmp
-          sudo mv "/tmp/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl/sccache" /usr/local/bin/sccache
-          sccache --version
-
-      # sccache's own cache directory, keyed on Cargo.lock's hash (falling
-      # back to a partial restore on a hash miss). Persisted separately
-      # from -- and in addition to -- the Swatinem/rust-cache step below,
-      # which caches cargo's registry/target dirs, not sccache's
-      # compilation-unit cache.
-      - name: Cache sccache
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.SCCACHE_DIR }}
-          key: sccache-dev-setup-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            sccache-dev-setup-${{ runner.os }}-
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: packages/dev-setup -> ../../target
-
-      - name: Install moon
-        uses: moonrepo/setup-toolchain@v0
-
-      - name: Install shellcheck
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
-
-      - name: Format
-        run: moon run dev-setup:check
-
-      - name: Clippy
-        run: moon run dev-setup:lint
-
-      - name: Test
-        run: moon run dev-setup:test
+        run: moon run ${{ matrix.project }}:test
 
       - name: Shellcheck bootstrap.sh
+        if: matrix.project == 'dev-setup'
         run: moon run dev-setup:bootstrap-lint
 
-      # Informational only (never fails the job) -- lets a human check the
-      # warm-cache behavior the actions/cache step above enables: on a
-      # cache-hit run (same Cargo.lock, same OS), "Cache hits" here should
-      # be > 0.
       - name: Show sccache stats
         if: always()
         run: sccache --show-stats || true
@@ -381,9 +244,8 @@ jobs:
     needs: changes
     if: >-
       !cancelled() &&
-      (github.event_name != 'pull_request' ||
-      needs.changes.result != 'success' ||
-      needs.changes.outputs.mobile == 'true')
+      needs.changes.result == 'success' &&
+      needs.changes.outputs.mobile == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -391,9 +253,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # moon needs full history to resolve a merge base with `main`
-          # for its changed-files/task-graph detection; a shallow clone
-          # makes `moon run` fail outright (see moonrepo.dev/docs/guides/ci).
           fetch-depth: 0
           filter: blob:none
 
@@ -418,40 +277,3 @@ jobs:
 
       - name: Test
         run: moon run mobile:test
-
-  crypto-review-notice:
-    name: crypto-review-notice
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    permissions:
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Check for crypto/auth path changes
-        id: changed
-        run: |
-          if git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" \
-              | grep -E '^(apps/api/src/(crypto|auth)/|apps/mobile/src/crypto/)'; then
-            echo "hit=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "hit=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Remind reviewers about crypto-reviewer sign-off
-        if: steps.changed.outputs.hit == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
-        run: |
-          MARKER="<!-- crypto-review-notice -->"
-          if gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate --jq '.[].body' \
-              | grep -qF "$MARKER"; then
-            echo "Notice already posted, skipping."
-            exit 0
-          fi
-          gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$MARKER
-          This PR touches \`apps/api/src/crypto/**\`, \`apps/api/src/auth/**\`, or \`apps/mobile/src/crypto/**\`. Per [AGENTS.md](../blob/main/AGENTS.md), \`merge-gate\` must not merge without \`crypto-reviewer\` sign-off (run the \`pqc-crypto-change\` checklist first)."
