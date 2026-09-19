@@ -47,20 +47,20 @@ here.
 ## Decision
 
 GitHub Issues remains exactly what it was before Linear existed: the
-single source of truth, fully public, driving the Planner/Coder/Tester/
-Reviewer flow via the existing label-based lifecycle
-(`planning`/`ready`/`in-progress`/`blocked`/`needs-review`) unchanged.
-Nothing about issue creation, branch naming (`issue-<number>-<slug>`), or
-`open-task-issue` changes.
+single source of truth, fully public, driving the SDLC harness. The
+harness itself later moved from Planner/Coder/Tester/Reviewer to area
+lanes (see [`0019-harness-area-lanes.md`](0019-harness-area-lanes.md));
+labels shrunk to `planning`/`ready`/`blocked`/`bug`/`backlog`. Nothing
+about GitHub-as-primary, branch naming (`issue-<number>-<slug>`), or
+`open-task-issue` changes — only which agent roles consume those issues.
 
 Linear stays connected via its native two-way GitHub sync, used
 one-directionally in practice: every GitHub issue (existing and future)
-syncs into Linear automatically, with no action from the Planner/Coder/
-Tester/Reviewer flow. This gives Linear a real workflow-state view and
-automatic archiving (see below) purely as an internal reporting/roadmap
-convenience. Nobody authors, edits, or manually transitions issues in
-Linear as part of this SDLC — GitHub remains the only place work is
-actually created and tracked.
+syncs into Linear automatically, with no action from the harness flow.
+This gives Linear a real workflow-state view and automatic archiving
+(see below) purely as an internal reporting/roadmap convenience. Nobody
+authors, edits, or manually transitions issues in Linear as part of this
+SDLC — GitHub remains the only place work is actually created and tracked.
 
 The `Epistl` Linear team's auto-archive period is set to 30 days after an
 issue reaches a completed/canceled state, so the mirrored, non-archived
@@ -76,15 +76,15 @@ actual source of truth for that state.
 
 ## Consequences
 
-- `AGENTS.md`, `.claude/skills/open-task-issue/`, and the Planner/Coder/
-  Tester/Reviewer agent files and slash commands are unchanged from
-  their pre-Linear form other than a short mention that Linear exists as
-  a connected mirror.
-- Nobody should point Planner/Coder/Tester/Reviewer automation at Linear
-  MCP tools (`save_issue`, state transitions, etc.) as part of the
-  regular workflow — that was tried, and reintroducing it reopens the
+- `AGENTS.md` and the harness agents/commands evolve independently of
+  this decision (see ADR 0019); GitHub Issues remains the authoring
+  surface either way.
+- Nobody should point harness automation at Linear MCP tools
+  (`save_issue`, state transitions, etc.) as part of the regular
+  workflow — that was tried, and reintroducing it reopens the
   duplicate-issue problem described above. Linear MCP tools remain
-  available for ad hoc internal reporting/read queries only.
+  available for ad hoc internal reporting/read queries only (load
+  `linear-server` explicitly when needed; it is not enabled by default).
 - If a future need specifically requires an internal-only issue with no
   public GitHub counterpart, author it directly in Linear and accept
   that it has no GitHub mirror (the sync only pulls GitHub → Linear, not

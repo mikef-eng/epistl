@@ -30,12 +30,10 @@
       "Bash(git push -f *)",
       "Bash(gh repo delete *)",
       "Bash(gh pr merge * --admin)",
-      "Bash(gh label delete *)"
+      "Bash(gh label delete *)",
+      "Bash(sleep *)"
     ],
     "ask": []
   },
-  "enabledPlugins": {
-    "superpowers@claude-plugins-official": true,
-    "linear@claude-plugins-official": true
-  }
+  "enabledPlugins": {}
 }

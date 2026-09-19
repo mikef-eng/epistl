@@ -448,4 +448,4 @@ jobs:
             exit 0
           fi
           gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$MARKER
-          This PR touches \`apps/api/src/crypto/**\`, \`apps/api/src/auth/**\`, or \`apps/mobile/src/crypto/**\`. Per [AGENTS.md](../blob/main/AGENTS.md), the Reviewer must not merge without \`crypto-reviewer\` sign-off (run the \`pqc-crypto-change\` checklist first)."
+          This PR touches \`apps/api/src/crypto/**\`, \`apps/api/src/auth/**\`, or \`apps/mobile/src/crypto/**\`. Per [AGENTS.md](../blob/main/AGENTS.md), \`merge-gate\` must not merge without \`crypto-reviewer\` sign-off (run the \`pqc-crypto-change\` checklist first)."

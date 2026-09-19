@@ -45,4 +45,4 @@ EOF
 ```
 
 3. Return the issue URL and number.
-4. Do **not** label `ready` here unless you explicitly completed the Planner self-review that a Coder needs no clarifying questions.
+4. Do **not** label `ready` here unless you explicitly completed the Planner self-review that a lane agent needs no clarifying questions.
