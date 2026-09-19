@@ -611,6 +611,30 @@ mod tests {
         assert!(orphans.is_empty());
     }
 
+    /// `drop_worktree_db` must refuse when no worktree slug is active —
+    /// otherwise it would risk dropping the base DB.
+    #[tokio::test]
+    #[serial]
+    async fn drop_worktree_db_refuses_without_slug() {
+        let prev = env::var(WORKTREE_SLUG_VAR).ok();
+        unsafe {
+            env::remove_var(WORKTREE_SLUG_VAR);
+        }
+
+        // This test must run on a non-`.claude/worktrees/` checkout so
+        // git detection also returns None (CI and the primary clone do).
+        let result = drop_worktree_db("postgres://user:pass@localhost/epistl").await;
+
+        if let Some(prev) = prev {
+            unsafe { env::set_var(WORKTREE_SLUG_VAR, prev) };
+        }
+
+        match result {
+            Err(DbError::NoWorktreeSlug) => {}
+            other => panic!("expected NoWorktreeSlug, got {other:?}"),
+        }
+    }
+
     // --- connect helpers ---
 
     #[tokio::test]
