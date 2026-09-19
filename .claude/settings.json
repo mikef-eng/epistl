@@ -45,5 +45,18 @@
     ],
     "ask": []
   },
-  "enabledPlugins": {}
+  "enabledPlugins": {},
+  "hooks": {
+    "SubagentStop": [
+      {
+        "matcher": "api-dev|mobile-dev|native-dev",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/require-coverage.sh"
+          }
+        ]
+      }
+    ]
+  }
 }

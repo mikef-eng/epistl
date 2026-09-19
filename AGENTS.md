@@ -97,6 +97,7 @@ Use the Task template via `open-task-issue`. Required: Goal, Acceptance criteria
 | `.claude/agents/` | `planner`, `api-dev`, `mobile-dev`, `native-dev`, `ui`, `ci-watch`, `merge-gate`, `crypto-reviewer` |
 | `.claude/commands/` | `/plan-issue`, `/ship`, `/gate`, `/ui` |
 | `.claude/skills/` | Lane conventions, `open-task-issue`, `pqc-crypto-change`, TDD, debugging, PR coverage table |
+| `.claude/hooks/` | SubagentStop Coverage gate (`require-coverage.sh`) for lane agents |
 | `.claude/rules/` | Path-scoped rules (crypto/auth) |
 
 Playbooks live in the agent files. Lane-specific moon commands and conventions live in the matching `*-conventions` skill, preloaded only into that lane.
