@@ -21,7 +21,7 @@ Epistl uses a controlled SDLC harness so humans and AI agents work through small
 | Gate | Diff vs coverage table, scope, docs, merge | `merge-gate` (+ `ci-watch`, `crypto-reviewer` when needed) |
 | Plan | Issue authoring | `planner` |
 
-Flow: Planner opens issues (`planning` → `ready`) → `/ship` dispatches the matching lane → lane opens PR with `Closes #N` and a `## Coverage` table → `ci-watch` → `merge-gate` merges. At most **one** `api-dev` lane runs at a time (shared local Postgres); mobile/native/ui may run in parallel.
+Flow: Planner opens issues (`planning` → `ready`) → `/ship` dispatches the matching lane → lane opens PR with `Closes #N` and a `## Coverage` table → `ci-watch` → `merge-gate` merges. Mobile, native, ui, and api lanes may run in parallel (per-worktree Postgres + NATS isolation; see issue #219).
 
 **Chore route:** harness / docs / CI / root-config work skips `/plan-issue` and `/ship`. Open a branch, PR with `## Lane: chore` and `## Testing recommendation: non-logic`, then `/gate <pr#>`. No issue, no `Closes #N`, no Coverage table. Still gets a PR and CI so there is a revert point and a green gate.
 
