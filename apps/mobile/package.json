@@ -54,6 +54,7 @@
     "test": "jest",
     "db:generate": "drizzle-kit generate"
   },
+  "license": "AGPL-3.0-only",
   "private": true,
   "overrides": {
     "react-dom": "19.2.3"

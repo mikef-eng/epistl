@@ -50,7 +50,7 @@
     "url": "git+https://github.com/mikef-eng/epistl.git"
   },
   "author": "Epistl <0xchillyo@gmail.com> (https://github.com/mikef-eng/epistl)",
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "bugs": {
     "url": "https://github.com/mikef-eng/epistl/issues"
   },

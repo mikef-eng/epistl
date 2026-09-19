@@ -27,13 +27,26 @@ Flow: Planner opens issues (`planning` → `ready`) → `/ship` dispatches the m
 
 ## Labels
 
+Two axes — apply **exactly one state** label, and zero or more **type** labels.
+
+**State** (pipeline position):
+
 | Label | Meaning |
 | --- | --- |
+| `backlog` | Untriaged or deferred; not currently being refined |
 | `planning` | Being refined; not ready |
 | `ready` | Clear enough for a lane agent |
-| `blocked` | Waiting on a fix or decision |
+| `blocked` | Waiting on a fix or decision (orthogonal flag) |
+
+**Type** (what the issue is):
+
+| Label | Meaning |
+| --- | --- |
 | `bug` | Defect against expected behavior |
-| `backlog` | Idea not ready for Planner yet |
+| `feature-request` | Unvetted ask — somebody asked; not yet accepted |
+| `enhancement` | Accepted feature work — we agreed to build it |
+
+External bug reports arrive as `bug` + `backlog`; feature requests as `feature-request` + `backlog`. On triage the planner either promotes (`feature-request` → `enhancement`, state → `planning`; or a confirmed `bug` → `planning`) or closes. Do not treat `feature-request` and `enhancement` as synonyms.
 
 An open PR with `Closes #N` means in-progress; PR review/CI state replaces the old `needs-review` label.
 
