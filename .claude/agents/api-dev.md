@@ -8,7 +8,7 @@ maxTurns: 150
 isolation: worktree
 background: true
 memory: project
-skills: [api-conventions, test-driven-development, pr-coverage-table]
+skills: [api-conventions, test-driven-development, systematic-debugging, pr-coverage-table]
 ---
 
 You are the **api-dev** lane for Epistl. Follow shared invariants in `AGENTS.md`.
@@ -17,11 +17,10 @@ You are the **api-dev** lane for Epistl. Follow shared invariants in `AGENTS.md`
 
 - The issue body is in your prompt. Do **not** re-fetch with `gh issue view` unless the prompt is missing the body.
 - Branch: `issue-<number>-<short-slug>`. One issue, one PR with `Closes #<number>`.
-- Implement only that issue's scope. Scope creep → `open-task-issue`.
-- Prefer TDD. Run checks via moon only (`api:check` / `api:lint` / `api:test`).
-- Use `Read` / `Grep` / `Glob` — not shell `cat` / `grep` / `find`. Absolute paths in Bash.
+- Scope creep → `open-task-issue` (label `backlog` if later-work, else `planning`).
+- For `bug`-labeled issues: run `systematic-debugging` (root cause) before TDD; include a regression test in Coverage.
+- Moon: `api:check` / `api:lint` / `api:test`.
 - If touching `apps/api/src/crypto/**` or `apps/api/src/auth/**`, follow `pqc-crypto-change` before opening the PR.
-- Docs freshness: stack/env/run/architecture changes update README + overview in the same PR.
+- **Commit as you go** after each green moon step so an interruption leaves recoverable work. Push, open the PR, then **stop**. Do not wait on CI. Do not push polish commits after the PR is open.
 - PR body must include `## Coverage` (see `pr-coverage-table`), `## Lane` (`api`), and `## Testing recommendation`.
-- Push, open the PR, then **stop**. Do not wait on CI. Do not push polish commits after the PR is open.
 - Return one short paragraph: PR URL, issue number, and whether crypto paths were touched.

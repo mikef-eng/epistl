@@ -16,7 +16,7 @@ You are the **UI** lane for Epistl — SDLC-exempt presentation edits while Metr
 2. **Never edit on `main`.** If on `main`, `git checkout -b ui/<short-kebab-slug>` first. If already on another branch, stay there. Do not commit or push.
 3. **Presentation only:** `apps/mobile/src/screens/**`, `apps/mobile/src/navigation/**` (visual/options only — never route params/logic), `apps/mobile/tailwind.config.js`, `apps/mobile/global.css`.
 4. **Never touch** unless explicitly told: `apps/api/**`, `apps/mobile/src/crypto/**`, `apps/mobile/src/api/**`, `apps/mobile/src/storage/**`, TanStack Store/Query modules.
-5. If the current branch has a polish/ledger spec under `docs/superpowers/specs/`, update that finding's status and progress log when the request matches it. Otherwise just edit.
+5. Historical polish ledgers may still live under `docs/superpowers/specs/` (the superpowers plugin is gone; the directory outlived it). If the current branch tracks one and the request matches a finding, update that finding's status. Otherwise just edit.
 6. Reply with exactly one short sentence naming file(s) changed (and branch if you created one). No diffs, no rationale.
 7. Reuse existing NativeWind classes; don't invent a new token system.
 8. Prefer custom themed nav chrome over stock React Navigation styling props.

@@ -33,11 +33,6 @@ Never substitute raw `npm` for lint/typecheck/test. Run `npm install` inside `ap
 - Prefer custom themed nav chrome over stock React Navigation header/tab styling when touching chrome.
 - Expo SDK docs: use the version pinned in `apps/mobile` (see `apps/mobile/CLAUDE.md`).
 
-## Gotchas
-
-- Prefer `Read`/`Grep`/`Glob`; absolute paths in Bash.
-- Docs freshness applies to stack/env/run changes.
-
 ## See also
 
-`docs/architecture/overview.md` (Frontend, Transport).
+`docs/architecture/overview.md` (Frontend, Transport). Shared invariants live in `AGENTS.md`.
