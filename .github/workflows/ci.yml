@@ -353,6 +353,9 @@ jobs:
       - name: Install moon
         uses: moonrepo/setup-toolchain@v0
 
+      - name: Install shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+
       - name: Format
         run: moon run dev-setup:check
 
@@ -361,6 +364,9 @@ jobs:
 
       - name: Test
         run: moon run dev-setup:test
+
+      - name: Shellcheck bootstrap.sh
+        run: moon run dev-setup:bootstrap-lint
 
       # Informational only (never fails the job) -- lets a human check the
       # warm-cache behavior the actions/cache step above enables: on a

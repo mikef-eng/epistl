@@ -4,27 +4,17 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 description = """
-Local dev-environment checker/bootstrapper for Epistl: detects the host
-OS (macOS/Linux only, issue #203), auto-copies `.env.example` to `.env`
-if missing, and reports Present/Absent for the core tools README's
-"Running the stack locally" section requires (rustup, cargo/rustc, node,
-moon, docker, sccache). Detect-only by default -- two opt-in mutating
-flags exist: `--install` (OS-specific auto-install of missing tools where
-it's safe: macOS via Homebrew for rustup/node/moon/sccache with Docker
-and the Xcode/CocoaPods/Android Studio/NDK native toolchain staying
-detect-and-guide-only always, issue #204; apt-based Linux via each tool's
-official installer for rustup/moon/sccache, with Node.js/Docker and
-non-apt distros staying guide-only, issue #205) and `--start` (`docker
-compose up -d` + health-wait + `moon run api:migrate`, issue #206). See
-`README.md` in this directory for the full flag semantics.
+Local dev-environment bootstrapper for Epistl (issues #222–#224). Prefer
+`bash packages/dev-setup/bootstrap.sh` on a fresh machine: Stage 1 installs
+base build packages, rustup, and sccache, then hands off to this Rust CLI
+(Stage 2) which interactively installs Node (fnm), moon, Docker, env files,
+optional Android/iOS toolchains, and can bring up docker compose + migrations.
+Interactive install is the default; `--check` is detect-only. See README.md.
 """
 
-# No external dependencies: OS detection uses `std::env::consts::OS`,
-# tool detection shells out via `std::process::Command` behind this
-# crate's own `CommandExecutor` trait (see src/checks.rs), and both CLI
-# flags so far (`--install`, `--start`) are single booleans checked via
-# `std::env::args()` directly -- not enough surface to justify pulling
-# in an argument-parsing crate.
+# No external crate dependencies: OS detection, shelling out, and flag
+# parsing use std only, behind injectable CommandExecutor / Environment
+# traits so unit tests never touch the real PATH.
 
 [lib]
 name = "dev_setup"

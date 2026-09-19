@@ -62,11 +62,10 @@ pub struct ToolCheck {
 }
 
 /// Whether this check's absence alone should fail the overall exit
-/// status. Per the issue: rustup, the cargo/rustc toolchain, node, moon,
-/// and docker are required; sccache is detect-only and non-fatal here
-/// (its project-wide requirement is tracked in a separate issue).
-pub fn is_required(name: &str) -> bool {
-    name != "sccache"
+/// status. All core tools including sccache are required (sccache is
+/// enforced by `.cargo/config.toml`'s `rustc-wrapper`).
+pub fn is_required(_name: &str) -> bool {
+    true
 }
 
 fn check_simple_tool(
@@ -288,12 +287,12 @@ mod tests {
     }
 
     #[test]
-    fn sccache_absence_is_not_required_but_others_are() {
+    fn all_core_tools_are_required_including_sccache() {
         assert!(is_required("rustup"));
         assert!(is_required("cargo/rustc"));
         assert!(is_required("node"));
         assert!(is_required("moon"));
         assert!(is_required("docker"));
-        assert!(!is_required("sccache"));
+        assert!(is_required("sccache"));
     }
 }

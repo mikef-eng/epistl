@@ -46,13 +46,15 @@ Root [CLAUDE.md](CLAUDE.md) imports [AGENTS.md](AGENTS.md). Tooling lives under 
 
 ## Running the stack locally
 
-**Recommended fast path (macOS/Linux):** [`packages/dev-setup`](packages/dev-setup) checks your machine against the requirements below and can bring up the local stack for you:
+**Recommended fast path (macOS/Linux):** from a fresh machine (or anytime), run the two-stage bootstrap:
 
 ```bash
-cd packages/dev-setup
-cargo run              # detect-only report
-cargo run -- --start   # also runs docker compose up + waits for health + migrations
+bash packages/dev-setup/bootstrap.sh            # interactive install + offer to start stack
+bash packages/dev-setup/bootstrap.sh --yes --start --skip-mobile   # non-interactive, API-focused
+bash packages/dev-setup/bootstrap.sh --check    # detect-only report
 ```
+
+Stage 1 (`bootstrap.sh`) installs base build packages, rustup, and sccache, then hands off to the Rust CLI (Stage 2) for Node/fnm, moon, Docker, `.env` files, optional Android/iOS toolchains, and `docker compose` + migrations. See [`packages/dev-setup/README.md`](packages/dev-setup/README.md) and [`docs/decisions/0020-dev-setup-two-stage-bootstrap.md`](docs/decisions/0020-dev-setup-two-stage-bootstrap.md).
 
 Windows isn't supported by `dev-setup` — Windows contributors, and anyone who wants to understand each step, should follow the manual steps below instead.
 
@@ -63,6 +65,7 @@ Windows isn't supported by `dev-setup` — Windows contributors, and anyone who 
 2. **Set up your env file** (one-time, from repo root):
    ```bash
    cp .env.example .env
+   # If the API runs on the host (normal), set SEAWEEDFS_INTERNAL_ENDPOINT=http://localhost:8333
    ```
 3. **Start Postgres, NATS, and SeaweedFS**:
    ```bash
