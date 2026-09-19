@@ -1,0 +1,29 @@
+---
+name: pr-coverage-table
+description: Required PR body Coverage table mapping each acceptance criterion to a test. Used by lane agents and merge-gate.
+---
+
+# PR coverage table
+
+Every lane-agent PR body must include:
+
+## Coverage
+
+| Acceptance criterion | Test |
+| --- | --- |
+| <exact AC bullet from the issue> | `path/to/test.rs::test_name` or `path/to/file.test.ts` |
+
+One row per acceptance-criterion bullet. If an AC is not reasonably unit-testable (pure docs/config), put `n/a — <reason>` and make sure merge-gate can verify by inspection.
+
+Also include:
+
+## Lane
+
+`api` | `mobile` | `native`
+
+## Testing recommendation
+
+- **Logic-affecting** (default for any `apps/*/src/**`, migrations, assertion changes), or
+- **Non-logic (config/CI/docs/tooling only)** — merge-gate may verify without expecting a full coverage table of product tests.
+
+`merge-gate` checks each Coverage row points at a real test that exercises the claimed behavior — it does not re-derive the table from scratch.

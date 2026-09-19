@@ -4,12 +4,25 @@
 
 Closes #<!-- issue number, if applicable -->
 
+## Lane
+
+<!-- api | mobile | native -->
+
+## Coverage
+
+| Acceptance criterion | Test |
+| --- | --- |
+| <!-- AC bullet from the issue --> | <!-- path::test_name or n/a — reason --> |
+
+## Testing recommendation
+
+<!-- Logic-affecting — recommend full Coverage table | Non-logic (config/CI/docs/tooling only) -->
+
 ## Checklist
 
-- [ ] CI is green (lint, build, test)
-- [ ] Every acceptance criterion on the linked issue is checked line by line (not just "does it run")
-- [ ] `README.md` updated if this PR changes the stack, how to run something, an env var, or an architectural constraint
-- [ ] If this PR touches `apps/api/src/crypto/**` or `apps/api/src/auth/**`: the `pqc-crypto-change` checklist was run and `crypto-reviewer` sign-off is attached below
+- [ ] Every acceptance criterion is covered in the Coverage table (or marked n/a with reason)
+- [ ] `README.md` / `docs/architecture/overview.md` updated if this PR changes the stack, how to run something, an env var, or an architectural constraint
+- [ ] If this PR touches `apps/api/src/crypto/**`, `apps/api/src/auth/**`, or `apps/mobile/src/crypto/**`: the `pqc-crypto-change` checklist was run and `crypto-reviewer` sign-off is attached below
 
 ## Crypto/auth sign-off (only if applicable)
 

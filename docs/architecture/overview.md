@@ -2,7 +2,7 @@
 
 This is the living technical reference for how Epistl is actually built: stack rationale, wiring between components, file-level pointers, and the full local-development setup detail. [`README.md`](../../README.md) stays a brief, scannable summary for anyone landing on the repo for the first time — it links here for everything past "what's the stack and how do I run it."
 
-For durable, point-in-time architecture *decisions* (why X was chosen over Y, with rejected alternatives), see [`docs/decisions/`](../decisions/) — this doc describes the current system as it stands; the decision docs explain how it got that way.
+For durable, point-in-time architecture *decisions* (why X was chosen over Y, with rejected alternatives), see [`docs/decisions/`](../decisions/) — this doc describes the current system as it stands; the decision docs explain how it got that way. Agent/SDLC conventions (area lanes) live in [`AGENTS.md`](../../AGENTS.md) and [`docs/decisions/0019-harness-area-lanes.md`](../decisions/0019-harness-area-lanes.md).
 
 ## Monorepo
 

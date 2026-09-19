@@ -36,13 +36,13 @@ packages/   Shared libraries
 
 ## Development harness
 
-Work is tracked through GitHub Issues and role handoffs (Planner → Coder → Tester → Reviewer). See [AGENTS.md](AGENTS.md) for conventions and role playbooks, and [`docs/decisions/`](docs/decisions/) for durable architecture decisions.
+Work is tracked through GitHub Issues and **area lanes** (planner → api/mobile/native/ui → ci-watch → merge-gate). See [AGENTS.md](AGENTS.md) for the lane table and shared invariants, and [`docs/decisions/0019-harness-area-lanes.md`](docs/decisions/0019-harness-area-lanes.md) for the decision. Other durable decisions live under [`docs/decisions/`](docs/decisions/).
 
-Agent/Coder git worktrees live at `.worktrees/<name>` under the repo root (gitignored, disposable) — see [`docs/decisions/0016-concurrent-subagents-require-isolated-worktrees.md`](docs/decisions/0016-concurrent-subagents-require-isolated-worktrees.md).
+Lane agents use Claude Code's `isolation: worktree` (shared Postgres still limits concurrent API lanes — see ADR 0016/0019).
 
 ## Claude Code
 
-Root [CLAUDE.md](CLAUDE.md) imports [AGENTS.md](AGENTS.md). Agent tooling lives under `.claude/` (agents, commands, skills — see AGENTS.md for the full list). Postgres MCP is configured in [`.mcp.json`](.mcp.json).
+Root [CLAUDE.md](CLAUDE.md) imports [AGENTS.md](AGENTS.md). Tooling lives under `.claude/` (lane agents, `/ship` `/gate` `/plan-issue` `/ui`, skills — see AGENTS.md). Postgres MCP is in [`.mcp.json`](.mcp.json).
 
 ## Running the stack locally
 
