@@ -80,16 +80,12 @@ See also [`packages/quic-relay-client`](../../packages/quic-relay-client) (the R
 
 ## Dev-setup CLI
 
-[`packages/dev-setup`](../../packages/dev-setup) is a Rust CLI that checks a macOS/Linux dev machine against what's needed to run Epistl locally — OS gate, `.env` auto-copy, and rustup/node/moon/docker/sccache reporting (issue #203).
+[`packages/dev-setup`](../../packages/dev-setup) is a two-stage bootstrap for macOS/Linux (issues #222–#224; see [`docs/decisions/0020-dev-setup-two-stage-bootstrap.md`](../decisions/0020-dev-setup-two-stage-bootstrap.md)):
 
-Opt-in `--install` auto-installs missing tools where it's safe to do so:
+1. **`bootstrap.sh`** — dependency-free bash. Detects OS / distro (apt, dnf, pacman) / WSL, installs base build packages, rustup, and sccache, then hands off to the Rust CLI. Use this on a fresh machine: `bash packages/dev-setup/bootstrap.sh`.
+2. **Rust CLI** — interactive install by default (`--check` for detect-only). Installs/verifies Node (fnm + `.node-version` pin `22`), moon, Docker, root + mobile `.env` files (rewriting `SEAWEEDFS_INTERNAL_ENDPOINT` to `http://localhost:8333` on create), optional Android SDK/NDK / iOS CocoaPods, runs `npm ci` when needed, and with `--start` (or an interactive yes) brings up compose + migrations.
 
-- macOS (issue #204): via Homebrew for rustup/node/moon/sccache. Docker (GUI installer) and Xcode/CocoaPods/Android Studio/the Android NDK stay detect-and-guide-only always.
-- Apt-based Linux distros (issue #205): via each tool's official installer for rustup/moon/sccache. Node.js/Docker, and any non-apt distro (for all five tools), stay guide-only.
-
-Opt-in `--start` (issue #206) runs `docker compose up -d`, waits for Postgres/NATS/SeaweedFS health, then `moon run api:migrate`.
-
-A plain `dev-setup` invocation with no flags never installs or starts anything, on any OS. See [`packages/dev-setup/README.md`](../../packages/dev-setup/README.md) for the full flag reference.
+`moon run dev-setup:run` always passes `--check` so it never mutates the host. See [`packages/dev-setup/README.md`](../../packages/dev-setup/README.md) for the full flag reference.
 
 ## Local development environment
 
@@ -115,7 +111,7 @@ The client reads its API base URL from `EXPO_PUBLIC_API_URL`, defaulting to `htt
 
 `apps/mobile` depends on a custom native module (`quic-relay-client`), so plain Expo Go can't run it — Android needs a real native build, not `moon run mobile:start` alone. `apps/mobile/android` is gitignored (generated on demand via Expo prebuild, not committed), so the steps below take you from nothing to a running emulator.
 
-**Prerequisites** (one-time, manual — these are not auto-installed by anything in this repo, though `packages/dev-setup --install` covers `rustup` on both platforms it supports):
+**Prerequisites** (one-time — `bash packages/dev-setup/bootstrap.sh` covers these on macOS/Linux):
 
 - [Android Studio](https://developer.android.com/studio), which bundles the Android SDK. Set `ANDROID_HOME` (or `ANDROID_SDK_ROOT`) to its SDK location, e.g. `~/Library/Android/sdk` (macOS) or `~/Android/Sdk` (Linux).
 - At least one AVD (Android Virtual Device) — create one from Android Studio's Device Manager (or `avdmanager`), then start it (or let the next step start it for you).

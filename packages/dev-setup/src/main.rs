@@ -1,125 +1,202 @@
-//! `dev-setup`: checks a macOS/Linux dev machine against what README's
-//! "Running the stack locally" section requires (issue #203), and,
-//! opt-in via `--start`, brings up the local `docker compose` stack and
-//! runs API migrations (issue #206). Also opt-in via `--install`: on
-//! macOS, auto-installs rustup/node/moon/sccache via Homebrew where
-//! present (issue #204); on apt-based Linux distros, auto-installs
-//! rustup/moon/sccache via their official installers (issue #205).
-//! Detect-only otherwise, plus one safe filesystem auto-fix (`.env`
-//! copy) -- see those issues for what's still out of scope (Homebrew's
-//! own install, non-apt distro-specific installs, Xcode/Android Studio
-//! scripting, etc).
+//! `dev-setup`: interactive (default) / detect-only (`--check`) local
+//! toolchain installer for Epistl (issues #222–#224). Prefer entering via
+//! `bash packages/dev-setup/bootstrap.sh` on a fresh machine.
 
 use std::process::ExitCode;
 
+use dev_setup::tools::android::ensure_android;
+use dev_setup::tools::docker::ensure_docker;
+use dev_setup::tools::ios::ensure_ios;
+use dev_setup::tools::moon::ensure_moon;
+use dev_setup::tools::node::ensure_node;
+use dev_setup::tools::npm::ensure_mobile_deps;
+use dev_setup::tools::rust::ensure_rust;
+use dev_setup::tools::sccache::ensure_sccache;
 use dev_setup::{
-    apt_available, check_os, check_status, docker_action, ensure_env_file, format_check_line,
-    format_linux_action, format_mac_report_line, format_step_outcome, has_install_flag,
-    is_required, maybe_run_start, moon_action, node_action, repo_root, run_all_checks,
-    run_macos_checks, rustup_action, sccache_action, EnvFileOutcome, RealSleeper, StepOutcome,
-    SystemEnvironment, SystemExecutor,
+    ensure_env_files, format_outcome, format_step_outcome, maybe_run_start, repo_root, Flags,
+    Platform, PromptPolicy, RealSleeper, StepOutcome, SystemEnvironment, SystemExecutor,
+    ToolOutcome,
 };
 
 fn main() -> ExitCode {
-    let os = std::env::consts::OS;
-    if let Err(message) = check_os(os) {
-        eprintln!("{message}");
-        return ExitCode::FAILURE;
-    }
-
-    let install_flag = has_install_flag(std::env::args());
-
-    let repo_root = repo_root();
-
-    match ensure_env_file(&repo_root) {
-        Ok(EnvFileOutcome::Created) => println!("copied .env.example to .env"),
-        Ok(EnvFileOutcome::AlreadyPresent) => println!(".env already present, skipping"),
-        Err(err) => {
-            eprintln!("failed to set up .env: {err}");
+    let flags = Flags::parse(std::env::args());
+    let platform = match Platform::detect() {
+        Ok(p) => p,
+        Err(message) => {
+            eprintln!("{message}");
             return ExitCode::FAILURE;
         }
-    }
+    };
 
-    println!();
-    println!("Environment checks:");
+    let policy = PromptPolicy::from_flags(flags.yes);
+    let check_only = flags.check;
     let executor = SystemExecutor;
-    let checks = run_all_checks(&executor);
+    let environment = SystemEnvironment;
+    let repo_root = repo_root();
 
-    let mut all_required_present = true;
-    for check in &checks {
-        println!("{}", format_check_line(check));
-        if is_required(check.name) && !check.status.is_present() {
-            all_required_present = false;
-        }
+    println!("Epistl dev-setup");
+    println!(
+        "  platform: {:?} ({}){}",
+        platform.os,
+        platform.arch,
+        if platform.is_wsl { " [WSL]" } else { "" }
+    );
+    if let Some(d) = platform.distro {
+        println!("  distro family: {d:?}");
     }
-
-    // macOS-only: detect Homebrew and, for each absent tool Homebrew can
-    // safely install, report/act on it; plus the always-guide-only
-    // Docker/Xcode/CocoaPods/Android Studio/NDK checks. No behavior
-    // change on Linux or elsewhere from this block -- see issue #204.
-    if os == "macos" {
-        println!();
-        println!("macOS-specific checks (pass --install to auto-install via Homebrew where safe):");
-        let environment = SystemEnvironment;
-        let mac_reports = run_macos_checks(&checks, install_flag, &executor, &environment);
-        for report in &mac_reports {
-            println!("{}", report.message);
+    println!(
+        "  mode: {}",
+        if check_only {
+            "check-only"
+        } else if policy.yes {
+            "install (--yes)"
+        } else {
+            "interactive install"
         }
+    );
+    println!();
 
-        println!();
-        println!("macOS summary:");
-        for report in &mac_reports {
-            println!("{}", format_mac_report_line(report));
-        }
-    }
-
-    // Linux-only: for each absent tool, report what this tool would do
-    // (or already did, with `--install`) about it. No behavior change on
-    // macOS or elsewhere from this block -- see issue #205.
-    if os == "linux" {
-        let apt_present = apt_available(&executor);
-        let absent: Vec<_> = checks.iter().filter(|c| !c.status.is_present()).collect();
-        if !absent.is_empty() {
-            println!();
-            println!("Linux install guidance:");
-            for check in absent {
-                let action = match check.name {
-                    "rustup" => Some(rustup_action(&executor, apt_present, install_flag)),
-                    "moon" => Some(moon_action(&executor, apt_present, install_flag)),
-                    "sccache" => Some(sccache_action(&executor, apt_present, install_flag)),
-                    "node" => Some(node_action(apt_present)),
-                    "docker" => Some(docker_action(apt_present)),
-                    // "cargo/rustc": no separate auto-install path beyond
-                    // rustup itself (see the rustup line above).
-                    _ => None,
-                };
-                if let Some(action) = action {
-                    println!("{}", format_linux_action(check.name, &action));
+    // --- .env bootstrap (safe, always) ---
+    match ensure_env_files(&repo_root) {
+        Ok(b) => {
+            match b.root {
+                dev_setup::EnvFileOutcome::Created => {
+                    println!(
+                        ".env: created from .env.example (SEAWEEDFS_INTERNAL_ENDPOINT → localhost)"
+                    )
+                }
+                dev_setup::EnvFileOutcome::AlreadyPresent => {
+                    println!(".env: already present")
+                }
+            }
+            match b.mobile {
+                dev_setup::EnvFileOutcome::Created => {
+                    println!("apps/mobile/.env: created from .env.example")
+                }
+                dev_setup::EnvFileOutcome::AlreadyPresent => {
+                    println!("apps/mobile/.env: already present (or example missing)")
                 }
             }
         }
+        Err(err) => {
+            eprintln!("failed to set up .env files: {err}");
+            return ExitCode::FAILURE;
+        }
+    }
+    println!();
+
+    // --- Core tools ---
+    println!("Core tools:");
+    let mut failed = false;
+
+    let outcomes: Vec<(&str, ToolOutcome, bool)> = vec![
+        ("rust", ensure_rust(&executor, &policy, check_only), true),
+        (
+            "sccache",
+            ensure_sccache(&executor, &policy, check_only),
+            true,
+        ),
+        (
+            "node",
+            ensure_node(&platform, &executor, &policy, check_only),
+            true,
+        ),
+        (
+            "moon",
+            ensure_moon(&platform, &executor, &policy, check_only),
+            true,
+        ),
+        (
+            "docker",
+            ensure_docker(&platform, &executor, &policy, check_only),
+            true,
+        ),
+    ];
+
+    for (name, outcome, required) in &outcomes {
+        println!("{}", format_outcome(name, outcome));
+        if outcome.is_blocking_failure(*required) {
+            failed = true;
+        }
     }
 
-    // `--start` is an opt-in orchestration flag (docker compose up +
-    // health-wait + api:migrate) that never runs unless explicitly
-    // requested -- see start.rs's module doc comment.
-    let start_requested = std::env::args().skip(1).any(|arg| arg == "--start");
-    let docker_present = check_status(&checks, "docker");
-    let moon_present = check_status(&checks, "moon");
-    let sleeper = RealSleeper;
+    // npm ci (needs node)
+    let npm_outcome = ensure_mobile_deps(&executor, &policy, check_only, &repo_root);
+    println!("{}", format_outcome("mobile-deps", &npm_outcome));
+    // npm ci absence is non-blocking in check mode for API-only contributors,
+    // but a Failed install attempt is blocking.
+    if matches!(npm_outcome, ToolOutcome::Failed(_)) {
+        failed = true;
+    }
 
+    // --- Mobile toolchains ---
+    if !flags.skip_mobile {
+        println!();
+        println!("Mobile toolchains (optional; pass --skip-mobile to skip):");
+        for (name, outcome) in
+            ensure_android(&platform, &executor, &environment, &policy, check_only)
+        {
+            println!("{}", format_outcome(&name, &outcome));
+            // Android items are optional unless the user asked to install and it failed.
+            if matches!(outcome, ToolOutcome::Failed(_)) {
+                failed = true;
+            }
+        }
+        for (name, outcome) in ensure_ios(&platform, &executor, &environment, &policy, check_only) {
+            println!("{}", format_outcome(&name, &outcome));
+            if matches!(outcome, ToolOutcome::Failed(_)) {
+                failed = true;
+            }
+        }
+    } else {
+        println!();
+        println!("Mobile toolchains: skipped (--skip-mobile)");
+    }
+
+    // --- Start stack ---
+    let docker_ok = matches!(
+        outcomes
+            .iter()
+            .find(|(n, _, _)| *n == "docker")
+            .map(|(_, o, _)| o),
+        Some(ToolOutcome::Present(_)) | Some(ToolOutcome::Installed(_))
+    );
+    let moon_ok = matches!(
+        outcomes
+            .iter()
+            .find(|(n, _, _)| *n == "moon")
+            .map(|(_, o, _)| o),
+        Some(ToolOutcome::Present(_)) | Some(ToolOutcome::Installed(_))
+    );
+
+    let start_requested = if flags.check || flags.no_start {
+        false
+    } else if flags.start {
+        true
+    } else if check_only {
+        false
+    } else {
+        // Interactive: offer to start.
+        use dev_setup::prompt::confirm_required;
+        confirm_required(
+            &policy,
+            "Bring up docker compose (postgres/nats/seaweedfs) and run migrations?",
+        )
+    };
+
+    let sleeper = RealSleeper;
     let mut start_failed = false;
-    if let Some(outcomes) = maybe_run_start(
+    if let Some(step_outcomes) = maybe_run_start(
         start_requested,
         &executor,
         &sleeper,
-        docker_present,
-        moon_present,
+        docker_ok,
+        moon_ok,
         &repo_root,
     ) {
         println!();
         println!("Start:");
-        for outcome in &outcomes {
+        for outcome in &step_outcomes {
             println!("{}", format_step_outcome(outcome));
             if matches!(outcome, StepOutcome::Failure(_)) {
                 start_failed = true;
@@ -127,9 +204,9 @@ fn main() -> ExitCode {
         }
     }
 
-    if all_required_present && !start_failed {
-        ExitCode::SUCCESS
-    } else {
+    if failed || start_failed {
         ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
     }
 }

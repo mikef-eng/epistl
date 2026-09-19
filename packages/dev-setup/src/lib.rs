@@ -1,17 +1,16 @@
-//! Library half of the `dev-setup` binary crate (issue #203): a
-//! contributor/agent-facing tool that checks a macOS/Linux dev machine
-//! against what README's "Running the stack locally" section requires.
-//! Logic lives here (not in `main.rs`) so it's unit-testable without
-//! spawning the real binary.
+//! Library half of the `dev-setup` binary (issues #222–#224): interactive
+//! installer + detect-only checker for Epistl's local toolchain.
 
 pub mod checks;
 pub mod env_file;
 pub mod environment;
-pub mod homebrew;
-pub mod linux_install;
-pub mod macos;
-pub mod os_check;
+pub mod flags;
+pub mod pkg;
+pub mod platform;
+pub mod profile;
+pub mod prompt;
 pub mod start;
+pub mod tools;
 
 use std::path::{Path, PathBuf};
 
@@ -19,21 +18,15 @@ pub use checks::{
     check_docker, check_moon, check_node, check_rustup, check_sccache, check_toolchain,
     is_required, run_all_checks, CommandExecutor, SystemExecutor, ToolCheck, ToolStatus,
 };
-pub use env_file::{ensure_env_file, EnvFileOutcome};
+pub use env_file::{ensure_env_file, ensure_env_files, EnvBootstrap, EnvFileOutcome};
 pub use environment::{Environment, SystemEnvironment};
-pub use homebrew::check_homebrew;
-pub use linux_install::{
-    apt_available, docker_action, format_linux_action, moon_action, node_action, rustup_action,
-    sccache_action, LinuxAction,
-};
-pub use macos::{format_mac_report_line, run_macos_checks, MacOutcome, MacReport};
-pub use os_check::check_os;
+pub use flags::Flags;
+pub use platform::{DistroFamily, OsKind, Platform};
+pub use prompt::PromptPolicy;
 pub use start::{format_step_outcome, maybe_run_start, RealSleeper, Sleeper, StepOutcome};
+pub use tools::{format_outcome, ToolOutcome};
 
-/// Whether `checks` reports `name` as `Present` -- used by `--start` to
-/// decide whether Docker/moon are available before attempting to shell
-/// out to either, reusing the environment-check report rather than
-/// re-probing.
+/// Whether `checks` reports `name` as Present.
 pub fn check_status(checks: &[ToolCheck], name: &str) -> bool {
     checks
         .iter()
@@ -42,24 +35,7 @@ pub fn check_status(checks: &[ToolCheck], name: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Whether `--install` was passed on the command line -- the opt-in gate
-/// for the Linux (apt-based) auto-install path this issue adds. Takes
-/// `args` as a parameter (rather than reading `std::env::args()` itself)
-/// so tests can inject arg vectors directly instead of depending on how
-/// the test binary itself was invoked.
-pub fn has_install_flag<I, S>(args: I) -> bool
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<str>,
-{
-    args.into_iter().any(|a| a.as_ref() == "--install")
-}
-
-/// The repo root, derived from where this crate lives on disk
-/// (`packages/dev-setup`) rather than the process's current working
-/// directory -- so this works whether the binary is invoked via `moon run
-/// dev-setup:run` (project-rooted) or `cargo run` from within
-/// `packages/dev-setup` directly.
+/// The repo root, derived from this crate's manifest location.
 pub fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -68,8 +44,7 @@ pub fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
-/// Formats one `ToolCheck` as a single report line, e.g.
-/// `"rustup: Present (rustup 1.27.1)"` or `"docker: Absent"`.
+/// Formats one `ToolCheck` as a single report line.
 pub fn format_check_line(check: &ToolCheck) -> String {
     match &check.status {
         ToolStatus::Present(Some(version)) => format!("{}: Present ({version})", check.name),
@@ -115,14 +90,6 @@ mod tests {
     }
 
     #[test]
-    fn has_install_flag_detects_the_flag_among_other_args() {
-        assert!(has_install_flag(["dev-setup", "--install"]));
-        assert!(has_install_flag(["dev-setup", "--foo", "--install"]));
-        assert!(!has_install_flag(["dev-setup"]));
-        assert!(!has_install_flag(["dev-setup", "--other-flag"]));
-    }
-
-    #[test]
     fn check_status_variants() {
         let checks = vec![
             ToolCheck {
@@ -137,8 +104,6 @@ mod tests {
 
         assert!(check_status(&checks, "docker"));
         assert!(!check_status(&checks, "moon"));
-        // A name that isn't in the report at all is treated as absent,
-        // not a panic.
         assert!(!check_status(&checks, "sccache"));
     }
 }
