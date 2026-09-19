@@ -99,9 +99,23 @@ This section is the detail behind [`README.md`](../../README.md)'s "Running the 
 - **SeaweedFS endpoint gotcha**: its S3 API and Admin UI ports are both published to the host, not just exposed internally, because presigned URLs handed to the mobile client must be reachable from outside the docker-compose network — see [`docs/decisions/0018-seaweedfs-object-storage-for-avatars.md`](../decisions/0018-seaweedfs-object-storage-for-avatars.md). SeaweedFS's S3 gateway credentials come from the checked-in `docker/seaweedfs-s3-config.json`, which must match `SEAWEEDFS_S3_ACCESS_KEY`/`SEAWEEDFS_S3_SECRET_KEY` in your `.env` — see that file's comments. The `seaweedfs` service auto-creates the `avatars` bucket itself on startup.
 - The API itself always runs on the host (not containerized), even in local dev — so if you're running it via `moon run api:dev`, set `SEAWEEDFS_INTERNAL_ENDPOINT` to `http://localhost:8333` in your own `.env` too (not the `seaweedfs:8333` service-hostname value that would only resolve from inside the docker-compose network) — see `.env.example`'s comment on that var.
 
+### Per-worktree Postgres + NATS isolation (concurrent api-dev lanes)
+
+When multiple `api-dev` lane agents run concurrently, each works in a dedicated Claude Code worktree under `.claude/worktrees/<name>`. To keep their `moon run api:migrate` and `moon run api:test` runs isolated from each other:
+
+**DB name derivation:** `apps/api/src/db.rs::effective_database_url()` rewrites `DATABASE_URL`'s database name to `<base_db>_wt_<slug>` when a worktree slug is active. The slug comes from `EPISTL_WORKTREE_SLUG` (if set) or is derived automatically from the `git rev-parse --show-toplevel` path when it contains `.claude/worktrees/<name>`. On the primary checkout (no worktree), `DATABASE_URL` is used as-is — behavior is unchanged.
+
+Slug sanitisation: lowercase, `[^a-z0-9_]` → `_`, truncated so the total name stays within Postgres's 63-byte identifier limit. Deterministic for a given slug.
+
+**On-demand creation:** `moon run api:migrate` calls `create_db_if_missing()` before running migrations — connects to the `postgres` maintenance DB on the same server and issues `CREATE DATABASE`. Safe under concurrency: a `duplicate_database` (SQLSTATE 42P04) error from a racing peer is treated as success. No manual `psql` step needed. **The Postgres role must have `CREATEDB`**; grant it once with `ALTER ROLE epistl CREATEDB;`.
+
+**NATS stream isolation:** `effective_stream_name()` returns `EPISTL_OFFLINE_MESSAGES_wt_<slug>` when a slug is active; `effective_stream_subjects()` and `effective_offline_subject()` scope subjects to `epistl.offline.<slug>.*` so concurrent test suites never delete each other's streams or messages.
+
+**Teardown:** `moon run api:db-drop` drops the current worktree's derived DB and NATS stream (refuses without an active slug). `moon run api:db-prune` drops every `<base_db>_wt_*` DB (and its NATS stream) whose git worktree no longer exists; supports `-- --dry-run` to list without dropping. These are run by `/ship` and the `api-dev` playbook after a PR is merged and the worktree removed, so per-worktree databases do not accumulate.
+
 ### Running the API server
 
-`moon run api:dev` listens on `0.0.0.0:3000`; refuses to start unless `DATABASE_URL`, `AUTH_SECRET`, and `NATS_URL` — all in your `.env` — resolve to a value. It also configures the `EPISTL_OFFLINE_MESSAGES` JetStream stream at startup, using `OFFLINE_QUEUE_MAX_AGE_SECS` from your `.env` if set, otherwise defaulting to 24 hours, and starts a real QUIC listener alongside `/ws` on `0.0.0.0:4433` by default — override the bind address or disable it entirely via `QUIC_LISTEN_ADDR` in your `.env` (see Transport, above).
+`moon run api:dev` listens on `0.0.0.0:3000`; refuses to start unless `DATABASE_URL`, `AUTH_SECRET`, and `NATS_URL` — all in your `.env` — resolve to a value. It also configures the `EPISTL_OFFLINE_MESSAGES` JetStream stream at startup (using the effective per-worktree name if a slug is active), using `OFFLINE_QUEUE_MAX_AGE_SECS` from your `.env` if set, otherwise defaulting to 24 hours, and starts a real QUIC listener alongside `/ws` on `0.0.0.0:4433` by default — override the bind address or disable it entirely via `QUIC_LISTEN_ADDR` in your `.env` (see Transport, above).
 
 ### Running the mobile app
 

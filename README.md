@@ -38,7 +38,7 @@ packages/   Shared libraries
 
 Work is tracked through GitHub Issues and **area lanes** (planner → api/mobile/native/ui → ci-watch → merge-gate). See [AGENTS.md](AGENTS.md) for the lane table and shared invariants, and [`docs/decisions/0019-harness-area-lanes.md`](docs/decisions/0019-harness-area-lanes.md) for the decision. Other durable decisions live under [`docs/decisions/`](docs/decisions/).
 
-Lane agents use Claude Code's `isolation: worktree` (shared Postgres still limits concurrent API lanes — see ADR 0016/0019).
+Lane agents use Claude Code's `isolation: worktree`. Per-worktree Postgres DB + NATS stream isolation (issue #219) means multiple `api-dev` lanes may now run concurrently without colliding — see `docs/architecture/overview.md` (Per-worktree isolation) for setup details.
 
 ## Claude Code
 
