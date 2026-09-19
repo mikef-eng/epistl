@@ -550,7 +550,7 @@ async fn send_to_offline_contact_queues_via_jetstream_and_acks_sender() {
     let ack = recv_json(&mut sender_ws).await;
     assert_eq!(ack, json!({ "type": "ack", "to": recipient_id }));
 
-    let subject = api::nats::offline_subject(recipient_id);
+    let subject = api::nats::effective_offline_subject(recipient_id);
     let raw = stream
         .get_last_raw_message_by_subject(&subject)
         .await
@@ -586,7 +586,7 @@ async fn send_to_offline_contact_returns_queue_unavailable_when_jetstream_publis
     // delete-then-recreate pattern already used by
     // `apps/api/tests/nats.rs`'s `ensure_offline_stream` test.
     let _ = jetstream
-        .delete_stream(api::nats::OFFLINE_STREAM_NAME)
+        .delete_stream(&api::nats::effective_stream_name())
         .await;
 
     let addr = spawn_server(state.clone()).await;

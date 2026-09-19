@@ -86,10 +86,10 @@ pub(crate) async fn deliver_queued_messages(state: &AppState, user_id: Uuid, tx:
         .create_consumer_on_stream(
             PullConsumerConfig {
                 ack_policy: AckPolicy::Explicit,
-                filter_subject: crate::nats::offline_subject(user_id),
+                filter_subject: crate::nats::effective_offline_subject(user_id),
                 ..Default::default()
             },
-            crate::nats::OFFLINE_STREAM_NAME,
+            &crate::nats::effective_stream_name(),
         )
         .await
     {
@@ -258,7 +258,10 @@ async fn queue_for_offline_delivery(
 
     let published: Result<u64, async_nats::Error> = async {
         let ack = jetstream
-            .publish(crate::nats::offline_subject(to), payload.to_string().into())
+            .publish(
+                crate::nats::effective_offline_subject(to),
+                payload.to_string().into(),
+            )
             .await?;
         Ok(ack.await?.sequence)
     }
@@ -335,7 +338,10 @@ async fn redeliver_if_now_connected(state: &AppState, to: Uuid, sequence: u64, r
     }
 
     let jetstream = async_nats::jetstream::new(state.nats.clone());
-    let Ok(stream) = jetstream.get_stream(crate::nats::OFFLINE_STREAM_NAME).await else {
+    let Ok(stream) = jetstream
+        .get_stream(&crate::nats::effective_stream_name())
+        .await
+    else {
         return;
     };
     let _ = stream.delete_message(sequence).await;
@@ -532,7 +538,10 @@ mod tests {
             "sent_at": sent_at,
         });
         let ack = jetstream
-            .publish(crate::nats::offline_subject(to), payload.to_string().into())
+            .publish(
+                crate::nats::effective_offline_subject(to),
+                payload.to_string().into(),
+            )
             .await
             .expect("failed to publish offline message");
         ack.await.expect("publish was not acked").sequence
@@ -593,7 +602,7 @@ mod tests {
         assert_no_further_message(&mut recipient_rx).await;
 
         let stream = jetstream
-            .get_stream(crate::nats::OFFLINE_STREAM_NAME)
+            .get_stream(&crate::nats::effective_stream_name())
             .await
             .expect("failed to fetch the offline-delivery stream");
         let consumer_names_before_delete = consumer_name_set(&stream).await;
