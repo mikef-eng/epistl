@@ -62,8 +62,9 @@ RN 0.86's engines range; otherwise fnm + Node 22), moon, Docker
 (`docker info` — daemon must be up). On Linux, Docker installs via
 get.docker.com + docker group; a fresh install in the same session may
 drive compose via `sg docker` until you log out/in (or `newgrp docker`).
-WSL reuses Docker Desktop's socket when present; macOS stays guide-only
-for Docker Desktop.
+On recent Ubuntu, Stage 2 installs `util-linux-extra` when `sg`/`newgrp`
+are missing so that path works. WSL reuses Docker Desktop's socket when
+present; macOS stays guide-only for Docker Desktop.
 
 **Mobile (unless `--skip-mobile`):** JDK 17, Android cmdline-tools +
 sdkmanager packages (platform 36, build-tools 36.0.0, NDK

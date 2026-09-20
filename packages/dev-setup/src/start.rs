@@ -462,13 +462,19 @@ mod tests {
         let calls = exec.calls();
         assert_eq!(calls[0].0, "docker");
         assert_eq!(calls[0].1, vec!["info".to_string()]);
-        assert_eq!(calls[1].0, "sg");
-        assert_eq!(calls[1].1[0], "docker");
-        assert_eq!(calls[1].1[1], "-c");
-        assert_eq!(calls[1].1[2], "docker info");
-        // compose up via sg
+        // probe checks `command -v sg` before trying `sg docker`.
+        assert_eq!(calls[1].0, "bash");
+        assert_eq!(
+            calls[1].1,
+            vec!["-c".to_string(), "command -v sg".to_string()]
+        );
         assert_eq!(calls[2].0, "sg");
-        assert!(calls[2].1[2].contains("compose"));
+        assert_eq!(calls[2].1[0], "docker");
+        assert_eq!(calls[2].1[1], "-c");
+        assert_eq!(calls[2].1[2], "docker info");
+        // compose up via sg
+        assert_eq!(calls[3].0, "sg");
+        assert!(calls[3].1[2].contains("compose"));
         assert!(calls.iter().any(|(p, _)| p == "moon"));
     }
 
