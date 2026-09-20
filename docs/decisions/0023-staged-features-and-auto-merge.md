@@ -39,6 +39,21 @@ On 2026-09-20 shipping one cross-lane feature (#173 mobile, #249 API,
    GitHub's behavior; unverified here) counts as passing for a required
    check and could let auto-merge fire before the real run, so it is not
    used.
+   - Each `/ship` call is its own feature; unrelated features use separate
+     calls and separate branches, and are gated independently.
+   - Lanes in staged mode start from the feature branch tip (an isolated
+     worktree otherwise starts from `main`), so a dependent lane sees what its
+     siblings staged. `/ship --onto feat/<slug>` adds more issues to an
+     existing feature branch.
+   - A dependency on unmerged work is resolved by shipping in the same
+     batch, `--onto` the branch that holds it, or waiting until it has merged
+     to `main`. No stacked feature branches. The planner records
+     `Depends on #N` in Notes; `/ship` can only act on dependencies that are
+     written down.
+   - There is no automatic refresh of feature branches. If `main` moves and
+     the feature PR conflicts at `/gate`, `main` is merged into the feature
+     branch once, then (`gh pr update-branch`; merge rather than rebase, since
+     lane branches are based on it).
 3. **`strict` off.** Branch protection no longer requires branches to be
    up to date with `main`; `ci` stays required and `enforce_admins` stays
    on. `main`-push CI is the async safety net for semantic conflicts.
