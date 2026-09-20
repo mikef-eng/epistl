@@ -335,7 +335,7 @@ describe('client', () => {
     it('GETs /api/users/search with the query string and Authorization header', async () => {
       mockSession.getToken.mockResolvedValueOnce('tok-9');
       fetchMock.mockResolvedValueOnce(
-        jsonResponse(200, { users: [{ user_id: 'u1', email: 'alice@example.com' }] }),
+        jsonResponse(200, { users: [{ user_id: 'u1', email: 'alice@example.com', username: 'alice' }] }),
       );
 
       const result = await searchUsers('ali');
@@ -344,7 +344,7 @@ describe('client', () => {
         method: 'GET',
         headers: { Authorization: 'Bearer tok-9' },
       });
-      expect(result).toEqual({ users: [{ user_id: 'u1', email: 'alice@example.com' }] });
+      expect(result).toEqual({ users: [{ user_id: 'u1', email: 'alice@example.com', username: 'alice' }] });
     });
 
     it('URL-encodes the query string', async () => {
@@ -371,6 +371,34 @@ describe('client', () => {
   });
 
   describe('sendContactRequest', () => {
+    it('POSTs { username } (and never email) when given a username target', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-4');
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(201, {
+          id: 'r5',
+          requester_user_id: 'u4',
+          recipient_user_id: 'u5',
+          status: 'pending',
+          created_at: '2026-01-01T00:00:00Z',
+        }),
+      );
+
+      await sendContactRequest({ username: 'carol' });
+
+      const init = fetchMock.mock.calls[0][1] as { body: string };
+      expect(JSON.parse(init.body)).toEqual({ username: 'carol' });
+    });
+
+    it('rejects a 404 user_not_found for a username target', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-4');
+      fetchMock.mockResolvedValueOnce(jsonResponse(404, { error: 'user_not_found' }));
+
+      await expect(sendContactRequest({ username: 'nobody' })).rejects.toMatchObject({
+        code: 'user_not_found',
+        status: 404,
+      });
+    });
+
     it('POSTs to /api/contacts/requests with the email body and Authorization header', async () => {
       mockSession.getToken.mockResolvedValueOnce('tok-4');
       fetchMock.mockResolvedValueOnce(
@@ -610,7 +638,13 @@ describe('client', () => {
       fetchMock.mockResolvedValueOnce(
         jsonResponse(200, {
           incoming: [
-            { id: 'r1', user_id: 'u1', email: 'a@example.com', created_at: '2026-01-01T00:00:00Z' },
+            {
+              id: 'r1',
+              user_id: 'u1',
+              email: 'a@example.com',
+              username: 'a',
+              created_at: '2026-01-01T00:00:00Z',
+            },
           ],
           outgoing: [],
         }),
@@ -624,7 +658,13 @@ describe('client', () => {
       });
       expect(result).toEqual({
         incoming: [
-          { id: 'r1', user_id: 'u1', email: 'a@example.com', created_at: '2026-01-01T00:00:00Z' },
+          {
+              id: 'r1',
+              user_id: 'u1',
+              email: 'a@example.com',
+              username: 'a',
+              created_at: '2026-01-01T00:00:00Z',
+            },
         ],
         outgoing: [],
       });

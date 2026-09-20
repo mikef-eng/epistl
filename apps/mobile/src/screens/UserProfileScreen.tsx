@@ -38,7 +38,7 @@ type Relationship =
  * `ERROR_MESSAGES` rather than shared, same convention as that screen's
  * `withoutKey` duplication note. */
 const ADD_ERROR_MESSAGES: Record<string, string> = {
-  user_not_found: 'No user with that email',
+  user_not_found: 'No user with that username',
   already_pending: 'You already sent this person a request',
   already_contact: 'Already in your contacts',
   cannot_add_self: "You can't add yourself",
@@ -96,7 +96,7 @@ function deriveRelationship(
  * search", `UserProfileScreen` paragraph.
  */
 export default function UserProfileScreen({ navigation, route }: Props) {
-  const { userId, email } = route.params;
+  const { userId, username } = route.params;
   const insets = useSafeAreaInsets();
   const { colorScheme } = useColorScheme();
   // Matches the header's existing `text-black dark:text-white` convention --
@@ -172,7 +172,7 @@ export default function UserProfileScreen({ navigation, route }: Props) {
     setActionError(null);
     setActionPending(true);
     try {
-      const created = await sendContactRequest(email);
+      const created = await sendContactRequest({ username });
       setRelationship({ kind: 'outgoing', requestId: created.id });
     } catch (err) {
       if (err instanceof IncomingRequestExistsError) {
@@ -252,7 +252,7 @@ export default function UserProfileScreen({ navigation, route }: Props) {
         >
           <Ionicons name="arrow-back" size={24} color={headerIconColor} />
         </Pressable>
-        <Text className="text-lg font-semibold text-black dark:text-white">{email}</Text>
+        <Text className="text-lg font-semibold text-black dark:text-white">{username}</Text>
       </View>
 
       <View className="flex-1 px-6 pt-6">

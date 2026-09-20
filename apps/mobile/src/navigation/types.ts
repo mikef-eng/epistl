@@ -34,7 +34,7 @@ export type RootStackParamList = {
    * /api/contacts/requests` rather than needing anything beyond these two
    * fields as params.
    */
-  UserProfile: { userId: string; email: string };
+  UserProfile: { userId: string; username: string; email?: string };
   /** Reached via a gear icon in both `MainTabs` tabs' headers (issue #125,
    * moved from the retired `ContactsScreen` to both tabs in issue #94). */
   Settings: undefined;
