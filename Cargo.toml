@@ -1,3 +1,17 @@
 [workspace]
 resolver = "2"
 members = ["apps/api", "packages/quic-relay-client", "packages/dev-setup"]
+
+# Test-speed tuning (issue #254). Line-tables-only debuginfo cuts build/link
+# time (~67s -> ~55s fresh); backtraces keep file:line. Argon2/blake2 at
+# opt-level 3 make the dev-profile password hashing done by every test signup
+# ~6x faster (slowest tests 8s -> 1.3s). Dev/test profiles only: release
+# hashing params and code are unchanged.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3

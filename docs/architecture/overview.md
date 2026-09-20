@@ -89,6 +89,14 @@ See also [`packages/quic-relay-client`](../../packages/quic-relay-client) (the R
 
 `moon run dev-setup:run` always passes `--check` so it never mutates the host. See [`packages/dev-setup/README.md`](../../packages/dev-setup/README.md) for the full flag reference.
 
+## API tests: cargo-nextest
+
+`moon run api:test` runs the suite with [`cargo-nextest`](https://nexte.st) (issue #254), a required dev tool like `sccache`: install once with `cargo install cargo-nextest --locked` or a [prebuilt binary](https://nexte.st/docs/installation/pre-built-binaries/) (CI installs it in the `rust (api)` job). Without it, `cargo` fails with "no such command: `nextest`". nextest does not run doctests; the crate has none.
+
+- **Parallelism and isolation.** nextest runs each test in its own process, so `serial_test`'s in-process `#[serial]` no longer serializes anything. Tests that share external state (per-worktree Postgres DB, the `EPISTL_OFFLINE_MESSAGES` JetStream stream, the QUIC listener) are put in one `max-threads = 1` test group in [`apps/api/.config/nextest.toml`](../../apps/api/.config/nextest.toml) (loaded via `--config-file` in `apps/api/moon.yml`); everything else runs in parallel. Env-var mutation cannot collide across processes. Tests that delete or inspect the shared JetStream stream (`tests/nats.rs`, `tests/ws.rs` queue-unavailable, `relay::tests::redeliver_forwards_…`) point themselves at a private stream by setting `EPISTL_WORKTREE_SLUG` to a unique value in their own process; `tests/ws.rs`'s no-persistence check counts only rows belonging to its own two users rather than every row in the database. New tests that mutate global state (delete/purge the shared stream, count all rows) must do the same or join the serial group.
+- **One build.** `api:test` builds test binaries and the `migrate` bin in a single `cargo nextest run --no-run` (`test-build`) and then runs `target/debug/migrate` (`test-migrate`). Going through `cargo run --bin migrate` instead resolves a smaller feature set (no dev-dependencies) and recompiles ~60 shared crates a second time.
+- **Profile tuning.** Root `Cargo.toml` sets `[profile.dev] debug = "line-tables-only"` (faster build/link; backtraces keep line numbers) and `opt-level = 3` for `argon2`/`blake2` in the dev profile (test-time password hashing dominated the slowest tests; production/release hashing parameters are untouched).
+
 ## Local development environment
 
 This section is the detail behind [`README.md`](../../README.md)'s "Running the stack locally" quickstart — read it if a step there fails or you want to understand *why* a step exists, not just what to type.
