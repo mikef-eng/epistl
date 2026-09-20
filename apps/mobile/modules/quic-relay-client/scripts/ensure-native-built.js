@@ -68,10 +68,24 @@ function sourceNewestMtimeMs(crateRoot, workspaceLockfile) {
   return known.length > 0 ? Math.max(...known) : null;
 }
 
-/** True when `abiDir` needs a rebuild: missing/empty, or older than the crate's sources. */
+/**
+ * True when `abiDir` needs a rebuild:
+ *   - `abiDir` is missing or empty, OR
+ *   - `libquic_relay_client.a` does not exist inside `abiDir` (cargo-ndk -o
+ *     only installs the `.so`; the `.a` must be explicitly copied — an abiDir
+ *     that contains only a `.so` is not ready for CMake), OR
+ *   - `abiDir` is older than the crate's sources.
+ */
 function isAbiBuildStale(crateRoot, workspaceLockfile, abiDir) {
   const outputNewest = newestMtimeMs(abiDir);
   if (outputNewest === null) {
+    return true;
+  }
+
+  // Even if files exist and are "fresh" by mtime, the .a is required.
+  // cargo-ndk -o only copies the .so; missing .a means the CMake link will fail.
+  const dotA = path.join(abiDir, 'libquic_relay_client.a');
+  if (!fs.existsSync(dotA)) {
     return true;
   }
 
@@ -159,7 +173,16 @@ function ndkMissingError() {
   );
 }
 
-function buildAbi(runner, { abi, triple }, crateRoot, jniLibsRoot) {
+/**
+ * Cross-compiles the crate for `abi`/`triple` and ensures
+ * `jniLibs/<abi>/libquic_relay_client.a` exists afterwards.
+ *
+ * `cargo-ndk -o <dir>` only copies the `.so` into `<dir>/<abi>/`.  The `.a`
+ * (staticlib) is left in `target/<triple>/release/` inside the Cargo
+ * workspace root (`repoRoot`).  CMakeLists.txt links against the `.a`, so we
+ * explicitly copy it to `jniLibs/<abi>/` after the ndk build.
+ */
+function buildAbi(runner, { abi, triple }, crateRoot, jniLibsRoot, repoRoot) {
   ensureRustupTarget(runner, triple);
   ensureCargoNdk(runner);
 
@@ -184,6 +207,23 @@ function buildAbi(runner, { abi, triple }, crateRoot, jniLibsRoot) {
       `\`cargo ndk\` build for ${abi} failed: ${result.error || `exit code ${result.status}`}`
     );
   }
+
+  // cargo-ndk -o only installs the .so.  Copy the .a from the cargo target
+  // directory so CMakeLists.txt (which links my_rust_lib STATIC IMPORTED) can
+  // find it.
+  const src = path.join(repoRoot, 'target', triple, 'release', 'libquic_relay_client.a');
+  const abiDir = path.join(jniLibsRoot, abi);
+  const dst = path.join(abiDir, 'libquic_relay_client.a');
+
+  if (!fs.existsSync(src)) {
+    throw new Error(
+      `Expected \`cargo ndk\` to produce ${src} but the file does not exist. ` +
+        'Check that `[lib] crate-type` includes "staticlib" in packages/quic-relay-client/Cargo.toml.'
+    );
+  }
+
+  fs.mkdirSync(abiDir, { recursive: true });
+  fs.copyFileSync(src, dst);
 }
 
 /**
@@ -192,12 +232,17 @@ function buildAbi(runner, { abi, triple }, crateRoot, jniLibsRoot) {
  * Throws (without attempting any build) if no ABI needs rebuilding work
  * that would require the Android NDK, and the NDK isn't resolvable.
  *
+ * `repoRoot` is the Cargo workspace root used to locate
+ * `target/<triple>/release/libquic_relay_client.a` for the post-ndk copy.
+ * Defaults to the actual repo root derived from this script's location.
+ *
  * Returns the list of ABI names actually (re)built, for logging/tests.
  */
 function ensureNativeBuilt({
   crateRoot = DEFAULT_CRATE_ROOT,
   workspaceLockfile = DEFAULT_WORKSPACE_LOCKFILE,
   jniLibsRoot = DEFAULT_JNI_LIBS_ROOT,
+  repoRoot = REPO_ROOT,
   abis = ABIS,
   runner = defaultRunner,
   env = process.env,
@@ -215,7 +260,7 @@ function ensureNativeBuilt({
   }
 
   for (const target of stale) {
-    buildAbi(runner, target, crateRoot, jniLibsRoot);
+    buildAbi(runner, target, crateRoot, jniLibsRoot, repoRoot);
   }
 
   return stale.map((target) => target.abi);

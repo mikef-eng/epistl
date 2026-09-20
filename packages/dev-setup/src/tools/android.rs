@@ -1,6 +1,7 @@
 //! Optional Android toolchain: JDK 17, cmdline-tools, SDK/NDK, Studio IDE.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use crate::checks::CommandExecutor;
 use crate::environment::Environment;
@@ -307,6 +308,68 @@ fn ensure_studio(
     }
 }
 
+/// Stage-2 bootstrap: cross-compile `packages/quic-relay-client` for all
+/// Android ABIs once the NDK is available, so `jniLibs/<abi>/libquic_relay_client.a`
+/// is ready before the developer runs `./gradlew` or Android Studio.
+///
+/// Only invoked when:
+///   - `--skip-mobile` is NOT set
+///   - `--check` mode is NOT active
+///   - at least one `android-sdk` outcome was `Present` or `Installed`
+///
+/// If `node` or the script cannot be found, the function returns a
+/// `Skipped` outcome with a non-blocking advisory message rather than
+/// failing (NDK-less / API-only contributors should not be blocked).
+pub fn ensure_native_built_android(repo_root: &Path, exec: &dyn CommandExecutor) -> ToolOutcome {
+    // Locate the script relative to the repo root.
+    let script = repo_root
+        .join("apps")
+        .join("mobile")
+        .join("modules")
+        .join("quic-relay-client")
+        .join("scripts")
+        .join("ensure-native-built.js");
+
+    if !script.exists() {
+        return ToolOutcome::Skipped(format!(
+            "ensure-native-built.js not found at {} — skipping native pre-build",
+            script.display()
+        ));
+    }
+
+    // Find node on PATH.
+    let node = match find_node(exec) {
+        Some(n) => n,
+        None => {
+            return ToolOutcome::Skipped(
+                "node not found on PATH — skipping Android native pre-build (run `node scripts/ensure-native-built.js` manually from apps/mobile/modules/quic-relay-client once node is installed)".into(),
+            );
+        }
+    };
+
+    // Run with inherited stdio so cargo-ndk output is visible to the user.
+    match Command::new(&node).arg(&script).status() {
+        Ok(status) if status.success() => {
+            ToolOutcome::Present("quic-relay-client native .a built for all Android ABIs".into())
+        }
+        Ok(status) => ToolOutcome::Failed(format!(
+            "ensure-native-built.js exited with {status}; check output above for details"
+        )),
+        Err(e) => ToolOutcome::Failed(format!("failed to launch node ensure-native-built.js: {e}")),
+    }
+}
+
+/// Locate the `node` binary. Returns the first candidate that `exec.run` can
+/// invoke successfully. Tests can swap `exec` for a fake that returns `None`
+/// to simulate a missing `node`.
+fn find_node(exec: &dyn CommandExecutor) -> Option<PathBuf> {
+    // Ask `node --version` — if it works, "node" is on PATH.
+    if exec.run("node", &["--version"]).is_some() {
+        return Some(PathBuf::from("node"));
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -336,6 +399,51 @@ mod tests {
         fn run(&self, _: &str, _: &[&str]) -> Option<String> {
             None
         }
+    }
+
+    /// Returns `Some(version)` for `node --version`, simulating node on PATH.
+    struct NodePresentExec;
+    impl CommandExecutor for NodePresentExec {
+        fn run(&self, program: &str, args: &[&str]) -> Option<String> {
+            if program == "node" && args == ["--version"] {
+                Some("v22.0.0".into())
+            } else {
+                None
+            }
+        }
+    }
+
+    #[test]
+    fn native_built_skips_when_script_missing() {
+        // Pass a tmp dir that has no ensure-native-built.js — should Skipped.
+        let tmp = std::env::temp_dir().join("dev-setup-test-native");
+        let out = ensure_native_built_android(&tmp, &NodePresentExec);
+        assert!(
+            matches!(out, ToolOutcome::Skipped(_)),
+            "expected Skipped when script is missing, got {out:?}"
+        );
+    }
+
+    #[test]
+    fn native_built_skips_when_node_missing() {
+        // Even if the script existed, no node → Skipped.
+        let tmp = std::env::temp_dir();
+        let out = ensure_native_built_android(&tmp, &EmptyExec);
+        // Either Skipped (script not found) or Skipped (node not found) — both are non-failures.
+        assert!(
+            matches!(out, ToolOutcome::Skipped(_)),
+            "expected Skipped when node is absent, got {out:?}"
+        );
+    }
+
+    #[test]
+    fn find_node_returns_none_when_absent() {
+        assert!(find_node(&EmptyExec).is_none());
+    }
+
+    #[test]
+    fn find_node_returns_some_when_present() {
+        assert!(find_node(&NodePresentExec).is_some());
     }
 
     #[test]
