@@ -16,7 +16,9 @@
  * Nothing is persisted on any failure, so the queued envelope stays intact
  * for the main app.
  */
-import { bytesToUtf8, utf8ToBytes } from '../utils/base64';
+import { sha256 } from '@noble/hashes/sha2.js';
+
+import { bytesToUtf8 } from '../utils/base64';
 import {
   decodeRatchetEnvelope,
   HANDSHAKE_ENVELOPE_VERSION,
@@ -26,6 +28,15 @@ import type { RatchetState } from './session';
 
 /** Persisted ratchet state plus its monotonic version counter. */
 export type StoredSession = { state: RatchetState; generation: number };
+
+/**
+ * Decrypted-message record. Bound to the exact envelope it came from via
+ * `envelopeDigest` (sha256 of the envelope bytes) so a relay-chosen
+ * `messageId` alone can never select stored plaintext. `plaintext` is the
+ * exact decrypted bytes (the ratchet key is single-use, so it must be
+ * lossless); storage implementations serialize it as they see fit.
+ */
+export type StoredDecrypted = { envelopeDigest: Uint8Array; plaintext: Uint8Array };
 
 export type WriteResult = { ok: true; generation: number } | { ok: false; reason: 'stale' };
 
@@ -42,10 +53,12 @@ export interface SessionStore {
     contactUserId: string,
     state: RatchetState,
     expectedGeneration: number,
-    decrypted?: { messageId: string; plaintext: string }
+    decrypted?: { messageId: string } & StoredDecrypted
   ): Promise<WriteResult>;
-  /** Plaintext previously stored for `messageId`, or null. */
-  getDecrypted(contactUserId: string, messageId: string): Promise<string | null>;
+  /** Decrypted record previously stored for `messageId`, or null. */
+  getDecrypted(contactUserId: string, messageId: string): Promise<StoredDecrypted | null>;
+  /** Removes the record; the main app calls this after ingesting the message. */
+  deleteDecrypted(contactUserId: string, messageId: string): Promise<void>;
 }
 
 /** Per-contact cross-process lock. `acquire` resolves null on timeout. */
@@ -84,8 +97,28 @@ export type NotificationDecryptResult =
   | { ok: false; reason: NotificationDecryptFailureReason };
 
 type ReceiveResult =
-  | { ok: true; plaintext: string }
+  | { ok: true; plaintext: Uint8Array }
   | { ok: false; reason: NotificationDecryptFailureReason };
+
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+/** Stored plaintext for `messageId`, only if bound to this exact envelope. */
+async function cachedFor(
+  store: SessionStore,
+  contactUserId: string,
+  messageId: string,
+  digest: Uint8Array
+): Promise<Uint8Array | null> {
+  const cached = await store.getDecrypted(contactUserId, messageId);
+  if (cached !== null && bytesEqual(cached.envelopeDigest, digest)) {
+    return cached.plaintext;
+  }
+  return null;
+}
 
 async function receiveLocked(
   contactUserId: string,
@@ -109,7 +142,8 @@ async function receiveLocked(
     }
 
     // Already decrypted by the other process: never advance the ratchet twice.
-    const cached = await deps.sessionStore.getDecrypted(contactUserId, messageId);
+    const digest = sha256(envelope);
+    const cached = await cachedFor(deps.sessionStore, contactUserId, messageId, digest);
     if (cached !== null) {
       return { ok: true, plaintext: cached };
     }
@@ -143,14 +177,19 @@ async function receiveLocked(
       };
     }
 
-    const plaintext = bytesToUtf8(decoded.plaintext);
+    const plaintext = decoded.plaintext;
     const written = await deps.sessionStore.write(
       contactUserId,
       decoded.nextState,
       stored.generation,
-      { messageId, plaintext }
+      { messageId, envelopeDigest: digest, plaintext }
     );
     if (!written.ok) {
+      // The other process may have won the race for this very message.
+      const winner = await cachedFor(deps.sessionStore, contactUserId, messageId, digest);
+      if (winner !== null) {
+        return { ok: true, plaintext: winner };
+      }
       return { ok: false, reason: 'state_conflict' };
     }
     return { ok: true, plaintext };
@@ -184,7 +223,7 @@ export async function notificationDecrypt(
   if (!result.ok) {
     return result;
   }
-  return { ok: true, senderUserId: fromUserId, previewText: result.plaintext };
+  return { ok: true, senderUserId: fromUserId, previewText: bytesToUtf8(result.plaintext) };
 }
 
 /**
@@ -204,5 +243,5 @@ export async function receiveEnvelopeShared(
   if (!result.ok) {
     return result;
   }
-  return { ok: true, plaintext: utf8ToBytes(result.plaintext) };
+  return { ok: true, plaintext: result.plaintext };
 }

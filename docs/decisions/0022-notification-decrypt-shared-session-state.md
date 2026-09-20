@@ -30,7 +30,9 @@ would still need the ciphertext and state to be reachable and would leave the
    cross-process `Lock` and uses a per-contact monotonic `generation`
    integer: read `{state, generation}` under the lock, decode, then
    `write(state', expectedGeneration)` as an atomic compare-and-set that
-   bumps generation by one. A stale write is rejected (`state_conflict`) and
+   bumps generation by one. (`expectedGeneration` is the generation read
+   under the lock; a missing session returns `no_session` first, so it is
+   never 0 here -- session creation is the handshake path, not this module.) A stale write is rejected (`state_conflict`) and
    never overwrites newer state. Together, lock plus CAS mean neither process
    can advance the same ratchet step twice or leave divergent chain keys
    (belt and braces: the lock prevents the race, the CAS detects a lock that
@@ -42,14 +44,22 @@ would still need the ciphertext and state to be reachable and would leave the
 4. **Envelope handling.** On a successful extension decrypt, the advanced
    ratchet state and the plaintext keyed by message id are written in one
    atomic operation. The main app's later receive of that message id looks up
-   the stored plaintext (`getDecrypted`) and treats it as delivered rather
+   the stored record (`getDecrypted`) and treats it as delivered rather
    than decoding again (which would be rejected as out-of-order, since the
-   ratchet has already moved). Chosen over "leave the state unadvanced and
+   ratchet has already moved). The record is `{envelopeDigest =
+   sha256(envelope), plaintext}` with plaintext stored as exact bytes (the
+   ratchet key is single-use, so decoding must be lossless); it is served
+   only when the presented envelope's digest matches, so a relay-chosen
+   message id alone can never select stored plaintext (mismatch falls
+   through to the normal decode and fails closed). If a CAS write is stale,
+   the record is re-checked once (digest-matched) before reporting
+   `state_conflict`, since the winner may have decrypted this same message. Chosen over "leave the state unadvanced and
    re-decrypt in-app" because the ratchet keys are single-use (no skipped-key
    store, ADR 0005): the extension cannot both show a preview and leave the
    state untouched. The stored plaintext is subject to ADR 0007 (local
    history is plaintext); the main app moves it into the message database
-   and deletes the shared-store record after ingest.
+   and deletes the shared-store record after ingest via
+   `SessionStore.deleteDecrypted`.
 5. **iOS NSE limits.** The NSE has a ~24 MB memory ceiling and ~30 s. The
    Kyber/Dilithium path here is one ML-DSA-65 signature verification, an
    X25519/HKDF chain step and XChaCha20-Poly1305 decrypt (ratchet envelopes,

@@ -12,6 +12,7 @@ import {
   type FetchEnvelope,
   type Lock,
   type SessionStore,
+  type StoredDecrypted,
   type StoredSession,
   type WriteResult,
 } from '../notificationDecrypt';
@@ -43,13 +44,13 @@ function setup() {
     selfKyberSecretKey: bobKyber.secretKey,
   });
   let aliceState = aliceInit;
-  function aliceSends(text: string): Uint8Array {
+  function aliceSends(text: string | Uint8Array): Uint8Array {
     const send = deriveNextSendingMessageKey(aliceState);
     aliceState = send.nextState;
     return encodeRatchetEnvelope({
       header: send.header,
       messageKey: send.messageKey,
-      plaintext: utf8ToBytes(text),
+      plaintext: typeof text === 'string' ? utf8ToBytes(text) : text,
       selfUserId: aliceId,
       contactUserId: bobId,
       signingSecretKey: aliceDilithium.secretKey,
@@ -60,7 +61,7 @@ function setup() {
 
 class FakeStore implements SessionStore {
   sessions = new Map<string, StoredSession>();
-  decrypted = new Map<string, string>();
+  decrypted = new Map<string, StoredDecrypted>();
   events: string[] = [];
   async read(contactId: string) {
     this.events.push('read');
@@ -70,18 +71,24 @@ class FakeStore implements SessionStore {
     contactId: string,
     state: RatchetState,
     expectedGeneration: number,
-    decrypted?: { messageId: string; plaintext: string }
+    decrypted?: { messageId: string } & StoredDecrypted
   ): Promise<WriteResult> {
     this.events.push('write');
     const cur = this.sessions.get(contactId);
     if ((cur?.generation ?? 0) !== expectedGeneration) return { ok: false, reason: 'stale' };
     const generation = expectedGeneration + 1;
     this.sessions.set(contactId, { state, generation });
-    if (decrypted) this.decrypted.set(`${contactId}:${decrypted.messageId}`, decrypted.plaintext);
+    if (decrypted) this.decrypted.set(`${contactId}:${decrypted.messageId}`, {
+        envelopeDigest: decrypted.envelopeDigest,
+        plaintext: decrypted.plaintext,
+      });
     return { ok: true, generation };
   }
   async getDecrypted(contactId: string, messageId: string) {
     return this.decrypted.get(`${contactId}:${messageId}`) ?? null;
+  }
+  async deleteDecrypted(contactId: string, messageId: string) {
+    this.decrypted.delete(`${contactId}:${messageId}`);
   }
 }
 
@@ -282,5 +289,59 @@ describe('interleaved notification decrypt and app receive', () => {
     const s = store.sessions.get(aliceId)!;
     expect(s.state.receiveMessageNumber).toBe(1);
     expect(s.generation).toBe(2);
+  });
+});
+
+describe('cache binding, byte-exact plaintext, stale-write recheck', () => {
+  it('B1: cache hit with a different envelope under a known messageId does not return stored plaintext', async () => {
+    const b = build(null);
+    const env = b.aliceSends('genuine');
+    const first = await receiveEnvelopeShared(aliceId, 'k', env, b.deps);
+    expect(first.ok).toBe(true);
+    const garbage = new Uint8Array(4000).fill(9);
+    const viaNotification = await notificationDecrypt(aliceId, {
+      ...b.deps,
+      fetchEnvelope: async () => ({ ok: true as const, messageId: 'k', envelope: garbage }),
+    });
+    expect(viaNotification).toEqual({ ok: false, reason: 'corrupt_envelope' });
+    const viaApp = await receiveEnvelopeShared(aliceId, 'k', garbage, b.deps);
+    expect(viaApp).toEqual({ ok: false, reason: 'corrupt_envelope' });
+  });
+
+  it('B2: non-UTF-8 body round-trips byte-exact through the shared store', async () => {
+    const b = build(null);
+    const env = b.aliceSends(Uint8Array.of(0xff, 0x80, 0x00));
+    const first = await receiveEnvelopeShared(aliceId, 'bin', env, b.deps);
+    expect(first.ok && Array.from(first.plaintext)).toEqual([0xff, 0x80, 0x00]);
+    const second = await receiveEnvelopeShared(aliceId, 'bin', env, b.deps);
+    expect(second.ok && Array.from(second.plaintext)).toEqual([0xff, 0x80, 0x00]);
+  });
+
+  it('B3: deleteDecrypted removes the record', async () => {
+    const b = build(null);
+    const env = b.aliceSends('x');
+    await receiveEnvelopeShared(aliceId, 'd', env, b.deps);
+    expect(await b.store.getDecrypted(aliceId, 'd')).not.toBeNull();
+    await b.store.deleteDecrypted(aliceId, 'd');
+    expect(await b.store.getDecrypted(aliceId, 'd')).toBeNull();
+  });
+
+  it('B4: stale write rechecks the cache and returns the winner plaintext', async () => {
+    const b = build(null);
+    const env = b.aliceSends('winner');
+    const store = b.store;
+    const realWrite = store.write.bind(store);
+    let first = true;
+    store.write = async (c, st, g, d) => {
+      if (first) {
+        first = false;
+        await realWrite(c, st, g, d); // the other process wins the race
+      }
+      return realWrite(c, st, g, d); // ours is now stale
+    };
+    const r = await receiveEnvelopeShared(aliceId, 'w', env, b.deps);
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error('expected ok');
+    expect(bytesToUtf8(r.plaintext)).toBe('winner');
   });
 });
