@@ -59,7 +59,7 @@ An open PR with `Closes #N` means in-progress; PR review/CI state replaces the o
 5. **Crypto gate**: anything touching `apps/api/src/crypto/**`, `apps/api/src/auth/**`, or `apps/mobile/src/crypto/**` requires the `pqc-crypto-change` skill and `crypto-reviewer` sign-off before merge.
 6. Never poll CI with `sleep` / repeated `gh pr checks`. Lane agents push and stop; `ci-watch` runs one blocking `gh run watch`.
 7. **Ceremony proportional to diff.** Product work uses issues + Coverage. Harness / docs / CI / root-config (`.claude/**`, `.github/**`, `docs/**`, `*.md`, `.moon/**`, `.gitignore`, `docker-compose.yml`, `.env.example`) is the **chore** lane: direct PR by the orchestrator, no issue, no `Closes #N`, no Coverage table (`## Testing recommendation: non-logic` instead). Spec/plan only for product features touching ≥3 files of new logic.
-8. Prefer `Read` / `Grep` / `Glob` over shell `cat` / `grep` / `find` / `sed`. Do not prefix every Bash call with `cd` — use absolute paths or the worktree cwd.
+8. Prefer `Read` / `Grep` / `Glob` over shell `cat` / `grep` / `find` / `sed`. Do not prefix every Bash call with `cd` — use absolute paths or the worktree cwd. In an isolated worktree the harness refuses compound Bash it cannot verify (`&&` chains, heredocs, `cat > file`); create files with `Write` / `Edit` and run one simple command per Bash call.
 9. **TDD (iron law):** no production code without a failing test first for features, bug fixes, and behavior changes. Mechanics live in the `test-driven-development` skill. Bugs also run `systematic-debugging` (root cause) before the fix.
 
 ## Worktree recovery
