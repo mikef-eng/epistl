@@ -39,11 +39,32 @@ tasks:
     options:
       cache: false
       runInCI: false
+  test-build:
+    command: "cargo"
+    # Builds the test binaries *and* the `migrate` bin in one cargo
+    # invocation. `api:migrate` (`cargo run --bin migrate`) resolves a
+    # smaller feature set (no dev-dependencies), so building it first
+    # recompiles ~60 shared crates a second time; here dev-dep feature
+    # unification makes the test build reuse the same artifacts (issue #254).
+    args: ["nextest", "run", "--no-run"]
+    options:
+      cache: false
+  test-migrate:
+    command: "sh"
+    # Runs the `migrate` binary already produced by `test-build` (no extra
+    # cargo build). Creates the per-worktree DB + NATS stream on demand.
+    args: ["-c", "\"${CARGO_TARGET_DIR:-../../target}/debug/migrate\""]
+    deps:
+      - "test-build"
+    options:
+      cache: false
   test:
     command: "cargo"
+    # Requires cargo-nextest: `cargo install cargo-nextest --locked` (or a
+    # prebuilt binary, https://nexte.st/docs/installation/pre-built-binaries/).
     args: ["nextest", "run", "--config-file", ".config/nextest.toml"]
     deps:
-      - "migrate"
+      - "test-migrate"
     options:
       cache: false
   dev:
