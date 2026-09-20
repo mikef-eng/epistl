@@ -7,16 +7,27 @@ use std::path::Path;
 const BEGIN: &str = "# >>> epistl dev-setup >>>";
 const END: &str = "# <<< epistl dev-setup <<<";
 
-/// Ensure `block_body` (without markers) is present in `profile_path`,
-/// wrapped in the epistl markers. Replaces any previous epistl block.
+/// Ensure each non-empty line of `block_body` is present in the epistl
+/// marker block in `profile_path`. Merges with any existing epistl block
+/// (union by exact line) so node / moon / android exports accumulate
+/// instead of last-writer-wins.
 pub fn ensure_profile_block(profile_path: &Path, block_body: &str) -> io::Result<ProfileOutcome> {
-    let new_block = format!("{BEGIN}\n{block_body}\n{END}\n");
+    let incoming: Vec<&str> = block_body
+        .lines()
+        .map(str::trim_end)
+        .filter(|l| !l.is_empty())
+        .collect();
 
     let existing = if profile_path.exists() {
         fs::read_to_string(profile_path)?
     } else {
         String::new()
     };
+
+    let prior_lines = extract_block_lines(&existing);
+    let merged = merge_lines(prior_lines.as_deref().unwrap_or(&[]), &incoming);
+    let new_body = merged.join("\n");
+    let new_block = format!("{BEGIN}\n{new_body}\n{END}\n");
 
     let updated = match replace_block(&existing, &new_block) {
         Some(s) if s == existing => {
@@ -39,6 +50,33 @@ pub fn ensure_profile_block(profile_path: &Path, block_body: &str) -> io::Result
     }
     fs::write(profile_path, updated)?;
     Ok(ProfileOutcome::Updated)
+}
+
+/// Lines currently inside the epistl marker block, if any.
+fn extract_block_lines(existing: &str) -> Option<Vec<String>> {
+    let start = existing.find(BEGIN)?;
+    let end_rel = existing[start..].find(END)?;
+    let body_start = start + BEGIN.len();
+    let body_end = start + end_rel;
+    let body = existing[body_start..body_end].trim_matches('\n');
+    Some(
+        body.lines()
+            .map(str::trim_end)
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect(),
+    )
+}
+
+/// Preserve existing order; append any incoming line not already present.
+fn merge_lines(existing: &[String], incoming: &[&str]) -> Vec<String> {
+    let mut out = existing.to_vec();
+    for line in incoming {
+        if !out.iter().any(|e| e == line) {
+            out.push((*line).to_string());
+        }
+    }
+    out
 }
 
 /// What `ensure_profile_block` did.
@@ -112,21 +150,47 @@ mod tests {
     }
 
     #[test]
-    fn replaces_existing_block() {
-        let dir = TempDir::new("replace");
+    fn merges_new_lines_without_dropping_existing() {
+        let dir = TempDir::new("merge");
         let profile = dir.path.join(".bashrc");
         fs::write(
             &profile,
-            format!("# top\n{BEGIN}\nexport FOO=old\n{END}\n# bottom\n"),
+            format!("# top\n{BEGIN}\neval \"$(fnm env)\"\nexport PATH=\"$HOME/.local/bin:$PATH\"\n{END}\n# bottom\n"),
         )
         .unwrap();
-        let outcome = ensure_profile_block(&profile, "export FOO=new").unwrap();
+        let outcome = ensure_profile_block(
+            &profile,
+            "export PATH=\"$HOME/.moon/bin:$HOME/.local/bin:$PATH\"",
+        )
+        .unwrap();
         assert_eq!(outcome, ProfileOutcome::Updated);
         let contents = fs::read_to_string(&profile).unwrap();
-        assert!(contents.contains("export FOO=new"));
-        assert!(!contents.contains("export FOO=old"));
+        assert!(contents.contains("eval \"$(fnm env)\""));
+        assert!(contents.contains("export PATH=\"$HOME/.local/bin:$PATH\""));
+        assert!(contents.contains("export PATH=\"$HOME/.moon/bin:$HOME/.local/bin:$PATH\""));
         assert!(contents.contains("# top"));
         assert!(contents.contains("# bottom"));
+    }
+
+    #[test]
+    fn node_then_moon_lines_both_survive() {
+        let dir = TempDir::new("node-moon");
+        let profile = dir.path.join(".bashrc");
+        ensure_profile_block(
+            &profile,
+            "eval \"$(fnm env)\"\nexport PATH=\"$HOME/.local/bin:$PATH\"",
+        )
+        .unwrap();
+        ensure_profile_block(
+            &profile,
+            "export PATH=\"$HOME/.moon/bin:$HOME/.local/bin:$PATH\"",
+        )
+        .unwrap();
+        let contents = fs::read_to_string(&profile).unwrap();
+        assert!(contents.contains("eval \"$(fnm env)\""));
+        assert!(contents.contains("export PATH=\"$HOME/.moon/bin:$HOME/.local/bin:$PATH\""));
+        // Exactly one epistl block.
+        assert_eq!(contents.matches(BEGIN).count(), 1);
     }
 
     #[test]
