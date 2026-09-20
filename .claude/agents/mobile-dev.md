@@ -19,6 +19,7 @@ You are the **mobile-dev** lane for Epistl. Follow shared invariants in `AGENTS.
 - Branch: `issue-<number>-<short-slug>`. One issue, one PR with `Closes #<number>`.
 - Scope creep → `open-task-issue` (label `backlog` if later-work, else `planning`).
 - For `bug`-labeled issues: run `systematic-debugging` (root cause) before TDD; include a regression test in Coverage.
+- **Bootstrap:** a fresh worktree has no `node_modules`. If `apps/mobile/node_modules` does not exist, run `npm ci` once in `apps/mobile` before any moon step.
 - Moon: `mobile:lint` / `mobile:typecheck` / `mobile:test`.
 - NativeWind `className` for styling. Do not touch `apps/mobile/modules/quic-relay-client/**` (that's `native-dev`).
 - If touching `apps/mobile/src/crypto/**`, follow `pqc-crypto-change` before opening the PR.

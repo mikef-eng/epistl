@@ -1,5 +1,7 @@
 # 0019: Area-lane harness replaces Coder → Tester → Reviewer
 
+> **Amended by [0023](0023-staged-features-and-auto-merge.md):** `ci-watch` is removed; `merge-gate` arms auto-merge instead of waiting on CI, and multi-issue features stage on `feat/<slug>` before one gated PR into `main`.
+
 ## Context
 
 The Planner → Coder → Tester → Reviewer pipeline worked, but transcript

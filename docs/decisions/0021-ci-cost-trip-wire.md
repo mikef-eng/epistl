@@ -1,5 +1,7 @@
 # 0021: CI speed trip-wire — GitHub CI checks are droppable until outside PRs
 
+> **Superseded by [0023](0023-staged-features-and-auto-merge.md).** After #254, warm `rust (api)` measured 2m56s (was 4m53s), meeting the ~3 minute target; the trip-wire was not tripped.
+
 ## Context
 
 On 2026-09-20 a ~50-line, single-file API change (#245 / PR #246) took
