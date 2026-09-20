@@ -51,7 +51,8 @@ const mockedDeclineContactRequest = declineContactRequest as jest.Mock;
 
 const TARGET_USER_ID = 'u1';
 const TARGET_EMAIL = 'alice@example.com';
-const ROUTE = { params: { userId: TARGET_USER_ID, email: TARGET_EMAIL } };
+const TARGET_USERNAME = 'alice';
+const ROUTE = { params: { userId: TARGET_USER_ID, username: TARGET_USERNAME, email: TARGET_EMAIL } };
 
 const EMPTY_CONTACTS = { contacts: [] };
 const EMPTY_REQUESTS = { incoming: [], outgoing: [] };
@@ -79,13 +80,13 @@ describe('UserProfileScreen', () => {
     jest.clearAllMocks();
   });
 
-  it('renders the target email regardless of relationship state', async () => {
+  it('renders the target username as the title regardless of relationship state', async () => {
     mockedListContacts.mockResolvedValueOnce(EMPTY_CONTACTS);
     mockedListContactRequests.mockResolvedValueOnce(EMPTY_REQUESTS);
 
     await renderUserProfileScreen();
 
-    expect(screen.getByText(TARGET_EMAIL)).toBeTruthy();
+    expect(screen.getByText(TARGET_USERNAME)).toBeTruthy();
   });
 
   describe('unconnected', () => {
@@ -120,7 +121,7 @@ describe('UserProfileScreen', () => {
       });
       await user.press(screen.getByRole('button', { name: 'Add friend' }));
 
-      expect(mockedSendContactRequest).toHaveBeenCalledWith(TARGET_EMAIL);
+      expect(mockedSendContactRequest).toHaveBeenCalledWith({ username: TARGET_USERNAME });
       await waitFor(() => {
         expect(screen.getByText('Request pending')).toBeTruthy();
       });
@@ -164,7 +165,7 @@ describe('UserProfileScreen', () => {
       mockedListContacts.mockResolvedValue(EMPTY_CONTACTS);
       mockedListContactRequests.mockResolvedValue({
         incoming: [],
-        outgoing: [{ id: 'r1', user_id: TARGET_USER_ID, email: TARGET_EMAIL, created_at: 'now' }],
+        outgoing: [{ id: 'r1', user_id: TARGET_USER_ID, email: TARGET_EMAIL, username: TARGET_USERNAME, created_at: 'now' }],
       });
     });
 
@@ -214,7 +215,7 @@ describe('UserProfileScreen', () => {
     beforeEach(() => {
       mockedListContacts.mockResolvedValue(EMPTY_CONTACTS);
       mockedListContactRequests.mockResolvedValue({
-        incoming: [{ id: 'r1', user_id: TARGET_USER_ID, email: TARGET_EMAIL, created_at: 'now' }],
+        incoming: [{ id: 'r1', user_id: TARGET_USER_ID, email: TARGET_EMAIL, username: TARGET_USERNAME, created_at: 'now' }],
         outgoing: [],
       });
     });

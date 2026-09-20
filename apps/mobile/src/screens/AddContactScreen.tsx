@@ -34,7 +34,7 @@ const SEARCH_DEBOUNCE_MS = 300;
  * is handled separately below since it carries a `request_id` and renders
  * an "Accept" prompt rather than a plain error message. */
 const ERROR_MESSAGES: Record<string, string> = {
-  user_not_found: 'No user with that email',
+  user_not_found: 'No user with that username',
   already_pending: 'You already sent this person a request',
   already_contact: 'Already in your contacts',
   cannot_add_self: "You can't add yourself",
@@ -49,7 +49,7 @@ function messageFor(err: unknown): string {
 
 interface CrossedRequest {
   requestId: string;
-  email: string;
+  username: string;
 }
 
 /** Removes a key from a `Record` by producing a fresh object -- mirrors
@@ -151,7 +151,11 @@ export default function AddContactScreen({ navigation }: Props) {
   }, [query]);
 
   function handleViewProfile(result: SearchUser) {
-    navigation.navigate('UserProfile', { userId: result.user_id, email: result.email });
+    navigation.navigate('UserProfile', {
+      userId: result.user_id,
+      username: result.username,
+      email: result.email,
+    });
   }
 
   /** Sends a contact request directly from a result row's "+" button --
@@ -167,11 +171,11 @@ export default function AddContactScreen({ navigation }: Props) {
     setAcceptError(null);
     setAccepted(false);
     try {
-      await sendContactRequest(result.email);
+      await sendContactRequest({ username: result.username });
       setAddedIds((prev) => new Set(prev).add(result.user_id));
     } catch (err) {
       if (err instanceof IncomingRequestExistsError) {
-        setCrossedRequest({ requestId: err.requestId, email: result.email });
+        setCrossedRequest({ requestId: err.requestId, username: result.username });
       } else {
         setAddErrors((prev) => ({ ...prev, [result.user_id]: messageFor(err) }));
       }
@@ -243,7 +247,7 @@ export default function AddContactScreen({ navigation }: Props) {
       {crossedRequest !== null ? (
         <View className="mb-4">
           <Text className="mb-2 text-center text-black dark:text-white">
-            {crossedRequest.email} already sent you a request
+            {crossedRequest.username} already sent you a request
           </Text>
           {accepted ? (
             <Text className="text-center text-green-600">Request accepted</Text>
@@ -281,14 +285,15 @@ export default function AddContactScreen({ navigation }: Props) {
               className="flex-1 pr-3"
               onPress={() => handleViewProfile(result)}
             >
-              <Text className="text-base text-black dark:text-white">{result.email}</Text>
+              <Text className="text-base text-black dark:text-white">{result.username}</Text>
+              <Text className="text-sm text-gray-500 dark:text-gray-400">{result.email}</Text>
             </Pressable>
             {addedIds.has(result.user_id) ? (
               <Text className="text-sm font-semibold text-green-600">Sent</Text>
             ) : (
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`Add ${result.email}`}
+                accessibilityLabel={`Add ${result.username}`}
                 disabled={addingIds.has(result.user_id)}
                 onPress={() => handleAdd(result)}
                 className={`rounded-full px-3 py-1 ${

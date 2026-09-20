@@ -83,7 +83,7 @@ describe('AddContactScreen', () => {
 
   it('calls the search endpoint once the query reaches the minimum length, debounced', async () => {
     mockedSearchUsers.mockResolvedValueOnce({
-      users: [{ user_id: 'u1', email: 'alice@example.com' }],
+      users: [{ user_id: 'u1', email: 'alice@example.com', username: 'alice' }],
     });
     const { user } = await renderAddContactScreen();
 
@@ -93,27 +93,27 @@ describe('AddContactScreen', () => {
       expect(mockedSearchUsers).toHaveBeenCalledWith('ali');
     });
     await waitFor(() => {
-      expect(screen.getByText('alice@example.com')).toBeTruthy();
+      expect(screen.getByText('alice')).toBeTruthy();
     });
   });
 
   it('renders each result with two independent tap targets: a row and an add button', async () => {
     mockedSearchUsers.mockResolvedValueOnce({
-      users: [{ user_id: 'u1', email: 'alice@example.com' }],
+      users: [{ user_id: 'u1', email: 'alice@example.com', username: 'alice' }],
     });
     const { user } = await renderAddContactScreen();
 
     await user.type(screen.getByPlaceholderText('Search by email'), 'ali');
 
     await waitFor(() => {
-      expect(screen.getByText('alice@example.com')).toBeTruthy();
+      expect(screen.getByText('alice')).toBeTruthy();
     });
-    expect(screen.getByRole('button', { name: 'Add alice@example.com' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Add alice' })).toBeTruthy();
   });
 
   it('tapping the add button calls sendContactRequest and does not navigate', async () => {
     mockedSearchUsers.mockResolvedValueOnce({
-      users: [{ user_id: 'u1', email: 'alice@example.com' }],
+      users: [{ user_id: 'u1', email: 'alice@example.com', username: 'alice' }],
     });
     mockedSendContactRequest.mockResolvedValueOnce({
       id: 'r1',
@@ -126,33 +126,34 @@ describe('AddContactScreen', () => {
 
     await user.type(screen.getByPlaceholderText('Search by email'), 'ali');
     await waitFor(() => {
-      expect(screen.getByText('alice@example.com')).toBeTruthy();
+      expect(screen.getByText('alice')).toBeTruthy();
     });
 
-    await user.press(screen.getByRole('button', { name: 'Add alice@example.com' }));
+    await user.press(screen.getByRole('button', { name: 'Add alice' }));
 
     await waitFor(() => {
-      expect(mockedSendContactRequest).toHaveBeenCalledWith('alice@example.com');
+      expect(mockedSendContactRequest).toHaveBeenCalledWith({ username: 'alice' });
       expect(screen.getByText('Sent')).toBeTruthy();
     });
     expect(navigation.navigate).not.toHaveBeenCalled();
   });
 
-  it('tapping the row navigates to UserProfile with the result id/email and does not send a request', async () => {
+  it('tapping the row navigates to UserProfile with the result id/username/email and does not send a request', async () => {
     mockedSearchUsers.mockResolvedValueOnce({
-      users: [{ user_id: 'u1', email: 'alice@example.com' }],
+      users: [{ user_id: 'u1', email: 'alice@example.com', username: 'alice' }],
     });
     const { navigation, user } = await renderAddContactScreen();
 
     await user.type(screen.getByPlaceholderText('Search by email'), 'ali');
     await waitFor(() => {
-      expect(screen.getByText('alice@example.com')).toBeTruthy();
+      expect(screen.getByText('alice')).toBeTruthy();
     });
 
-    await user.press(screen.getByText('alice@example.com'));
+    await user.press(screen.getByText('alice'));
 
     expect(navigation.navigate).toHaveBeenCalledWith('UserProfile', {
       userId: 'u1',
+      username: 'alice',
       email: 'alice@example.com',
     });
     expect(mockedSendContactRequest).not.toHaveBeenCalled();
@@ -184,13 +185,13 @@ describe('AddContactScreen', () => {
   });
 
   it.each([
-    ['user_not_found', 'No user with that email'],
+    ['user_not_found', 'No user with that username'],
     ['already_pending', 'You already sent this person a request'],
     ['already_contact', 'Already in your contacts'],
     ['cannot_add_self', "You can't add yourself"],
   ])('shows "%s" as "%s" on the row when the add fails', async (code, expectedMessage) => {
     mockedSearchUsers.mockResolvedValueOnce({
-      users: [{ user_id: 'u1', email: 'alice@example.com' }],
+      users: [{ user_id: 'u1', email: 'alice@example.com', username: 'alice' }],
     });
     const { ApiError } = jest.requireMock('../src/api/client');
     mockedSendContactRequest.mockRejectedValueOnce(new ApiError(code, 400));
@@ -198,10 +199,10 @@ describe('AddContactScreen', () => {
 
     await user.type(screen.getByPlaceholderText('Search by email'), 'ali');
     await waitFor(() => {
-      expect(screen.getByText('alice@example.com')).toBeTruthy();
+      expect(screen.getByText('alice')).toBeTruthy();
     });
 
-    await user.press(screen.getByRole('button', { name: 'Add alice@example.com' }));
+    await user.press(screen.getByRole('button', { name: 'Add alice' }));
 
     await waitFor(() => {
       expect(screen.getByText(expectedMessage)).toBeTruthy();
@@ -218,14 +219,14 @@ describe('AddContactScreen', () => {
     async function searchAndAdd(user: ReturnType<typeof userEvent.setup>) {
       await user.type(screen.getByPlaceholderText('Search by email'), 'ali');
       await waitFor(() => {
-        expect(screen.getByText('alice@example.com')).toBeTruthy();
+        expect(screen.getByText('alice')).toBeTruthy();
       });
-      await user.press(screen.getByRole('button', { name: 'Add alice@example.com' }));
+      await user.press(screen.getByRole('button', { name: 'Add alice' }));
     }
 
     beforeEach(() => {
       mockedSearchUsers.mockResolvedValueOnce({
-        users: [{ user_id: 'u1', email: 'alice@example.com' }],
+        users: [{ user_id: 'u1', email: 'alice@example.com', username: 'alice' }],
       });
     });
 
@@ -236,7 +237,7 @@ describe('AddContactScreen', () => {
       await searchAndAdd(user);
 
       await waitFor(() => {
-        expect(screen.getByText('alice@example.com already sent you a request')).toBeTruthy();
+        expect(screen.getByText('alice already sent you a request')).toBeTruthy();
       });
       expect(screen.getByRole('button', { name: 'Accept' })).toBeTruthy();
     });
@@ -275,7 +276,7 @@ describe('AddContactScreen', () => {
       await waitFor(() => {
         expect(screen.getByText('Something went wrong')).toBeTruthy();
       });
-      expect(screen.getByText('alice@example.com already sent you a request')).toBeTruthy();
+      expect(screen.getByText('alice already sent you a request')).toBeTruthy();
       expect(screen.getByRole('button', { name: 'Accept' })).toBeTruthy();
     });
   });
