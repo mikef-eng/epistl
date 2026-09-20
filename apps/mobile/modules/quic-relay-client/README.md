@@ -56,17 +56,29 @@ a clean checkout. As of issue #156, this is automatic:
   four target ABIs (`arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`):
   - Skips the ABI entirely if its `jniLibs/<abi>` output is already newer
     than `packages/quic-relay-client`'s sources (crate root plus the
-    workspace `Cargo.lock`) -- a fast no-op once everything is built.
+    workspace `Cargo.lock`) **and** `libquic_relay_client.a` is present —
+    a fast no-op once everything is built.
   - Otherwise runs `rustup target add <triple>` if the Rust target isn't
     already installed, `cargo install cargo-ndk` if cargo-ndk isn't already
-    installed, and then `cargo ndk -t <abi> -o android/src/main/jniLibs
-    build --release --manifest-path <path-to-crate>/Cargo.toml`.
+    installed, runs `cargo ndk -t <abi> -o android/src/main/jniLibs build
+    --release --manifest-path <path-to-crate>/Cargo.toml`, and then
+    explicitly copies `target/<triple>/release/libquic_relay_client.a` to
+    `android/src/main/jniLibs/<abi>/`. **`cargo-ndk -o` only copies the
+    `.so`; the `.a` must be copied separately because CMakeLists.txt links
+    `my_rust_lib STATIC IMPORTED` against the `.a`, not the `.so`.**
 - The one prerequisite this script does **not** auto-install is the Android
   NDK itself. If it can't resolve one (via `ANDROID_NDK_HOME`/
   `ANDROID_NDK_ROOT`, or an `ndk/` directory under `ANDROID_HOME`/
   `ANDROID_SDK_ROOT`), the build fails fast with an error naming the
   missing env var and the exact `sdkmanager --install "ndk;<version>"`
   command to install one -- re-run the Android build once that finishes.
+
+Also wired into **stage-2 of `packages/dev-setup`** (issue #235): after
+the Android SDK/NDK setup succeeds, `dev-setup` invokes this script so the
+`.a` files are ready before the developer opens Android Studio or runs
+`./gradlew`. If the NDK is absent (API-only contributors), a clear advisory
+message is printed and bootstrap continues without failure. This is explicitly
+**not** wired into `npm prepare` or CI (see the original rationale below).
 
 See `docs/decisions/0013-quic-relay-client-android-native-build-bootstrap.md`
 for why this is an on-demand per-machine bootstrap rather than a CI

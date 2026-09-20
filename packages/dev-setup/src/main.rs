@@ -4,7 +4,7 @@
 
 use std::process::ExitCode;
 
-use dev_setup::tools::android::ensure_android;
+use dev_setup::tools::android::{ensure_android, ensure_native_built_android};
 use dev_setup::tools::docker::ensure_docker;
 use dev_setup::tools::ios::ensure_ios;
 use dev_setup::tools::moon::ensure_moon;
@@ -133,15 +133,53 @@ fn main() -> ExitCode {
     if !flags.skip_mobile {
         println!();
         println!("Mobile toolchains (optional; pass --skip-mobile to skip):");
-        for (name, outcome) in
-            ensure_android(&platform, &executor, &environment, &policy, check_only)
-        {
-            println!("{}", format_outcome(&name, &outcome));
+
+        let android_outcomes =
+            ensure_android(&platform, &executor, &environment, &policy, check_only);
+
+        // Did the Android SDK/NDK end up in a usable state?
+        let android_sdk_ok = android_outcomes.iter().any(|(name, outcome)| {
+            name == "android-sdk"
+                && matches!(outcome, ToolOutcome::Present(_) | ToolOutcome::Installed(_))
+        });
+
+        for (name, outcome) in &android_outcomes {
+            println!("{}", format_outcome(name, outcome));
             // Android items are optional unless the user asked to install and it failed.
             if matches!(outcome, ToolOutcome::Failed(_)) {
                 failed = true;
             }
         }
+
+        // Stage-2: pre-build the quic-relay-client native .a for all Android
+        // ABIs so `jniLibs/<abi>/libquic_relay_client.a` is ready before the
+        // developer runs `./gradlew` or Android Studio.
+        // Only attempt when:
+        //   - the SDK/NDK is available (android-sdk is Present/Installed), AND
+        //   - we are not in check-only mode (--check never mutates state).
+        // A missing NDK produces a `Skipped` outcome with a clear advisory
+        // message rather than a hard failure — API-only contributors have no NDK.
+        if android_sdk_ok && !check_only {
+            let native_outcome = ensure_native_built_android(&repo_root, &executor);
+            println!(
+                "{}",
+                format_outcome("quic-relay-client-native", &native_outcome)
+            );
+            if matches!(native_outcome, ToolOutcome::Failed(_)) {
+                failed = true;
+            }
+        } else if !android_sdk_ok && !check_only {
+            println!(
+                "{}",
+                format_outcome(
+                    "quic-relay-client-native",
+                    &ToolOutcome::Skipped(
+                        "Android NDK not available — run bootstrap again once NDK is installed to pre-build the native .a".into()
+                    )
+                )
+            );
+        }
+
         for (name, outcome) in ensure_ios(&platform, &executor, &environment, &policy, check_only) {
             println!("{}", format_outcome(&name, &outcome));
             if matches!(outcome, ToolOutcome::Failed(_)) {
