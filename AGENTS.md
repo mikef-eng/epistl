@@ -76,6 +76,8 @@ git branch -D issue-<n>-<slug>   # only when it has zero unique commits vs main
 
 `/ship` preflight must detect an existing `issue-<n>-*` branch or matching worktree and offer resume-or-reset before dispatching.
 
+`/ship` also ends with a post-merge sync: `git pull --ff-only` on a clean `main`, then delete the merged issue's leftover local `issue-<n>-*` / `worktree-agent-*` branches (only when the PR is confirmed `MERGED`). `merge-gate` merges on GitHub only and never touches the local checkout.
+
 ## Architecture decisions
 
 `docs/decisions/` holds durable choices that must not be silently contradicted. Check it before conflicting. Notable:

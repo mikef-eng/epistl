@@ -15,5 +15,9 @@ Orchestrate shipping GitHub issue(s) $ARGUMENTS as the **lead dispatcher** (you 
 4. **Parallelism:** mobile, native, ui, and api lanes may all run concurrently. Per-worktree Postgres + NATS isolation (issue #219) means multiple `api-dev` lanes no longer collide. After each api-dev PR merges, remind the human to run `moon run api:db-prune` or `moon run api:db-drop` to clean up worktree databases.
 5. Dispatch each lane in background with the **full issue body inlined** in the prompt (title, goal, AC, out of scope, notes). Tell it not to re-fetch the issue. If the issue has the `bug` label, tell the lane to run `systematic-debugging` (root cause) before TDD.
 6. When a lane returns a PR URL: run `ci-watch` on that PR, then `merge-gate`. If merge-gate blocks, stop that issue and report; continue other issues.
-7. Report final PR URLs, merge status per issue.
-8. Remind the human: **/clear before the next batch** so this session does not accumulate orchestrator context.
+7. **Post-merge sync (after all merges in the batch):** merge-gate merges on GitHub only, so the local checkout is left behind and the lane's `worktree-agent-*` branch is left over. Fix that here, in the main checkout:
+   - `git fetch origin --prune`. Only if the current branch is `main` and the tree is clean (`git status --porcelain` empty), run `git pull --ff-only`. Otherwise skip the pull and tell the human why (wrong branch, dirty tree, or non-fast-forward). Never stash, reset, or force.
+   - For each shipped issue, delete its leftover local branches (`issue-<n>-*` and the lane's `worktree-agent-*` branch) **only if** `gh pr view <pr#> --json state -q .state` is `MERGED` and no worktree under `.claude/worktrees/` still uses the branch. Squash merges leave the branch commits unmerged by SHA, so use `git branch -D` for these confirmed-merged branches only. Never touch a branch whose PR is not merged.
+   - Report what was pulled and deleted.
+8. Report final PR URLs, merge status per issue.
+9. Remind the human: **/clear before the next batch** so this session does not accumulate orchestrator context.
