@@ -155,7 +155,7 @@ mod tests {
         let profile = dir.path.join(".bashrc");
         fs::write(
             &profile,
-            format!("# top\n{BEGIN}\neval \"$(fnm env)\"\nexport PATH=\"$HOME/.local/bin:$PATH\"\n{END}\n# bottom\n"),
+            format!("# top\n{BEGIN}\nexport PATH=\"$HOME/.local/share/fnm:$HOME/.fnm:$PATH\"\neval \"$(fnm env)\"\nexport PATH=\"$HOME/.local/bin:$PATH\"\n{END}\n# bottom\n"),
         )
         .unwrap();
         let outcome = ensure_profile_block(
@@ -165,6 +165,7 @@ mod tests {
         .unwrap();
         assert_eq!(outcome, ProfileOutcome::Updated);
         let contents = fs::read_to_string(&profile).unwrap();
+        assert!(contents.contains("export PATH=\"$HOME/.local/share/fnm:$HOME/.fnm:$PATH\""));
         assert!(contents.contains("eval \"$(fnm env)\""));
         assert!(contents.contains("export PATH=\"$HOME/.local/bin:$PATH\""));
         assert!(contents.contains("export PATH=\"$HOME/.moon/bin:$HOME/.local/bin:$PATH\""));
@@ -178,7 +179,7 @@ mod tests {
         let profile = dir.path.join(".bashrc");
         ensure_profile_block(
             &profile,
-            "eval \"$(fnm env)\"\nexport PATH=\"$HOME/.local/bin:$PATH\"",
+            "export PATH=\"$HOME/.local/share/fnm:$HOME/.fnm:$PATH\"\neval \"$(fnm env)\"\nexport PATH=\"$HOME/.local/bin:$PATH\"",
         )
         .unwrap();
         ensure_profile_block(
@@ -187,6 +188,7 @@ mod tests {
         )
         .unwrap();
         let contents = fs::read_to_string(&profile).unwrap();
+        assert!(contents.contains("export PATH=\"$HOME/.local/share/fnm:$HOME/.fnm:$PATH\""));
         assert!(contents.contains("eval \"$(fnm env)\""));
         assert!(contents.contains("export PATH=\"$HOME/.moon/bin:$HOME/.local/bin:$PATH\""));
         // Exactly one epistl block.
