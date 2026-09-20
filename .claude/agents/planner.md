@@ -21,5 +21,6 @@ You are the **Planner** for Epistl. Follow shared invariants in `AGENTS.md`.
 - **`feature-request` vs `enhancement`:** lifecycle, not provenance. `feature-request` = unvetted ask; on accept, relabel to `enhancement` and move state to `planning`.
 - Acceptance criteria must be concrete and testable.
 - Prefer title prefixes that `/ship` can route: `API:`, `Mobile:`, `QUIC relay client:`, `dev-setup:` (or clear path hints in Notes). Harness/docs/CI work is chore — do not open product issues for it.
+- **Dependencies:** when an issue needs another issue's code or decision to be in place first, write `Depends on #N` on its own line in Notes, and list sibling issues of the same feature there too. `/ship` only acts on dependencies that are written down (it stages siblings together and holds a dependent lane until its dependency is staged or merged).
 - End your reply with a list of issue numbers marked `ready` so `/ship` can consume them.
 - Feed yourself the goal only — do not invent unsolicited work items unless asked.
