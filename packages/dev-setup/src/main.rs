@@ -175,8 +175,24 @@ fn main() -> ExitCode {
         true
     } else if check_only {
         false
+    } else if !docker_ok || !moon_ok {
+        // Don't ask (and don't treat a later "n" as the reason for a red
+        // exit): start cannot succeed if docker/moon aren't ready.
+        println!();
+        println!(
+            "Start: skipped ({})",
+            if !docker_ok && !moon_ok {
+                "docker and moon not ready this session"
+            } else if !docker_ok {
+                "docker not ready this session"
+            } else {
+                "moon not ready this session"
+            }
+        );
+        false
     } else {
-        // Interactive: offer to start.
+        // Interactive: offer to start (default yes). Declining is not an
+        // error — exit status still reflects earlier tool failures only.
         use dev_setup::prompt::confirm_required;
         confirm_required(
             &policy,
