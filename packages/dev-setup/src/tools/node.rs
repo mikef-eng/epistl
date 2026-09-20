@@ -174,8 +174,11 @@ pub fn ensure_node(
     prepend_process_path(&path_dirs);
 
     // Persist fnm env in shell profile (merged with other tool exports).
+    // `--skip-shell` leaves the binary under ~/.local/share/fnm (or ~/.fnm);
+    // that dir must be on PATH before `eval "$(fnm env)"` or new shells
+    // report `fnm: command not found`.
     let profile = platform.shell_profile();
-    let body = "eval \"$(fnm env)\"\nexport PATH=\"$HOME/.local/bin:$PATH\"";
+    let body = "export PATH=\"$HOME/.local/share/fnm:$HOME/.fnm:$PATH\"\neval \"$(fnm env)\"\nexport PATH=\"$HOME/.local/bin:$PATH\"";
     let _ = ensure_profile_block(&profile, body);
 
     ToolOutcome::Installed(format!(
@@ -247,6 +250,18 @@ mod tests {
         assert!(cmd.contains("fnm default 22"));
         assert!(cmd.contains("command -v node"));
         assert!(cmd.contains("command -v fnm"));
+    }
+
+    #[test]
+    fn profile_body_puts_fnm_dir_on_path_before_eval() {
+        // Mirrors the body written by ensure_node — new shells must find
+        // `fnm` before `eval "$(fnm env)"`.
+        let body = "export PATH=\"$HOME/.local/share/fnm:$HOME/.fnm:$PATH\"\neval \"$(fnm env)\"\nexport PATH=\"$HOME/.local/bin:$PATH\"";
+        let eval_at = body.find("eval \"$(fnm env)\"").expect("eval line");
+        let path_at = body
+            .find("export PATH=\"$HOME/.local/share/fnm:")
+            .expect("fnm PATH line");
+        assert!(path_at < eval_at);
     }
 
     #[test]
