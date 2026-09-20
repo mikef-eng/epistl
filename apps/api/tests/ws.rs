@@ -319,9 +319,31 @@ async fn api_request(
     (status, json)
 }
 
-/// Every base table in the `public` schema, sorted, so tests can assert
-/// nothing anywhere was written during a relay.
-async fn table_row_counts(pool: &PgPool) -> Vec<(String, i64)> {
+/// Row counts, per base table in the `public` schema (sorted by name), of
+/// only the rows belonging to `user_ids`, so a test can assert nothing was
+/// written on those users' behalf during a relay.
+///
+/// Scoped rather than a global `COUNT(*)` so the snapshot is immune to other
+/// tests (other test binaries run in parallel under nextest, issue #254)
+/// creating users or contacts in the same database while the before/after
+/// snapshot is open. A row belongs to a user if `users.id` or any of
+/// `user_id` / `owner_user_id` / `contact_user_id` / `requester_user_id` /
+/// `recipient_user_id` holds one of the ids. Tables with none of those
+/// columns (e.g. `verifications`, keyed by email) count as 0.
+async fn scoped_row_counts(pool: &PgPool, user_ids: &[Uuid]) -> Vec<(String, i64)> {
+    let columns: Vec<(String, String)> = sqlx::query(
+        "SELECT table_name, column_name FROM information_schema.columns \
+         WHERE table_schema = 'public' \
+           AND ((table_name = 'users' AND column_name = 'id') \
+                OR column_name IN ('user_id', 'owner_user_id', 'contact_user_id', \
+                                   'requester_user_id', 'recipient_user_id'))",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("failed to list user-referencing columns")
+    .into_iter()
+    .map(|row| (row.get("table_name"), row.get("column_name")))
+    .collect();
     let tables: Vec<String> = sqlx::query(
         "SELECT table_name FROM information_schema.tables \
          WHERE table_schema = 'public' AND table_type = 'BASE TABLE' \
@@ -343,12 +365,31 @@ async fn table_row_counts(pool: &PgPool) -> Vec<(String, i64)> {
             table.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
             "unexpected table name from information_schema: {table}"
         );
-        let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-            "SELECT COUNT(*) FROM \"{table}\""
-        )))
-        .fetch_one(pool)
-        .await
-        .expect("failed to count rows");
+        let predicates: Vec<String> = columns
+            .iter()
+            .filter(|(t, _)| *t == table)
+            .map(|(_, column)| {
+                assert!(
+                    column
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_'),
+                    "unexpected column name from information_schema: {column}"
+                );
+                format!("\"{column}\" = ANY($1)")
+            })
+            .collect();
+        let count: i64 = if predicates.is_empty() {
+            0
+        } else {
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                "SELECT COUNT(*) FROM \"{table}\" WHERE {}",
+                predicates.join(" OR ")
+            )))
+            .bind(user_ids)
+            .fetch_one(pool)
+            .await
+            .expect("failed to count rows")
+        };
         counts.push((table, count));
     }
     counts
@@ -486,17 +527,18 @@ async fn send_relays_to_connected_contact_and_acks_sender() {
 async fn successful_send_does_not_change_any_table_row_counts() {
     let pool = test_pool().await;
     let state = test_state().await;
-    let (sender_token, _sender_id, _sender_email) =
+    let (sender_token, sender_id, _sender_email) =
         signup_user(&pool, state.clone(), "ws-no-persist-sender").await;
     let (recipient_token, recipient_id, recipient_email) =
         signup_user(&pool, state.clone(), "ws-no-persist-recipient").await;
+    let scope = [sender_id, recipient_id];
     add_contact(state.clone(), &sender_token, &recipient_email).await;
 
     let addr = spawn_server(state).await;
     let mut sender_ws = connect_ws(addr, &sender_token).await;
     let mut recipient_ws = connect_ws(addr, &recipient_token).await;
 
-    let before = table_row_counts(&pool).await;
+    let before = scoped_row_counts(&pool, &scope).await;
 
     let body_b64 = BASE64.encode(b"nothing about this ever touches disk");
     sender_ws
@@ -511,8 +553,26 @@ async fn successful_send_does_not_change_any_table_row_counts() {
     let _ = recv_json(&mut recipient_ws).await;
     let _ = recv_json(&mut sender_ws).await;
 
-    let after = table_row_counts(&pool).await;
+    let after = scoped_row_counts(&pool, &scope).await;
     assert_eq!(before, after, "a send must never write to Postgres");
+}
+
+/// Regression for issue #254: the no-persistence snapshot must not be
+/// perturbed by an unrelated user being created concurrently.
+#[tokio::test]
+async fn scoped_row_counts_ignore_rows_of_unrelated_users() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (_token, user_id, _email) = signup_user(&pool, state.clone(), "ws-scope-mine").await;
+    let before = scoped_row_counts(&pool, &[user_id]).await;
+    assert!(
+        before.iter().any(|(t, n)| t == "users" && *n == 1),
+        "the scope's own user row must be counted: {before:?}"
+    );
+
+    let _ = signup_user(&pool, state, "ws-scope-unrelated").await;
+
+    assert_eq!(before, scoped_row_counts(&pool, &[user_id]).await);
 }
 
 /// Acceptance criterion: a message to a real contact who isn't currently
@@ -578,16 +638,17 @@ async fn send_to_offline_contact_returns_queue_unavailable_when_jetstream_publis
         signup_user(&pool, state.clone(), "ws-queue-fail-recipient").await;
     add_contact(state.clone(), &sender_token, &recipient_email).await;
 
-    let jetstream = async_nats::jetstream::new(state.nats.clone());
-    // Deliberately remove the stream so JetStream has no responder for
-    // `epistl.offline.*` -- the same "stream missing" condition the
-    // acceptance criteria call out. Restored below so other tests (in this
-    // file or run afterward) still find it present; mirrors the
-    // delete-then-recreate pattern already used by
-    // `apps/api/tests/nats.rs`'s `ensure_offline_stream` test.
-    let _ = jetstream
-        .delete_stream(&api::nats::effective_stream_name())
-        .await;
+    // Deliberately point this test at a private, never-created JetStream
+    // stream so JetStream has no responder for its offline subject -- the
+    // "stream missing" condition the acceptance criteria call out. (It used
+    // to delete the shared stream and recreate it afterward, which breaks
+    // sibling tests under nextest's parallel, process-per-test execution --
+    // issue #254. Env mutation is safe here because nextest gives every
+    // test its own process.)
+    std::env::set_var(
+        "EPISTL_WORKTREE_SLUG",
+        format!("it-{}", Uuid::new_v4().simple()),
+    );
 
     let addr = spawn_server(state.clone()).await;
     let mut sender_ws = connect_ws(addr, &sender_token).await;
@@ -604,10 +665,6 @@ async fn send_to_offline_contact_returns_queue_unavailable_when_jetstream_publis
     assert_eq!(error["type"], "error");
     assert_eq!(error["code"], "queue_unavailable");
     assert!(error["message"].is_string());
-
-    api::nats::ensure_offline_stream(&jetstream)
-        .await
-        .expect("failed to restore the offline-delivery stream after the test");
 }
 
 #[tokio::test]

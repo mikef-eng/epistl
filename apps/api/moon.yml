@@ -41,7 +41,7 @@ tasks:
       runInCI: false
   test:
     command: "cargo"
-    args: ["test"]
+    args: ["nextest", "run", "--config-file", ".config/nextest.toml"]
     deps:
       - "migrate"
     options:

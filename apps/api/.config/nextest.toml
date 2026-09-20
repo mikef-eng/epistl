@@ -1,0 +1,22 @@
+# nextest config for the api crate (issue #254). Loaded via
+# `--config-file .config/nextest.toml` in `apps/api/moon.yml` (nextest's
+# default lookup is the *workspace root's* `.config/`, which is shared with
+# other crates).
+#
+# nextest runs every test in its own process, so `serial_test`'s in-process
+# `#[serial]` lock no longer serializes anything. The tests that were
+# `#[serial]` share *external* state (the per-worktree Postgres DB, the
+# `EPISTL_OFFLINE_MESSAGES` JetStream stream, QUIC listener setup), so they
+# are put in one test group with `max-threads = 1`: they run one at a time
+# relative to each other while everything else runs in parallel. Env-var
+# mutation (the other reason for `#[serial]` in `src/db.rs` / `relay` /
+# `nats`) cannot collide under process-per-test.
+[test-groups]
+serial-shared-state = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = '''
+binary(quic)
+| (binary(api) & (test(/^db::/) | test(/^nats::/) | test(/^quic::/) | test(/^relay::/)))
+'''
+test-group = "serial-shared-state"
