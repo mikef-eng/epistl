@@ -84,6 +84,7 @@ git branch -D issue-<n>-<slug>   # only when it has zero unique commits vs main
 
 - [`0019-harness-area-lanes.md`](docs/decisions/0019-harness-area-lanes.md) — this harness
 - [`0016-concurrent-subagents-require-isolated-worktrees.md`](docs/decisions/0016-concurrent-subagents-require-isolated-worktrees.md) — worktrees + shared Postgres constraint
+- [`0021-ci-cost-trip-wire.md`](docs/decisions/0021-ci-cost-trip-wire.md) — if the CI cache fix doesn't drastically cut PR CI time, drop GitHub CI checks until outside PRs
 - [`0015-linear-primary-planning-github-synced-mirror.md`](docs/decisions/0015-linear-primary-planning-github-synced-mirror.md) — GitHub primary, Linear mirror
 
 Full list under [`docs/decisions/`](docs/decisions/).
