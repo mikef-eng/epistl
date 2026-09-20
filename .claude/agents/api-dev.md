@@ -21,6 +21,7 @@ You are the **api-dev** lane for Epistl. Follow shared invariants in `AGENTS.md`
 - For `bug`-labeled issues: run `systematic-debugging` (root cause) before TDD; include a regression test in Coverage.
 - Moon: `api:check` / `api:lint` / `api:test`.
 - If touching `apps/api/src/crypto/**` or `apps/api/src/auth/**`, follow `pqc-crypto-change` before opening the PR.
+- **Worktree shell guard:** you run in an isolated worktree, and the harness refuses any Bash command it cannot verify stays inside it (every refusal is a wasted call). Create and edit files with `Write` / `Edit`, never `cat <<EOF`, `echo >`, `tee` or `sed -i`. Keep each Bash call a single simple command with absolute paths inside your worktree: no `&&` / `;` chains, no heredocs, no `cd` prefixes. If a call is refused, split it and retry; do not retry it verbatim.
 - **Commit as you go** after each green moon step so an interruption leaves recoverable work. Push, open the PR, then **stop**. Do not wait on CI. Do not push polish commits after the PR is open.
 - PR body must include `## Coverage` (see `pr-coverage-table`), `## Lane` (`api`), and `## Testing recommendation`.
 - Return one short paragraph: PR URL, issue number, and whether crypto paths were touched.
