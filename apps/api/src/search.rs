@@ -161,6 +161,7 @@ struct SearchQueryParams {
 struct SearchUserRow {
     user_id: Uuid,
     email: String,
+    username: String,
 }
 
 fn internal_error() -> Response {
@@ -184,9 +185,9 @@ async fn search_users(
 
     let rows = sqlx::query_as::<_, SearchUserRow>(
         r#"
-        SELECT id AS user_id, email
+        SELECT id AS user_id, email, username
         FROM users
-        WHERE email ILIKE $1 || '%'
+        WHERE (email ILIKE $1 || '%' OR username ILIKE $1 || '%')
           AND id <> $2
         ORDER BY email ASC
         LIMIT $3

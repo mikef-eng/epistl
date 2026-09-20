@@ -169,6 +169,132 @@ async fn create_contact_request_success_returns_201() {
     assert!(body["created_at"].is_string());
 }
 
+async fn username_of(pool: &PgPool, id: Uuid) -> String {
+    sqlx::query_scalar::<_, String>("SELECT username FROM users WHERE id = $1")
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+async fn send_request_body(state: AppState, token: &str, body: Value) -> (StatusCode, Value) {
+    request(
+        api::app(state),
+        "POST",
+        "/api/contacts/requests",
+        Some(token),
+        Some(body),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn create_contact_request_by_username_returns_201_case_insensitive() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (token, requester_id, _) = signup_user(&pool, state.clone(), "byuser-requester").await;
+    let (_t, recipient_id, _) = signup_user(&pool, state.clone(), "byuser-recipient").await;
+    let username = username_of(&pool, recipient_id).await;
+
+    let (status, body) = send_request_body(
+        state,
+        &token,
+        json!({ "username": username.to_uppercase() }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CREATED, "{body:?}");
+    assert_eq!(body["requester_user_id"], requester_id.to_string());
+    assert_eq!(body["recipient_user_id"], recipient_id.to_string());
+    assert_eq!(body["status"], "pending");
+}
+
+#[tokio::test]
+async fn create_contact_request_unknown_username_returns_404() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (token, _, _) = signup_user(&pool, state.clone(), "byuser-missing").await;
+
+    let (status, body) = send_request_body(
+        state,
+        &token,
+        json!({ "username": unique_username("nobody") }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, json!({ "error": "user_not_found" }));
+}
+
+#[tokio::test]
+async fn create_contact_request_own_username_returns_400() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (token, id, _) = signup_user(&pool, state.clone(), "byuser-self").await;
+    let username = username_of(&pool, id).await;
+
+    let (status, body) = send_request_body(state, &token, json!({ "username": username })).await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body, json!({ "error": "cannot_add_self" }));
+}
+
+#[tokio::test]
+async fn create_contact_request_both_email_and_username_returns_400() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (token, _, _) = signup_user(&pool, state.clone(), "both-requester").await;
+    let (_t, recipient_id, recipient_email) =
+        signup_user(&pool, state.clone(), "both-recipient").await;
+    let username = username_of(&pool, recipient_id).await;
+
+    let (status, body) = send_request_body(
+        state,
+        &token,
+        json!({ "email": recipient_email, "username": username }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body, json!({ "error": "invalid_request" }));
+}
+
+#[tokio::test]
+async fn create_contact_request_by_username_conflict_cases_return_409() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let (a_token, a_id, _) = signup_user(&pool, state.clone(), "uconf-a").await;
+    let (b_token, b_id, _) = signup_user(&pool, state.clone(), "uconf-b").await;
+    let (c_token, c_id, _) = signup_user(&pool, state.clone(), "uconf-c").await;
+    let a_name = username_of(&pool, a_id).await;
+    let b_name = username_of(&pool, b_id).await;
+    let c_name = username_of(&pool, c_id).await;
+
+    // already pending
+    let (s, _) = send_request_body(state.clone(), &a_token, json!({ "username": b_name })).await;
+    assert_eq!(s, StatusCode::CREATED);
+    let (s, body) = send_request_body(state.clone(), &a_token, json!({ "username": b_name })).await;
+    assert_eq!(s, StatusCode::CONFLICT);
+    assert_eq!(body, json!({ "error": "already_pending" }));
+
+    // crossed
+    let (s, body) = send_request_body(state.clone(), &b_token, json!({ "username": a_name })).await;
+    assert_eq!(s, StatusCode::CONFLICT);
+    assert_eq!(body["error"], "incoming_request_exists");
+
+    // already contact
+    sqlx::query("INSERT INTO contacts (owner_user_id, contact_user_id) VALUES ($1, $2), ($2, $1)")
+        .bind(c_id)
+        .bind(a_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (s, body) = send_request_body(state, &c_token, json!({ "username": a_name })).await;
+    assert_eq!(s, StatusCode::CONFLICT);
+    assert_eq!(body, json!({ "error": "already_contact" }));
+    let _ = c_name;
+}
+
 #[tokio::test]
 async fn create_contact_request_already_pending_returns_409() {
     let pool = test_pool().await;
@@ -360,6 +486,7 @@ async fn list_contact_requests_separates_incoming_and_outgoing() {
     assert_eq!(outgoing.len(), 1);
     assert_eq!(outgoing[0]["user_id"], b_id.to_string());
     assert_eq!(outgoing[0]["email"], b_email);
+    assert_eq!(outgoing[0]["username"], username_of(&pool, b_id).await);
     assert!(outgoing[0]["id"].is_string());
     assert!(outgoing[0]["created_at"].is_string());
 
@@ -367,6 +494,7 @@ async fn list_contact_requests_separates_incoming_and_outgoing() {
     assert_eq!(incoming.len(), 1);
     assert_eq!(incoming[0]["user_id"], c_id.to_string());
     assert_eq!(incoming[0]["email"], c_email);
+    assert_eq!(incoming[0]["username"], username_of(&pool, c_id).await);
 
     let (b_status, b_body) = request(
         api::app(state),

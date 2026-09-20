@@ -143,6 +143,31 @@ fn short_id() -> String {
     Uuid::new_v4().simple().to_string()[..12].to_string()
 }
 
+/// Like [`signup_user_with_email`] but with a caller-chosen username.
+async fn signup_user_with_username(
+    state: AppState,
+    pool: &PgPool,
+    email: &str,
+    username: &str,
+) -> Uuid {
+    let (status, body) = request(
+        api::app(state),
+        "POST",
+        "/signup",
+        None,
+        Some(json!({ "email": email, "password": "correct-horse-battery", "username": username })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "signup failed: {body:?}");
+    let token = body["token"].as_str().unwrap();
+    sqlx::query("SELECT user_id FROM sessions WHERE token = $1")
+        .bind(token)
+        .fetch_one(pool)
+        .await
+        .expect("session row must exist")
+        .get("user_id")
+}
+
 fn user_ids(body: &Value) -> Vec<String> {
     body["users"]
         .as_array()
@@ -355,4 +380,73 @@ async fn search_exceeding_rate_limit_returns_429() {
 
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(body, json!({ "error": "rate_limited" }));
+}
+
+#[tokio::test]
+async fn search_matches_username_prefix_returns_username_and_excludes_substring() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let seed = short_id();
+
+    let (caller_token, _) =
+        signup_user_with_email(state.clone(), &pool, &format!("ucaller-{seed}@example.com")).await;
+    let hit_id = signup_user_with_username(
+        state.clone(),
+        &pool,
+        &format!("unrelated-a-{seed}@example.com"),
+        &format!("zed{seed}_hit"),
+    )
+    .await;
+    // Username contains the query only as a substring.
+    signup_user_with_username(
+        state.clone(),
+        &pool,
+        &format!("unrelated-b-{seed}@example.com"),
+        &format!("not_zed{seed}"),
+    )
+    .await;
+
+    let (status, body) = request(
+        api::app(state),
+        "GET",
+        &format!("/api/users/search?q=ZED{seed}"),
+        Some(&caller_token),
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(user_ids(&body), vec![hit_id.to_string()]);
+    let user = &body["users"][0];
+    assert_eq!(user["username"], format!("zed{seed}_hit"));
+    assert_eq!(user["email"], format!("unrelated-a-{seed}@example.com"));
+}
+
+#[tokio::test]
+async fn search_user_matching_both_email_and_username_appears_once() {
+    let pool = test_pool().await;
+    let state = test_state().await;
+    let seed = short_id();
+
+    let (caller_token, _) =
+        signup_user_with_email(state.clone(), &pool, &format!("bcaller-{seed}@example.com")).await;
+    let both_id = signup_user_with_username(
+        state.clone(),
+        &pool,
+        &format!("both{seed}@example.com"),
+        &format!("both{seed}_u"),
+    )
+    .await;
+
+    let (status, body) = request(
+        api::app(state),
+        "GET",
+        &format!("/api/users/search?q=both{seed}"),
+        Some(&caller_token),
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(user_ids(&body), vec![both_id.to_string()]);
 }
