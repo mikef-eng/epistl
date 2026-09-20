@@ -148,8 +148,12 @@ pub fn worktree_slug() -> Option<String> {
         return None;
     }
     let toplevel = String::from_utf8(output.stdout).ok()?;
-    let toplevel = toplevel.trim();
+    slug_from_toplevel(toplevel.trim())
+}
 
+/// Pure path-parsing half of [`worktree_slug`]: extracts the sanitized
+/// `<name>` from a `…/.claude/worktrees/<name>` git toplevel, else `None`.
+fn slug_from_toplevel(toplevel: &str) -> Option<String> {
     // Path pattern: …/.claude/worktrees/<name>
     let marker = "/.claude/worktrees/";
     if let Some(idx) = toplevel.find(marker) {
@@ -313,7 +317,16 @@ pub async fn create_db_if_missing(database_url: &str) -> Result<(), DbError> {
 /// The NATS stream teardown is handled separately by the migrate binary's
 /// `--drop` path (which calls this + `crate::nats::drop_worktree_stream`).
 pub async fn drop_worktree_db(database_url: &str) -> Result<(), DbError> {
-    let slug = worktree_slug().ok_or(DbError::NoWorktreeSlug)?;
+    drop_worktree_db_for_slug(worktree_slug(), database_url).await
+}
+
+/// Testable core of [`drop_worktree_db`]: the slug is injected so tests do
+/// not depend on the checkout path or environment.
+async fn drop_worktree_db_for_slug(
+    slug: Option<String>,
+    database_url: &str,
+) -> Result<(), DbError> {
+    let slug = slug.ok_or(DbError::NoWorktreeSlug)?;
 
     let (prefix, base_db, suffix) =
         extract_db_url_parts(database_url).ok_or(DbError::InvalidDatabaseUrl)?;
@@ -613,26 +626,33 @@ mod tests {
 
     /// `drop_worktree_db` must refuse when no worktree slug is active —
     /// otherwise it would risk dropping the base DB.
+    /// The slug is injected, so this is independent of checkout path and
+    /// never touches the network.
     #[tokio::test]
-    #[serial]
     async fn drop_worktree_db_refuses_without_slug() {
-        let prev = env::var(WORKTREE_SLUG_VAR).ok();
-        unsafe {
-            env::remove_var(WORKTREE_SLUG_VAR);
-        }
-
-        // This test must run on a non-`.claude/worktrees/` checkout so
-        // git detection also returns None (CI and the primary clone do).
-        let result = drop_worktree_db("postgres://user:pass@localhost/epistl").await;
-
-        if let Some(prev) = prev {
-            unsafe { env::set_var(WORKTREE_SLUG_VAR, prev) };
-        }
+        let result = drop_worktree_db_for_slug(None, "postgres://user:pass@localhost/epistl").await;
 
         match result {
             Err(DbError::NoWorktreeSlug) => {}
             other => panic!("expected NoWorktreeSlug, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn slug_from_toplevel_detects_worktree_path() {
+        assert_eq!(
+            slug_from_toplevel("/home/u/epistl/.claude/worktrees/Agent-A1/sub"),
+            Some("agent_a1".to_string())
+        );
+    }
+
+    #[test]
+    fn slug_from_toplevel_none_for_primary_clone() {
+        assert_eq!(slug_from_toplevel("/home/u/epistl"), None);
+        assert_eq!(
+            slug_from_toplevel("/home/u/epistl/.claude/worktrees/"),
+            None
+        );
     }
 
     // --- connect helpers ---
