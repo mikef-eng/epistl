@@ -24,7 +24,7 @@ export type RootStackParamList = {
    */
   Main: NavigatorScreenParams<MainTabParamList> | undefined;
   AddContact: undefined;
-  Chat: { userId: string; email: string };
+  Chat: { userId: string; username: string };
   /**
    * Reached from `AddContactScreen`'s search results (issue #100) by
    * tapping a result row (as opposed to its separate "+" add button, which

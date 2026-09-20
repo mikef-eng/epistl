@@ -24,6 +24,10 @@ jest.mock('../src/storage/messages', () => ({
   getMessages: jest.fn(),
   saveMessage: jest.fn(),
 }));
+jest.mock('../src/storage/contacts', () => ({
+  getCachedContactUsername: jest.fn(),
+  upsertContacts: jest.fn(),
+}));
 jest.mock('../src/transport/store', () => {
   const { Store } = jest.requireActual('@tanstack/react-store');
   return {

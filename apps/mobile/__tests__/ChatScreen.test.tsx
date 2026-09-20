@@ -175,9 +175,9 @@ function buildContact(userId = CONTACT_USER_ID, email = 'bob@example.com') {
   };
 }
 
-const ROUTE = { params: { userId: CONTACT_USER_ID, email: 'bob@example.com' } };
+const ROUTE = { params: { userId: CONTACT_USER_ID, username: 'bob' } };
 const CAROL_USER_ID = 'carol-user-id';
-const CAROL_ROUTE = { params: { userId: CAROL_USER_ID, email: 'carol@example.com' } };
+const CAROL_ROUTE = { params: { userId: CAROL_USER_ID, username: 'carol' } };
 
 /** Jest has no native safe-area module; seed metrics so the provider
  * renders children immediately instead of waiting forever. */
@@ -223,8 +223,23 @@ describe('ChatScreen', () => {
   it('renders dark: variants on its header, message input, and container', async () => {
     await renderChatScreen();
 
-    expect(screen.getByText(bob.contact.email).props.className).toContain('dark:text-white');
+    expect(screen.getByText('bob').props.className).toContain('dark:text-white');
     expect(screen.getByPlaceholderText('Message').props.className).toContain('dark:text-white');
+  });
+
+  it('shows the contact username and its initial in the header', async () => {
+    const alice = { params: { userId: CONTACT_USER_ID, username: 'alice' } };
+    const navigation = { navigate: jest.fn() };
+    await render(
+      <SafeAreaProvider initialMetrics={SAFE_AREA_METRICS}>
+        <ChatScreen navigation={navigation as never} route={alice as never} />
+      </SafeAreaProvider>
+    );
+
+    expect(screen.getByText('alice')).toBeTruthy();
+    // Avatar falls back to the derived initial once its image fails to load.
+    fireEvent(screen.getByTestId(`avatar-image-${CONTACT_USER_ID}`), 'error');
+    expect(await screen.findByText('A')).toBeTruthy();
   });
 
   it('loads existing history on mount and renders it (plaintext, per ADR 0007)', async () => {

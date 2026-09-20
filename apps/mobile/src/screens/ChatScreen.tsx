@@ -57,10 +57,10 @@ function nextLocalKey(): string {
 
 const CANNOT_VERIFY_CONTACT_ERROR = "Cannot verify this contact's keys";
 
-/** First letter of the contact's email, uppercased, for the header avatar
+/** First letter of the contact's username, uppercased, for the header avatar
  * circle -- matches `FriendsScreen`/`ConversationsScreen`'s `initialFor`. */
-function initialFor(email: string): string {
-  return email.trim().charAt(0).toUpperCase() || '?';
+function initialFor(username: string): string {
+  return username.trim().charAt(0).toUpperCase() || '?';
 }
 
 /** Short absolute clock time (e.g. "3:45 PM") for the per-message
@@ -72,7 +72,7 @@ function formatMessageTime(createdAt: string): string {
 }
 
 export default function ChatScreen({ navigation, route }: Props) {
-  const { userId: contactUserId, email } = route.params;
+  const { userId: contactUserId, username } = route.params;
   const insets = useSafeAreaInsets();
   const { colorScheme } = useColorScheme();
   // Matches the header's existing `text-black dark:text-white` convention --
@@ -342,12 +342,12 @@ export default function ChatScreen({ navigation, route }: Props) {
         </Pressable>
         <Avatar
           userId={contactUserId}
-          fallbackText={initialFor(email)}
+          fallbackText={initialFor(username)}
           wrapperClassName="mr-2 h-8 w-8 items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700"
           imageClassName="h-8 w-8 rounded-full"
           textClassName="text-sm font-semibold text-black dark:text-white"
         />
-        <Text className="text-lg font-semibold text-black dark:text-white">{email}</Text>
+        <Text className="text-lg font-semibold text-black dark:text-white">{username}</Text>
       </View>
 
       {status === 'reconnecting' || status === 'disconnected' ? (

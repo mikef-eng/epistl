@@ -191,6 +191,7 @@ describe('Main tab navigator (issue #94)', () => {
         {
           user_id: 'u1',
           email: 'alice@example.com',
+          username: 'alice',
           added_at: '2024-01-01T00:00:00Z',
           x25519_public_key_b64: 'x25519-b64',
           kyber_public_key_b64: 'kyber-b64',
@@ -203,10 +204,10 @@ describe('Main tab navigator (issue #94)', () => {
     await user.press(screen.getAllByText('Friends')[0]);
 
     await waitFor(() => {
-      expect(screen.getByText('alice@example.com')).toBeTruthy();
+      expect(screen.getByText('alice')).toBeTruthy();
     });
 
-    await user.press(screen.getByText('alice@example.com'));
+    await user.press(screen.getByText('alice'));
 
     await waitFor(() => {
       expect(screen.getByText('Chat screen stub')).toBeTruthy();
