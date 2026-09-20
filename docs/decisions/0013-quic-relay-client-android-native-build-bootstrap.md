@@ -63,6 +63,33 @@ produce, an artifact nobody else can reproduce or verify). A checked-in
 binary is opaque to code review and would go stale silently the moment the
 crate changes without someone remembering to regenerate and re-commit it.
 
+## Amendment (issue #235)
+
+Two bugs were found and fixed after the original PR #156 implementation:
+
+1. **`.a` was not copied to `jniLibs/`.** `cargo-ndk -o <dir>` only copies
+   the `.so` into `<dir>/<abi>/`; the static library (`.a`) remains in
+   `target/<triple>/release/`. `scripts/ensure-native-built.js` now
+   explicitly copies `target/<triple>/release/libquic_relay_client.a` →
+   `jniLibs/<abi>/libquic_relay_client.a` after the ndk build.
+   CMakeLists.txt links `my_rust_lib STATIC IMPORTED` against the `.a`;
+   the `.so` alone is insufficient.
+
+2. **Freshness check ignored missing `.a`.** `isAbiBuildStale` previously
+   only compared mtimes: a `jniLibs/<abi>/` directory containing only a
+   `.so` (newer than sources) was incorrectly treated as "not stale", even
+   though the required `.a` was absent. The check now requires
+   `libquic_relay_client.a` to be present in `jniLibs/<abi>/` before
+   treating the ABI as fresh.
+
+3. **Bootstrap integration.** `packages/dev-setup` (issue #235) now invokes
+   `scripts/ensure-native-built.js` as a stage-2 step immediately after the
+   Android SDK/NDK setup succeeds, so `jniLibs/<abi>/libquic_relay_client.a`
+   is ready when the developer first opens Android Studio or runs
+   `./gradlew`. The script is still **not** on `npm prepare` or CI — this
+   addition only runs when the NDK is actually available on the machine.
+   API-only contributors (no NDK) receive a non-blocking advisory message.
+
 ## Consequences
 
 - Every developer doing a real Android build (`./gradlew`, Android Studio,

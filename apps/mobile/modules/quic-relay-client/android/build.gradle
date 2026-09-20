@@ -47,7 +47,12 @@ tasks.register("ensureQuicRelayClientNativeBuilt", Exec) {
   commandLine "node", "scripts/ensure-native-built.js"
 }
 
-tasks.matching { it.name == "preBuild" || it.name.startsWith("externalNativeBuild") }.configureEach {
+tasks.matching {
+  it.name == "preBuild" ||
+  it.name.startsWith("externalNativeBuild") ||
+  it.name.startsWith("buildCMake") ||
+  it.name.startsWith("configureCMake")
+}.configureEach {
   dependsOn("ensureQuicRelayClientNativeBuilt")
 }
 
