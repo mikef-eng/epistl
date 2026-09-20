@@ -13,6 +13,7 @@ Ship post-quantum E2EE chat using CRYSTALS-Kyber and CRYSTALS-Dilithium (standar
 | Monorepo | [moonrepo](https://moonrepo.dev) |
 | Build tooling | [`sccache`](https://github.com/mozilla/sccache) (required for every Rust build, local or CI) |
 | Frontend | Expo + React Native (TypeScript), Drizzle (on-device SQLite), NativeWind, post-quantum crypto via [`@noble`](https://www.npmjs.com/package/@noble/post-quantum), push notifications via `expo-notifications` (the app asks for notification permission once per login session; denial is harmless) |
+| Notification decrypt | Preview text is decrypted on-device, so Double Ratchet session state must live in storage shared with the notification extension (iOS App Group / Android shared storage), lock- and generation-guarded ([ADR 0022](docs/decisions/0022-notification-decrypt-shared-session-state.md)) |
 | Backend | Rust (Axum, tokio), [`better-auth`](https://crates.io/crates/better-auth) |
 | Message broker | NATS JetStream |
 | Primary DB | Postgres (auth + core app data only — no message content) |
