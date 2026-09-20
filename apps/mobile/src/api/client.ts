@@ -61,6 +61,7 @@ export interface ContactRequestParty {
   id: string;
   user_id: string;
   email: string;
+  username: string;
   created_at: string;
 }
 
@@ -271,7 +272,12 @@ export async function listContacts(): Promise<ContactsResponse> {
  * target already sent the caller a pending request) rejects with an
  * `IncomingRequestExistsError` carrying that request's id instead of a
  * plain `ApiError`, so the caller can offer to accept it directly. */
-export async function sendContactRequest(email: string): Promise<ContactRequestCreated> {
+export async function sendContactRequest(
+  target: string | { email: string } | { username: string }
+): Promise<ContactRequestCreated> {
+  // Exactly one of `email`/`username` is sent -- the API 400s on both. A
+  // bare string stays the email form for existing callers.
+  const payload = typeof target === 'string' ? { email: target } : target;
   const token = await requireToken();
 
   const response = await fetch(`${API_BASE_URL}/api/contacts/requests`, {
@@ -280,7 +286,7 @@ export async function sendContactRequest(email: string): Promise<ContactRequestC
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ email }),
+    body: JSON.stringify(payload),
   });
 
   if (!response.ok) {
@@ -446,6 +452,7 @@ export async function removeContact(userId: string): Promise<void> {
 export interface SearchUser {
   user_id: string;
   email: string;
+  username: string;
 }
 
 export interface SearchUsersResponse {

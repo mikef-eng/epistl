@@ -59,8 +59,18 @@ const mockedGetToken = getToken as jest.Mock;
 
 const EMPTY_REQUESTS = { incoming: [], outgoing: [] };
 
-function requestParty(overrides: { id: string; user_id: string; email: string; created_at?: string }) {
-  return { created_at: '2024-01-01T00:00:00Z', ...overrides };
+function requestParty(overrides: {
+  id: string;
+  user_id: string;
+  email: string;
+  username?: string;
+  created_at?: string;
+}) {
+  return {
+    created_at: '2024-01-01T00:00:00Z',
+    username: overrides.email.split('@')[0],
+    ...overrides,
+  };
 }
 
 // CI runs each test file in its own worker process, and this file's first
@@ -428,7 +438,7 @@ describe('FriendsScreen', () => {
       // The Requests section -- and carol's row within it -- stays exactly
       // as it was; the query never touches `requests` at all.
       expect(screen.getByTestId('requests-section')).toBeTruthy();
-      expect(screen.getByText('carol@example.com')).toBeTruthy();
+      expect(screen.getByText('carol')).toBeTruthy();
     });
   });
 
@@ -514,7 +524,24 @@ describe('FriendsScreen', () => {
       await waitFor(() => {
         expect(screen.getByTestId('requests-section')).toBeTruthy();
       });
-      expect(screen.getByText('alice@example.com')).toBeTruthy();
+      expect(screen.getByText('alice')).toBeTruthy();
+      expect(screen.queryByText('alice@example.com')).toBeNull();
+    });
+
+    it('falls back to the email when an incoming request has no username', async () => {
+      mockedListContacts.mockResolvedValueOnce({ contacts: [] });
+      mockedListContactRequests.mockResolvedValueOnce({
+        incoming: [
+          requestParty({ id: 'r1', user_id: 'u1', email: 'alice@example.com', username: undefined }),
+        ],
+        outgoing: [],
+      });
+
+      await renderFriendsScreen();
+
+      await waitFor(() => {
+        expect(screen.getByText('alice@example.com')).toBeTruthy();
+      });
     });
 
     it('is rendered when there is at least one outgoing request', async () => {
@@ -529,7 +556,8 @@ describe('FriendsScreen', () => {
       await waitFor(() => {
         expect(screen.getByTestId('requests-section')).toBeTruthy();
       });
-      expect(screen.getByText('bob@example.com')).toBeTruthy();
+      expect(screen.getByText('bob')).toBeTruthy();
+      expect(screen.queryByText('bob@example.com')).toBeNull();
     });
 
     it('renders an outgoing request read-only as "Pending"', async () => {
@@ -544,8 +572,8 @@ describe('FriendsScreen', () => {
       await waitFor(() => {
         expect(screen.getByText('Pending')).toBeTruthy();
       });
-      expect(screen.queryByRole('button', { name: 'Accept bob@example.com' })).toBeNull();
-      expect(screen.queryByRole('button', { name: 'Decline bob@example.com' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Accept bob' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Decline bob' })).toBeNull();
     });
 
     it('accepts an incoming request, removing it from the section and showing the new contact', async () => {
@@ -563,10 +591,10 @@ describe('FriendsScreen', () => {
       const { user } = await renderFriendsScreen();
 
       await waitFor(() => {
-        expect(screen.getByText('alice@example.com')).toBeTruthy();
+        expect(screen.getByText('alice')).toBeTruthy();
       });
 
-      await user.press(screen.getByRole('button', { name: 'Accept alice@example.com' }));
+      await user.press(screen.getByRole('button', { name: 'Accept alice' }));
 
       expect(mockedAcceptContactRequest).toHaveBeenCalledWith('r1');
       await waitFor(() => {
@@ -587,15 +615,15 @@ describe('FriendsScreen', () => {
       const { user } = await renderFriendsScreen();
 
       await waitFor(() => {
-        expect(screen.getByText('alice@example.com')).toBeTruthy();
+        expect(screen.getByText('alice')).toBeTruthy();
       });
 
-      await user.press(screen.getByRole('button', { name: 'Accept alice@example.com' }));
+      await user.press(screen.getByRole('button', { name: 'Accept alice' }));
 
       await waitFor(() => {
         expect(screen.getByText('request_not_found')).toBeTruthy();
       });
-      expect(screen.getByText('alice@example.com')).toBeTruthy();
+      expect(screen.getByText('alice')).toBeTruthy();
     });
 
     it('declines an incoming request, removing it from the section, on success', async () => {
@@ -608,10 +636,10 @@ describe('FriendsScreen', () => {
       const { user } = await renderFriendsScreen();
 
       await waitFor(() => {
-        expect(screen.getByText('alice@example.com')).toBeTruthy();
+        expect(screen.getByText('alice')).toBeTruthy();
       });
 
-      await user.press(screen.getByRole('button', { name: 'Decline alice@example.com' }));
+      await user.press(screen.getByRole('button', { name: 'Decline alice' }));
 
       expect(mockedDeclineContactRequest).toHaveBeenCalledWith('r1');
       await waitFor(() => {
@@ -630,15 +658,15 @@ describe('FriendsScreen', () => {
       const { user } = await renderFriendsScreen();
 
       await waitFor(() => {
-        expect(screen.getByText('alice@example.com')).toBeTruthy();
+        expect(screen.getByText('alice')).toBeTruthy();
       });
 
-      await user.press(screen.getByRole('button', { name: 'Decline alice@example.com' }));
+      await user.press(screen.getByRole('button', { name: 'Decline alice' }));
 
       await waitFor(() => {
         expect(screen.getByText('request_not_found')).toBeTruthy();
       });
-      expect(screen.getByText('alice@example.com')).toBeTruthy();
+      expect(screen.getByText('alice')).toBeTruthy();
     });
   });
 

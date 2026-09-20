@@ -371,11 +371,11 @@ export default function FriendsScreen({ navigation }: Props) {
                   >
                     <View className="flex-row items-center justify-between">
                       <Text className="flex-1 pr-3 text-base text-black dark:text-white">
-                        {request.email}
+                        {request.username ?? request.email}
                       </Text>
                       <Pressable
                         accessibilityRole="button"
-                        accessibilityLabel={`Accept ${request.email}`}
+                        accessibilityLabel={`Accept ${request.username ?? request.email}`}
                         disabled={requestActionIds.has(request.id)}
                         onPress={() => handleAccept(request)}
                         className="mr-2 rounded-lg bg-[#8B2F4B] px-3 py-1"
@@ -384,7 +384,7 @@ export default function FriendsScreen({ navigation }: Props) {
                       </Pressable>
                       <Pressable
                         accessibilityRole="button"
-                        accessibilityLabel={`Decline ${request.email}`}
+                        accessibilityLabel={`Decline ${request.username ?? request.email}`}
                         disabled={requestActionIds.has(request.id)}
                         onPress={() => handleDecline(request)}
                         className="rounded-lg bg-gray-200 px-3 py-1 dark:bg-gray-700"
@@ -407,7 +407,9 @@ export default function FriendsScreen({ navigation }: Props) {
                     testID={`request-outgoing-${request.id}`}
                     className="flex-row items-center justify-between px-4 py-3"
                   >
-                    <Text className="text-base text-black dark:text-white">{request.email}</Text>
+                    <Text className="text-base text-black dark:text-white">
+                      {request.username ?? request.email}
+                    </Text>
                     <Text className="text-sm text-gray-400 dark:text-gray-500">Pending</Text>
                   </View>
                 ))}
