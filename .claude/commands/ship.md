@@ -8,8 +8,8 @@ Orchestrate shipping GitHub issue(s) $ARGUMENTS as the **lead dispatcher** (you 
 2. **Preflight (resume-or-reset):** before dispatching issue N, check for an existing local/remote branch matching `issue-<N>-*` and any worktree under `.claude/worktrees/` whose branch matches. If found, report the branch name, commit count ahead of `main`, and whether the worktree is locked. Ask the human once: **resume** (dispatch the lane onto that branch/worktree) or **reset** (reap per AGENTS.md recovery procedure, then dispatch fresh). Never collide silently.
 3. Route each issue to a lane:
    - Title/Notes start with `API:` or paths under `apps/api` → `api-dev`
-   - `Mobile:` or `apps/mobile` (not modules/quic-relay-client) → `mobile-dev`
-   - `QUIC relay client:` / `dev-setup:` / `packages/quic-relay-client` / `packages/dev-setup` / `apps/mobile/modules/quic-relay-client` → `native-dev`
+   - `Mobile:` or `apps/mobile` (not `apps/mobile/modules/**`) → `mobile-dev`
+   - `QUIC relay client:` / `dev-setup:` / `packages/quic-relay-client` / `packages/dev-setup` / `apps/mobile/modules/**` → `native-dev`
    - Ambiguous → ask once; default to the path that matches Out of scope / Notes.
    - Chore / harness titles (`Harness:`, etc.) → do **not** dispatch; tell the human to use the chore route.
 4. **Integration mode.** Each `/ship` call is its own feature: unrelated features are separate `/ship` calls, each with its own `feat/<slug>`, gated separately.
