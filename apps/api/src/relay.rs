@@ -581,6 +581,14 @@ mod tests {
     #[serial]
     async fn redeliver_forwards_directly_and_deletes_by_sequence_while_recipients_own_consumer_lingers(
     ) {
+        // The consumer-name-set comparison below is only meaningful if no
+        // other test creates consumers on the same stream mid-test, so use a
+        // private stream (unique slug). Env mutation is safe: nextest runs
+        // each test in its own process (issue #254).
+        std::env::set_var(
+            "EPISTL_WORKTREE_SLUG",
+            format!("it-{}", Uuid::new_v4().simple()),
+        );
         let state = test_state().await;
         let jetstream = async_nats::jetstream::new(state.nats.clone());
         crate::nats::ensure_offline_stream(&jetstream)
@@ -661,6 +669,11 @@ mod tests {
         let (reconnect_tx, mut reconnect_rx) = mpsc::unbounded_channel::<Frame>();
         deliver_queued_messages(&state, to, &reconnect_tx).await;
         assert_no_further_message(&mut reconnect_rx).await;
+
+        // Drop the private stream.
+        let _ = jetstream
+            .delete_stream(&crate::nats::effective_stream_name())
+            .await;
     }
 
     /// If the registry re-check finds the recipient is *not* connected

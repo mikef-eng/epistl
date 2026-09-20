@@ -61,9 +61,13 @@ async fn ensure_offline_stream_configures_a_transient_work_queue() {
         .expect("failed to connect to NATS");
     let jetstream = async_nats::jetstream::new(client);
 
-    // Derive the effective stream name for this worktree (or base name on the
-    // primary checkout). Start from a clean slate so stale config from a
-    // previous run doesn't interfere.
+    // Use a private stream (unique slug) so deleting/recreating it can't
+    // race sibling tests that use the shared per-worktree stream (issue
+    // #254). Env mutation is safe: nextest runs each test in its own process.
+    std::env::set_var(
+        "EPISTL_WORKTREE_SLUG",
+        format!("it-{}", Uuid::new_v4().simple()),
+    );
     let stream_name = api::nats::effective_stream_name();
     let _ = jetstream.delete_stream(&stream_name).await;
 
@@ -94,4 +98,7 @@ async fn ensure_offline_stream_configures_a_transient_work_queue() {
     nats::ensure_offline_stream(&jetstream)
         .await
         .expect("second call to ensure_offline_stream should be idempotent");
+
+    // Clean up the private stream.
+    let _ = jetstream.delete_stream(&stream_name).await;
 }
