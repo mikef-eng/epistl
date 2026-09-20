@@ -22,7 +22,7 @@ Never substitute raw `npm` for lint/typecheck/test. Run `npm install` inside `ap
 - `apps/mobile/src/screens/` — screens (JSX + NativeWind `className`)
 - `apps/mobile/src/navigation/` — navigators
 - `apps/mobile/src/api/`, `storage/`, `transport/`, `crypto/`, `inbox/`, `settings/`
-- `apps/mobile/modules/quic-relay-client/` — **native-dev** lane, not this one
+- `apps/mobile/modules/**` — local native modules (`quic-relay-client`, `session-store`, ...): **native-dev** lane, not this one
 - `apps/mobile/src/crypto/**` — crypto gate; follow `pqc-crypto-change`
 
 ## Conventions
