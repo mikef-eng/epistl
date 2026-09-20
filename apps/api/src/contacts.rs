@@ -319,6 +319,8 @@ async fn remove_contact(
 struct CreateContactRequestPayload {
     #[serde(default)]
     email: Option<String>,
+    #[serde(default)]
+    username: Option<String>,
 }
 
 async fn create_contact_request(
@@ -326,13 +328,32 @@ async fn create_contact_request(
     State(state): State<AppState>,
     Json(payload): Json<CreateContactRequestPayload>,
 ) -> Response {
-    let email = payload.email.unwrap_or_default();
-
-    let target =
-        sqlx::query_as::<_, (Uuid, String)>("SELECT id, email FROM users WHERE email = $1")
-            .bind(&email)
+    // Exactly one of `email` / `username`. Usernames are stored lowercased
+    // at signup (auth.rs) under a case-sensitive UNIQUE constraint, so the
+    // exact, case-insensitive match is `username = lower($1)`.
+    let target = match (payload.email, payload.username) {
+        (Some(_), Some(_)) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "invalid_request" })),
+            )
+                .into_response()
+        }
+        (None, Some(username)) => {
+            sqlx::query_as::<_, (Uuid, String)>(
+                "SELECT id, email FROM users WHERE username = lower($1)",
+            )
+            .bind(username)
             .fetch_optional(&state.pool)
-            .await;
+            .await
+        }
+        (email, None) => {
+            sqlx::query_as::<_, (Uuid, String)>("SELECT id, email FROM users WHERE email = $1")
+                .bind(email.unwrap_or_default())
+                .fetch_optional(&state.pool)
+                .await
+        }
+    };
 
     let (target_id, _target_email) = match target {
         Ok(Some(row)) => row,
@@ -462,13 +483,14 @@ struct ContactRequestPartyView {
     id: Uuid,
     user_id: Uuid,
     email: String,
+    username: String,
     created_at: DateTime<Utc>,
 }
 
 async fn list_contact_requests(user: AuthenticatedUser, State(state): State<AppState>) -> Response {
     let incoming = sqlx::query_as::<_, ContactRequestPartyView>(
         r#"
-        SELECT cr.id AS id, u.id AS user_id, u.email AS email, cr.created_at AS created_at
+        SELECT cr.id AS id, u.id AS user_id, u.email AS email, u.username AS username, cr.created_at AS created_at
         FROM contact_requests cr
         JOIN users u ON u.id = cr.requester_user_id
         WHERE cr.recipient_user_id = $1 AND cr.status = 'pending'
@@ -486,7 +508,7 @@ async fn list_contact_requests(user: AuthenticatedUser, State(state): State<AppS
 
     let outgoing = sqlx::query_as::<_, ContactRequestPartyView>(
         r#"
-        SELECT cr.id AS id, u.id AS user_id, u.email AS email, cr.created_at AS created_at
+        SELECT cr.id AS id, u.id AS user_id, u.email AS email, u.username AS username, cr.created_at AS created_at
         FROM contact_requests cr
         JOIN users u ON u.id = cr.recipient_user_id
         WHERE cr.requester_user_id = $1 AND cr.status = 'pending'
