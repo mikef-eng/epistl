@@ -1,5 +1,7 @@
 //! Epistl API library crate.
 //!
+//! (Throwaway comment: probes warm-cache `rust (api)` CI time, ADR 0021.)
+//!
 //! Split out from `main.rs` so integration tests under `apps/api/tests/`
 //! can build the same `Router` the binary serves, against a real Postgres
 //! instance.
