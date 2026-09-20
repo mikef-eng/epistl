@@ -101,7 +101,9 @@ moon run mobile:typecheck
 moon run mobile:test
 moon run mobile:db-generate   # regenerate drizzle-kit migrations after changing apps/mobile/src/storage/schema.ts
 
-# API (requires Postgres running — api:test depends on api:migrate)
+# API (requires Postgres + NATS running; api:test runs via cargo-nextest — one-time install:
+#   cargo install cargo-nextest --locked   (or a prebuilt binary from https://nexte.st)
+# — and applies migrations from the same test build)
 moon run api:check    # cargo fmt --check
 moon run api:lint     # cargo clippy -D warnings
 moon run api:test

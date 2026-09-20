@@ -10,7 +10,7 @@ description: Conventions and moon commands for apps/api (Rust Axum). Preloaded i
 ```bash
 moon run api:check    # cargo fmt --check
 moon run api:lint     # cargo clippy -D warnings
-moon run api:test     # depends on api:migrate; needs Postgres
+moon run api:test     # cargo-nextest (install: cargo install cargo-nextest --locked); migrates first; needs Postgres + NATS
 moon run api:migrate
 moon run api:dev      # long-running
 ```

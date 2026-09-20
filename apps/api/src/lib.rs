@@ -53,6 +53,3 @@ pub fn app(state: AppState) -> Router {
 async fn health() -> &'static str {
     "ok"
 }
-// bench
-// bench2
-// bench3
