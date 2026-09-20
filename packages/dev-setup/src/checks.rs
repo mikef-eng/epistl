@@ -10,6 +10,43 @@
 
 use std::process::Command;
 
+/// Full result of a command invocation, including stderr on failure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandOutput {
+    pub status_ok: bool,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+impl CommandOutput {
+    /// Prefer stderr, then stdout, for failure diagnostics.
+    pub fn failure_detail(&self) -> String {
+        let err = self.stderr.trim();
+        if !err.is_empty() {
+            return err.to_string();
+        }
+        let out = self.stdout.trim();
+        if !out.is_empty() {
+            return out.to_string();
+        }
+        "no output".to_string()
+    }
+
+    /// Trimmed stdout, or stderr if stdout is empty (same as successful `run`).
+    pub fn text(&self) -> String {
+        let stdout = self.stdout.trim();
+        if !stdout.is_empty() {
+            stdout.to_string()
+        } else {
+            self.stderr.trim().to_string()
+        }
+    }
+
+    fn success_text(&self) -> String {
+        self.text()
+    }
+}
+
 /// Runs an external command and reports whether it succeeded, abstracting
 /// over the real `PATH` lookup so tests can inject canned
 /// present/absent/version responses instead.
@@ -18,6 +55,24 @@ pub trait CommandExecutor {
     /// program was found on `PATH` and exited successfully, `None`
     /// otherwise (not found, or a non-zero exit).
     fn run(&self, program: &str, args: &[&str]) -> Option<String>;
+
+    /// Like [`run`](Self::run), but keeps stdout/stderr and exit status so
+    /// callers can surface failure diagnostics. Default maps from [`run`]
+    /// (empty stderr on failure); real executors override this.
+    fn run_output(&self, program: &str, args: &[&str]) -> CommandOutput {
+        match self.run(program, args) {
+            Some(stdout) => CommandOutput {
+                status_ok: true,
+                stdout,
+                stderr: String::new(),
+            },
+            None => CommandOutput {
+                status_ok: false,
+                stdout: String::new(),
+                stderr: String::new(),
+            },
+        }
+    }
 }
 
 /// The real executor, backed by `std::process::Command` /
@@ -26,17 +81,27 @@ pub struct SystemExecutor;
 
 impl CommandExecutor for SystemExecutor {
     fn run(&self, program: &str, args: &[&str]) -> Option<String> {
-        let output = Command::new(program).args(args).output().ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let text = if stdout.trim().is_empty() {
-            String::from_utf8_lossy(&output.stderr).trim().to_string()
+        let output = self.run_output(program, args);
+        if output.status_ok {
+            Some(output.success_text())
         } else {
-            stdout.trim().to_string()
-        };
-        Some(text)
+            None
+        }
+    }
+
+    fn run_output(&self, program: &str, args: &[&str]) -> CommandOutput {
+        match Command::new(program).args(args).output() {
+            Ok(output) => CommandOutput {
+                status_ok: output.status.success(),
+                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            },
+            Err(e) => CommandOutput {
+                status_ok: false,
+                stdout: String::new(),
+                stderr: e.to_string(),
+            },
+        }
     }
 }
 
@@ -294,5 +359,21 @@ mod tests {
         assert!(is_required("moon"));
         assert!(is_required("docker"));
         assert!(is_required("sccache"));
+    }
+
+    #[test]
+    fn failure_detail_prefers_stderr() {
+        let out = CommandOutput {
+            status_ok: false,
+            stdout: "stdout noise".into(),
+            stderr: "permission denied".into(),
+        };
+        assert_eq!(out.failure_detail(), "permission denied");
+        let empty = CommandOutput {
+            status_ok: false,
+            stdout: String::new(),
+            stderr: String::new(),
+        };
+        assert_eq!(empty.failure_detail(), "no output");
     }
 }

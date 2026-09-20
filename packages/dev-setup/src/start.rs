@@ -24,6 +24,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use crate::checks::CommandExecutor;
+use crate::tools::docker::{probe_docker_access, run_docker, DockerAccess};
 
 /// Abstracts the polling delay between health-check attempts so
 /// `wait_for_healthy`'s loop is real time in production but instantaneous
@@ -118,6 +119,15 @@ fn run_start(
     let mut outcomes = Vec::new();
     let project_dir = repo_root.to_string_lossy().to_string();
 
+    let access = match probe_docker_access(exec) {
+        Some(a) => a,
+        None => {
+            return vec![StepOutcome::Failure(
+                "docker daemon not reachable in this session (tried ambient `docker info` and `sg docker -c 'docker info'`). Log out and back in (or `newgrp docker`), then re-run with --start.".to_string(),
+            )];
+        }
+    };
+
     let up_args = [
         "compose",
         "--project-directory",
@@ -125,18 +135,24 @@ fn run_start(
         "up",
         "-d",
     ];
-    if exec.run("docker", &up_args).is_none() {
-        outcomes.push(StepOutcome::Failure(
-            "docker compose up -d failed -- see docker's own output above for details.".to_string(),
-        ));
+    let up = run_docker(exec, access, &up_args);
+    if !up.status_ok {
+        outcomes.push(StepOutcome::Failure(format!(
+            "docker compose up -d failed: {}",
+            up.failure_detail()
+        )));
         return outcomes;
     }
-    outcomes.push(StepOutcome::Success(
-        "docker compose up -d succeeded".to_string(),
-    ));
+    let via = match access {
+        DockerAccess::Ambient => "",
+        DockerAccess::ViaSg => " (via sg docker)",
+    };
+    outcomes.push(StepOutcome::Success(format!(
+        "docker compose up -d succeeded{via}"
+    )));
 
     for service in COMPOSE_SERVICES {
-        match wait_for_healthy(exec, sleeper, &project_dir, service) {
+        match wait_for_healthy(exec, sleeper, access, &project_dir, service) {
             Ok(()) => outcomes.push(StepOutcome::Success(format!("{service} is healthy"))),
             Err(message) => {
                 outcomes.push(StepOutcome::Failure(message));
@@ -166,6 +182,7 @@ fn run_start(
 fn wait_for_healthy(
     exec: &dyn CommandExecutor,
     sleeper: &dyn Sleeper,
+    access: DockerAccess,
     project_dir: &str,
     service: &str,
 ) -> Result<(), String> {
@@ -173,8 +190,9 @@ fn wait_for_healthy(
         if attempt > 0 {
             sleeper.sleep(HEALTH_POLL_INTERVAL);
         }
-        let status = exec.run(
-            "docker",
+        let status = run_docker(
+            exec,
+            access,
             &[
                 "compose",
                 "--project-directory",
@@ -185,10 +203,8 @@ fn wait_for_healthy(
                 "{{.Health}}",
             ],
         );
-        if let Some(status) = status {
-            if status.trim() == "healthy" {
-                return Ok(());
-            }
+        if status.status_ok && status.text().trim() == "healthy" {
+            return Ok(());
         }
     }
     let timeout_secs = HEALTH_MAX_ATTEMPTS as u64 * HEALTH_POLL_INTERVAL.as_secs();
@@ -234,14 +250,16 @@ mod tests {
     }
 
     /// Records every `(program, args)` call it receives, and returns a
-    /// per-program canned response queue -- `ps` calls (used repeatedly
-    /// by the health-wait loop) pop one response per call so a test can
-    /// script "starting, starting, healthy" or "always absent" (never
-    /// healthy -> timeout) sequences; `up`/`migrate` calls (called once)
-    /// just use the first queued response.
+    /// per-program canned response queue. Queued `None` means failure
+    /// with empty stderr; use `queue_err` for failure with a diagnostic.
     struct RecordingExecutor {
         calls: RefCell<Vec<(String, Vec<String>)>>,
-        responses: RefCell<HashMap<String, Vec<Option<String>>>>,
+        responses: RefCell<HashMap<String, Vec<Queued>>>,
+    }
+
+    enum Queued {
+        Ok(String),
+        Err(String),
     }
 
     impl RecordingExecutor {
@@ -253,13 +271,25 @@ mod tests {
         }
 
         /// Queues `response` to be returned the next time `program` is
-        /// invoked (FIFO per program).
+        /// invoked (FIFO per program). `None` = failure with no detail.
         fn queue(&self, program: &str, response: Option<&str>) {
+            let entry = match response {
+                Some(s) => Queued::Ok(s.to_string()),
+                None => Queued::Err(String::new()),
+            };
             self.responses
                 .borrow_mut()
                 .entry(program.to_string())
                 .or_default()
-                .push(response.map(|s| s.to_string()));
+                .push(entry);
+        }
+
+        fn queue_err(&self, program: &str, stderr: &str) {
+            self.responses
+                .borrow_mut()
+                .entry(program.to_string())
+                .or_default()
+                .push(Queued::Err(stderr.to_string()));
         }
 
         fn calls(&self) -> Vec<(String, Vec<String>)> {
@@ -269,6 +299,15 @@ mod tests {
 
     impl CommandExecutor for RecordingExecutor {
         fn run(&self, program: &str, args: &[&str]) -> Option<String> {
+            let output = self.run_output(program, args);
+            if output.status_ok {
+                Some(output.text())
+            } else {
+                None
+            }
+        }
+
+        fn run_output(&self, program: &str, args: &[&str]) -> crate::checks::CommandOutput {
             self.calls.borrow_mut().push((
                 program.to_string(),
                 args.iter().map(|a| a.to_string()).collect(),
@@ -279,9 +318,24 @@ mod tests {
                 // Default to "healthy"/success for any call beyond what
                 // was explicitly scripted, so tests only need to queue
                 // the specific responses they care about.
-                Some("healthy".to_string())
+                crate::checks::CommandOutput {
+                    status_ok: true,
+                    stdout: "healthy".to_string(),
+                    stderr: String::new(),
+                }
             } else {
-                queue.remove(0)
+                match queue.remove(0) {
+                    Queued::Ok(stdout) => crate::checks::CommandOutput {
+                        status_ok: true,
+                        stdout,
+                        stderr: String::new(),
+                    },
+                    Queued::Err(stderr) => crate::checks::CommandOutput {
+                        status_ok: false,
+                        stdout: String::new(),
+                        stderr,
+                    },
+                }
             }
         }
     }
@@ -353,8 +407,10 @@ mod tests {
         );
 
         let calls = exec.calls();
+        // probe_docker_access: docker info
+        assert_eq!(calls[0], ("docker".to_string(), vec!["info".to_string()]));
         assert_eq!(
-            calls[0],
+            calls[1],
             (
                 "docker".to_string(),
                 vec![
@@ -367,7 +423,7 @@ mod tests {
             )
         );
         assert_eq!(
-            calls[1],
+            calls[2],
             (
                 "docker".to_string(),
                 vec![
@@ -389,36 +445,74 @@ mod tests {
     }
 
     #[test]
-    fn docker_compose_up_failure_stops_before_waiting_or_migrating() {
+    fn start_uses_sg_when_ambient_docker_info_fails() {
         let exec = RecordingExecutor::new();
-        exec.queue("docker", None);
+        exec.queue("docker", None); // ambient info fails
+        exec.queue("sg", Some("Server Version: 27.0.3")); // sg info ok
+                                                          // further sg calls default to healthy
         let sleeper = FakeSleeper::new();
 
         let result = maybe_run_start(true, &exec, &sleeper, true, true, Path::new("/repo"))
             .expect("start was requested");
 
         assert_eq!(
-            result,
-            vec![StepOutcome::Failure(
-                "docker compose up -d failed -- see docker's own output above for details."
-                    .to_string()
-            )]
+            result[0],
+            StepOutcome::Success("docker compose up -d succeeded (via sg docker)".to_string())
         );
-        // Only the `up -d` call was made -- no health polling, no moon.
-        assert_eq!(exec.calls().len(), 1);
+        let calls = exec.calls();
+        assert_eq!(calls[0].0, "docker");
+        assert_eq!(calls[0].1, vec!["info".to_string()]);
+        // probe checks `command -v sg` before trying `sg docker`.
+        assert_eq!(calls[1].0, "bash");
+        assert_eq!(
+            calls[1].1,
+            vec!["-c".to_string(), "command -v sg".to_string()]
+        );
+        assert_eq!(calls[2].0, "sg");
+        assert_eq!(calls[2].1[0], "docker");
+        assert_eq!(calls[2].1[1], "-c");
+        assert_eq!(calls[2].1[2], "docker info");
+        // compose up via sg
+        assert_eq!(calls[3].0, "sg");
+        assert!(calls[3].1[2].contains("compose"));
+        assert!(calls.iter().any(|(p, _)| p == "moon"));
+    }
+
+    #[test]
+    fn docker_compose_up_failure_includes_stderr_and_stops() {
+        let exec = RecordingExecutor::new();
+        // probe info succeeds (default), then compose up fails with stderr
+        exec.queue("docker", Some("Server Version: 27")); // info
+        exec.queue_err(
+            "docker",
+            "permission denied while trying to connect to the Docker daemon socket",
+        );
+        let sleeper = FakeSleeper::new();
+
+        let result = maybe_run_start(true, &exec, &sleeper, true, true, Path::new("/repo"))
+            .expect("start was requested");
+
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            StepOutcome::Failure(msg) => {
+                assert!(msg.starts_with("docker compose up -d failed:"));
+                assert!(msg.contains("permission denied"));
+            }
+            other => panic!("expected Failure, got {other:?}"),
+        }
+        // probe + up only -- no health polling, no moon.
+        assert_eq!(exec.calls().len(), 2);
+        assert!(exec.calls().iter().all(|(p, _)| p == "docker"));
     }
 
     #[test]
     fn health_wait_times_out_with_a_clear_message_and_stops_before_migrating() {
         let exec = RecordingExecutor::new();
-        // `docker` is used for both `up -d` and `ps`, so the response
-        // queue is shared: queue one "healthy" for the `up -d` call
-        // itself, then `HEALTH_MAX_ATTEMPTS` "starting" responses so the
-        // `ps postgres` polling loop never reaches "healthy" and the
-        // loop exhausts its attempts.
-        exec.queue("docker", Some("healthy")); // up -d
+        // Shared docker queue: info, up -d, then HEALTH_MAX_ATTEMPTS "starting".
+        exec.queue("docker", Some("Server Version: 27")); // info
+        exec.queue("docker", Some("")); // up -d
         for _ in 0..HEALTH_MAX_ATTEMPTS {
-            exec.queue("docker", Some("starting")); // ps postgres, every attempt
+            exec.queue("docker", Some("starting")); // ps postgres
         }
         let sleeper = FakeSleeper::new();
 
@@ -435,10 +529,7 @@ mod tests {
                 ),
             ]
         );
-        // No `moon` call at all -- migration never runs against a
-        // database that never reported healthy.
         assert!(exec.calls().iter().all(|(program, _)| program != "moon"));
-        // Slept between attempts (attempts - 1 times), not on the first.
         assert_eq!(*sleeper.calls.borrow(), HEALTH_MAX_ATTEMPTS - 1);
     }
 

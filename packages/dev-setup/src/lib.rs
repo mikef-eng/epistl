@@ -16,7 +16,8 @@ use std::path::{Path, PathBuf};
 
 pub use checks::{
     check_docker, check_moon, check_node, check_rustup, check_sccache, check_toolchain,
-    is_required, run_all_checks, CommandExecutor, SystemExecutor, ToolCheck, ToolStatus,
+    is_required, run_all_checks, CommandExecutor, CommandOutput, SystemExecutor, ToolCheck,
+    ToolStatus,
 };
 pub use env_file::{ensure_env_file, ensure_env_files, EnvBootstrap, EnvFileOutcome};
 pub use environment::{Environment, SystemEnvironment};

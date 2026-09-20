@@ -1,5 +1,7 @@
 //! Node.js via system Node (if version OK) or fnm + Node 22.
 
+use std::path::{Path, PathBuf};
+
 use crate::checks::CommandExecutor;
 use crate::pkg::{brew_available, install_packages, PackageSpec};
 use crate::platform::{OsKind, Platform};
@@ -30,6 +32,45 @@ pub fn node_version_ok(version_str: &str) -> bool {
         24 => minor >= 3,
         m if m >= 25 => true,
         _ => false,
+    }
+}
+
+/// Candidate directories where the fnm binary may land after install.
+pub fn fnm_candidate_dirs(home: &Path) -> Vec<PathBuf> {
+    vec![home.join(".local/share/fnm"), home.join(".fnm")]
+}
+
+/// First candidate dir that contains an `fnm` binary, if any.
+pub fn resolve_fnm_dir(home: &Path) -> Option<PathBuf> {
+    fnm_candidate_dirs(home)
+        .into_iter()
+        .find(|d| d.join("fnm").is_file())
+}
+
+/// Shell that prepends `fnm_dir`, activates fnm, installs Node, then prints
+/// absolute paths of `node` and `fnm` (one per line) for process PATH update.
+pub fn fnm_install_and_capture_cmd(fnm_dir: &Path) -> String {
+    format!(
+        "export PATH=\"{}:$PATH\" && eval \"$(fnm env)\" && fnm install {NODE_MAJOR} && fnm default {NODE_MAJOR} && command -v node && command -v fnm",
+        fnm_dir.display()
+    )
+}
+
+/// Prepend directories onto the current process `PATH` (for same-session use).
+pub fn prepend_process_path(dirs: &[PathBuf]) {
+    if dirs.is_empty() {
+        return;
+    }
+    let prefix = dirs
+        .iter()
+        .map(|d| d.display().to_string())
+        .collect::<Vec<_>>()
+        .join(":");
+    let old = std::env::var("PATH").unwrap_or_default();
+    if old.is_empty() {
+        std::env::set_var("PATH", prefix);
+    } else {
+        std::env::set_var("PATH", format!("{prefix}:{old}"));
     }
 }
 
@@ -67,20 +108,77 @@ pub fn ensure_node(
         }
     }
 
-    // Install and default Node 22.
-    let install_cmd = format!("fnm install {NODE_MAJOR} && fnm default {NODE_MAJOR}");
-    if exec.run("sh", &["-c", &install_cmd]).is_none() {
-        // Try with env eval in case fnm just landed on PATH via profile.
-        let with_env =
-            format!("eval \"$(fnm env)\" && fnm install {NODE_MAJOR} && fnm default {NODE_MAJOR}");
-        if exec.run("bash", &["-c", &with_env]).is_none() {
-            return ToolOutcome::Failed("fnm install/default failed".into());
+    let fnm_dir = resolve_fnm_dir(&platform.home).or_else(|| {
+        // brew/fnm may already be on PATH without living in the usual dirs.
+        if exec.run("fnm", &["--version"]).is_some() {
+            Some(PathBuf::new())
+        } else {
+            None
         }
+    });
+
+    let Some(fnm_dir) = fnm_dir else {
+        return ToolOutcome::Failed(
+            "fnm installed but binary not found under ~/.local/share/fnm or ~/.fnm".into(),
+        );
+    };
+
+    let install_cmd = if fnm_dir.as_os_str().is_empty() {
+        format!(
+            "eval \"$(fnm env)\" && fnm install {NODE_MAJOR} && fnm default {NODE_MAJOR} && command -v node && command -v fnm"
+        )
+    } else {
+        fnm_install_and_capture_cmd(&fnm_dir)
+    };
+
+    let output = exec.run_output("bash", &["-c", &install_cmd]);
+    if !output.status_ok {
+        return ToolOutcome::Failed(format!(
+            "fnm install/default failed: {}",
+            output.failure_detail()
+        ));
     }
 
-    // Persist fnm env in shell profile.
+    // Last two non-empty lines are `command -v node` and `command -v fnm`.
+    let paths: Vec<&str> = output
+        .stdout
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    let mut path_dirs = Vec::new();
+    if !fnm_dir.as_os_str().is_empty() {
+        path_dirs.push(fnm_dir.clone());
+    }
+    if let Some(fnm_bin) = paths.last() {
+        if let Some(parent) = Path::new(fnm_bin).parent() {
+            if !path_dirs.iter().any(|d| d == parent) {
+                path_dirs.push(parent.to_path_buf());
+            }
+        }
+    }
+    if paths.len() >= 2 {
+        if let Some(parent) = Path::new(paths[paths.len() - 2]).parent() {
+            if !path_dirs.iter().any(|d| d == parent) {
+                path_dirs.push(parent.to_path_buf());
+            }
+        }
+    }
+    // Prefer aliases/default/bin when present (stable after `fnm default`).
+    if !fnm_dir.as_os_str().is_empty() {
+        let alias_bin = fnm_dir.join("aliases/default/bin");
+        if alias_bin.is_dir() {
+            path_dirs.push(alias_bin);
+        }
+    }
+    prepend_process_path(&path_dirs);
+
+    // Persist fnm env in shell profile (merged with other tool exports).
+    // `--skip-shell` leaves the binary under ~/.local/share/fnm (or ~/.fnm);
+    // that dir must be on PATH before `eval "$(fnm env)"` or new shells
+    // report `fnm: command not found`.
     let profile = platform.shell_profile();
-    let body = "eval \"$(fnm env)\"\nexport PATH=\"$HOME/.local/bin:$PATH\"";
+    let body = "export PATH=\"$HOME/.local/share/fnm:$HOME/.fnm:$PATH\"\neval \"$(fnm env)\"\nexport PATH=\"$HOME/.local/bin:$PATH\"";
     let _ = ensure_profile_block(&profile, body);
 
     ToolOutcome::Installed(format!(
@@ -108,9 +206,14 @@ fn install_fnm(platform: &Platform, exec: &dyn CommandExecutor) -> Result<(), St
         }
         OsKind::Linux => {
             let cmd = "curl -fsSL https://fnm.vercel.app/install | bash -s -- --skip-shell";
-            match exec.run("bash", &["-c", cmd]) {
-                Some(_) => Ok(()),
-                None => Err("fnm install script failed".into()),
+            let output = exec.run_output("bash", &["-c", cmd]);
+            if output.status_ok {
+                Ok(())
+            } else {
+                Err(format!(
+                    "fnm install script failed: {}",
+                    output.failure_detail()
+                ))
             }
         }
     }
@@ -136,5 +239,60 @@ mod tests {
         assert!(!node_version_ok("v22.12.0"));
         assert!(!node_version_ok("v24.2.0"));
         assert!(!node_version_ok("not-a-version"));
+    }
+
+    #[test]
+    fn fnm_install_cmd_prepends_dir_and_activates() {
+        let cmd = fnm_install_and_capture_cmd(Path::new("/home/dev/.local/share/fnm"));
+        assert!(cmd.contains("export PATH=\"/home/dev/.local/share/fnm:$PATH\""));
+        assert!(cmd.contains("eval \"$(fnm env)\""));
+        assert!(cmd.contains("fnm install 22"));
+        assert!(cmd.contains("fnm default 22"));
+        assert!(cmd.contains("command -v node"));
+        assert!(cmd.contains("command -v fnm"));
+    }
+
+    #[test]
+    fn profile_body_puts_fnm_dir_on_path_before_eval() {
+        // Mirrors the body written by ensure_node — new shells must find
+        // `fnm` before `eval "$(fnm env)"`.
+        let body = "export PATH=\"$HOME/.local/share/fnm:$HOME/.fnm:$PATH\"\neval \"$(fnm env)\"\nexport PATH=\"$HOME/.local/bin:$PATH\"";
+        let eval_at = body.find("eval \"$(fnm env)\"").expect("eval line");
+        let path_at = body
+            .find("export PATH=\"$HOME/.local/share/fnm:")
+            .expect("fnm PATH line");
+        assert!(path_at < eval_at);
+    }
+
+    #[test]
+    fn resolve_fnm_dir_finds_binary() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::time::{SystemTime, UNIX_EPOCH};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let home = std::env::temp_dir().join(format!(
+            "dev-setup-fnm-home-{}-{}-{nanos}",
+            std::process::id(),
+            n
+        ));
+        let fnm_dir = home.join(".local/share/fnm");
+        std::fs::create_dir_all(&fnm_dir).unwrap();
+        std::fs::write(fnm_dir.join("fnm"), b"#!/bin/sh\n").unwrap();
+        assert_eq!(resolve_fnm_dir(&home), Some(fnm_dir));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn prepend_process_path_puts_dirs_first() {
+        let old = std::env::var("PATH").unwrap_or_default();
+        let marker = PathBuf::from("/tmp/epistl-fnm-test-bin");
+        prepend_process_path(std::slice::from_ref(&marker));
+        let new = std::env::var("PATH").unwrap();
+        assert!(new.starts_with("/tmp/epistl-fnm-test-bin:"));
+        std::env::set_var("PATH", old);
     }
 }
