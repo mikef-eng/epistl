@@ -74,11 +74,11 @@ function hasFullKeyBundle(contact: Contact): boolean {
   );
 }
 
-/** First letter of the contact's email, uppercased, for the row avatar
+/** First letter of the contact's username, uppercased, for the row avatar
  * circle -- no photo upload/server-side avatar storage, just a derived
  * initial, matching `ConversationsScreen`'s `initialFor`. */
-function initialFor(email: string): string {
-  return email.trim().charAt(0).toUpperCase() || '?';
+function initialFor(username: string): string {
+  return username.trim().charAt(0).toUpperCase() || '?';
 }
 
 /** Removes a key from a `Record` map by producing a fresh object, used for
@@ -197,7 +197,7 @@ export default function FriendsScreen({ navigation }: Props) {
   }
 
   function handleOpenChat(contact: Contact) {
-    navigation.navigate('Chat', { userId: contact.user_id, email: contact.email });
+    navigation.navigate('Chat', { userId: contact.user_id, username: contact.username });
   }
 
   /** Failure leaves `contacts` untouched and surfaces a per-row inline
@@ -230,7 +230,7 @@ export default function FriendsScreen({ navigation }: Props) {
       // than opening a second confirmation on top of it.
       return;
     }
-    Alert.alert(contact.email, 'Remove this friend?', [
+    Alert.alert(contact.username, 'Remove this friend?', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Remove',
@@ -290,7 +290,7 @@ export default function FriendsScreen({ navigation }: Props) {
   const hasRequests = requests.incoming.length > 0 || requests.outgoing.length > 0;
 
   // Friends-only search (issue #104): filters the already-fetched `contacts`
-  // in memory by case-insensitive email substring match -- no new endpoint
+  // in memory by case-insensitive username substring match -- no new endpoint
   // call. An empty (or whitespace-only) query shows the full list, and
   // `requests` is never touched here, so the Requests section above is
   // unaffected regardless of the query.
@@ -298,7 +298,7 @@ export default function FriendsScreen({ navigation }: Props) {
   const filteredContacts =
     trimmedFriendQuery === ''
       ? contacts
-      : contacts.filter((contact) => contact.email.toLowerCase().includes(trimmedFriendQuery));
+      : contacts.filter((contact) => contact.username.toLowerCase().includes(trimmedFriendQuery));
 
   return (
     <View testID="friends-screen" className="flex-1 bg-white dark:bg-black">
@@ -439,16 +439,16 @@ export default function FriendsScreen({ navigation }: Props) {
               >
                 <Avatar
                   userId={item.user_id}
-                  fallbackText={initialFor(item.email)}
+                  fallbackText={initialFor(item.username)}
                   wrapperClassName="mr-3 h-10 w-10 items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700"
                   imageClassName="h-10 w-10 rounded-full"
                   textClassName="text-base font-semibold text-black dark:text-white"
                 />
                 <View className="flex-1">
-                  <Text className="text-base text-black dark:text-white">{item.email}</Text>
+                  <Text className="text-base text-black dark:text-white">{item.username}</Text>
                   {keysReady ? null : (
                     <Text className="text-sm text-gray-400 dark:text-gray-500">
-                      Waiting for {item.email} to finish setup
+                      Waiting for {item.username} to finish setup
                     </Text>
                   )}
                   {removeErrors[item.user_id] !== undefined ? (

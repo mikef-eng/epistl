@@ -2,8 +2,9 @@
  * Local, on-device cache of each contact's `username`, keyed by their
  * permanent `user_id` (issue #174). Exists solely so a message sender's
  * display name is available for a push notification without a network
- * round-trip -- see that issue's module doc for the narrower scope (this is
- * not a general-purpose contact directory, and it never caches `email`).
+ * round-trip, and (issue #239) so a notification tap can open `Chat`, which
+ * is keyed by `{ userId, username }`, with no network call. This is not a
+ * general-purpose contact directory; `email` is intentionally not stored.
  *
  * Shares the same on-device SQLite database (`storage/messages.ts`'s
  * `DATABASE_NAME`) and the same `drizzle-kit`-generated migrations folder as

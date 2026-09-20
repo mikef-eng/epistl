@@ -29,7 +29,7 @@ import {
  * on-device `getConversationSummaries()` (issue #93, local SQLite -- per
  * docs/decisions/0001-message-content-never-in-postgres.md this list is
  * never derived from the server) with `listContacts()` (issue #35's server
- * contacts list, for display metadata like email) by `contact_user_id`. See
+ * contacts list, for display metadata like username) by `contact_user_id`. See
  * docs/superpowers/specs/2026-09-13-friends-conversations-ux-design.md,
  * "Conversations screen & data model".
  */
@@ -43,7 +43,7 @@ type Props = CompositeScreenProps<
  * dropped). */
 interface ConversationRow {
   contactUserId: string;
-  email: string;
+  username: string;
   lastBody: string;
   lastCreatedAt: string;
   hasUnread: boolean;
@@ -62,7 +62,7 @@ function messageFor(err: unknown): string {
  * history has no summary and so never appears here -- Conversations shows
  * conversations, not contacts. Conversely, a summary whose contact is no
  * longer in `listContacts()` (e.g. the contact was since removed) is
- * dropped too, since there is no email left to render for it.
+ * dropped too, since there is no username left to render for it.
  */
 function mergeConversations(
   summaries: ConversationSummary[],
@@ -77,7 +77,7 @@ function mergeConversations(
     }
     rows.push({
       contactUserId: summary.contactUserId,
-      email: contact.email,
+      username: contact.username,
       lastBody: summary.lastBody,
       lastCreatedAt: summary.lastCreatedAt,
       hasUnread: summary.hasUnread,
@@ -96,12 +96,12 @@ function truncatePreview(body: string): string {
   return `${singleLine.slice(0, PREVIEW_MAX_LENGTH - 1).trimEnd()}…`;
 }
 
-/** First letter of the contact's email, uppercased, for the row avatar
+/** First letter of the contact's username, uppercased, for the row avatar
  * circle -- no photo upload/server-side avatar storage, just a derived
  * initial (see Part C's "Avatars beyond a colored initial circle" out-of-
  * scope note). */
-function initialFor(email: string): string {
-  return email.trim().charAt(0).toUpperCase() || '?';
+function initialFor(username: string): string {
+  return username.trim().charAt(0).toUpperCase() || '?';
 }
 
 /** Coarse relative-time label for a row's last-message timestamp (no
@@ -140,7 +140,7 @@ export default function ConversationsScreen({ navigation }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   // Holds the union of contact_user_ids matching the last non-empty query,
-  // by email substring (from `rows`, already in memory) or by message
+  // by username substring (from `rows`, already in memory) or by message
   // content (`searchMessages()`, issue #102) -- see
   // docs/superpowers/specs/2026-09-13-search-design.md, "Conversation
   // full-text search". Only ever read once `query` is non-empty (see
@@ -217,7 +217,7 @@ export default function ConversationsScreen({ navigation }: Props) {
   // As-you-typed search (issue #103): a blank query never fires a query --
   // `displayedRows` below falls back to the unfiltered `rows` in that case
   // ("empty search query shows the full, unfiltered conversation list").
-  // Otherwise the email-substring check (synchronous, over the already
+  // Otherwise the username-substring check (synchronous, over the already
   // in-memory `rows`) and `searchMessages()` (async, hits SQLite) run
   // together and their results are unioned into one `Set` -- a contact
   // matching both isn't duplicated since it's still just one entry in the
@@ -230,26 +230,26 @@ export default function ConversationsScreen({ navigation }: Props) {
 
     let cancelled = false;
     const lowerQuery = trimmed.toLowerCase();
-    const emailMatchIds = rows
-      .filter((row) => row.email.toLowerCase().includes(lowerQuery))
+    const usernameMatchIds = rows
+      .filter((row) => row.username.toLowerCase().includes(lowerQuery))
       .map((row) => row.contactUserId);
 
-    Promise.all([Promise.resolve(emailMatchIds), searchMessages(trimmed)])
-      .then(([emailIds, contentMatches]) => {
+    Promise.all([Promise.resolve(usernameMatchIds), searchMessages(trimmed)])
+      .then(([usernameIds, contentMatches]) => {
         if (cancelled) {
           return;
         }
-        const union = new Set<string>(emailIds);
+        const union = new Set<string>(usernameIds);
         for (const match of contentMatches) {
           union.add(match.contactUserId);
         }
         setSearchMatches(union);
       })
       .catch(() => {
-        // Falls back to the (already-available) email matches rather than
+        // Falls back to the (already-available) username matches rather than
         // clearing the search entirely if the content search fails.
         if (!cancelled) {
-          setSearchMatches(new Set(emailMatchIds));
+          setSearchMatches(new Set(usernameMatchIds));
         }
       });
 
@@ -275,7 +275,7 @@ export default function ConversationsScreen({ navigation }: Props) {
   }
 
   function handleOpenChat(row: ConversationRow) {
-    navigation.navigate('Chat', { userId: row.contactUserId, email: row.email });
+    navigation.navigate('Chat', { userId: row.contactUserId, username: row.username });
   }
 
   return (
@@ -343,7 +343,7 @@ export default function ConversationsScreen({ navigation }: Props) {
             >
               <Avatar
                 userId={item.contactUserId}
-                fallbackText={initialFor(item.email)}
+                fallbackText={initialFor(item.username)}
                 wrapperClassName="mr-3 h-10 w-10 items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700"
                 imageClassName="h-10 w-10 rounded-full"
                 textClassName="text-base font-semibold text-black dark:text-white"
@@ -361,7 +361,7 @@ export default function ConversationsScreen({ navigation }: Props) {
                       item.hasUnread ? 'font-bold' : 'font-normal'
                     }`}
                   >
-                    {item.email}
+                    {item.username}
                   </Text>
                 </View>
                 <Text

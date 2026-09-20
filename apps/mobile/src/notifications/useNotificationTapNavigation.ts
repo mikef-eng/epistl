@@ -1,16 +1,16 @@
 /**
  * Tap-to-open-conversation (issue #169). `useLastNotificationResponse`
  * covers foregrounded, backgrounded, and cold-start taps. The tapped
- * notification's `data.fromUserId` is resolved against the caller's contacts
- * (which carry the `email` that `Chat` needs); anything unresolvable falls
- * back to the Conversations tab.
+ * notification's `data.fromUserId` is resolved to a `username` via the local
+ * SQLite contact cache (no network call); a sender with no cache entry (or
+ * a cache read failure) falls back to the Conversations tab.
  */
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as Notifications from 'expo-notifications';
 import { useEffect, useRef } from 'react';
 
-import { listContacts } from '../api/client';
 import type { RootStackParamList } from '../navigation/types';
+import { getCachedContactUsername } from '../storage/contacts';
 
 type Navigate = NativeStackNavigationProp<RootStackParamList>['navigate'];
 
@@ -36,10 +36,9 @@ export function useNotificationTapNavigation(navigate: Navigate): void {
     void (async () => {
       if (typeof fromUserId === 'string') {
         try {
-          const { contacts } = await listContacts();
-          const contact = contacts.find((c) => c.user_id === fromUserId);
-          if (contact) {
-            navigate('Chat', { userId: contact.user_id, email: contact.email });
+          const username = await getCachedContactUsername(fromUserId);
+          if (username !== null) {
+            navigate('Chat', { userId: fromUserId, username });
             return;
           }
         } catch {

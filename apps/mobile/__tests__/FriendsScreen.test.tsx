@@ -105,6 +105,7 @@ function fullyKeyedContact(overrides: {
   added_at?: string;
 }) {
   return {
+    username: overrides.email.split('@')[0],
     added_at: '2024-01-01T00:00:00Z',
     x25519_public_key_b64: 'x25519-b64',
     kyber_public_key_b64: 'kyber-b64',
@@ -116,6 +117,7 @@ function fullyKeyedContact(overrides: {
 
 function unkeyedContact(overrides: { user_id: string; email: string; added_at?: string }) {
   return {
+    username: overrides.email.split('@')[0],
     added_at: '2024-01-01T00:00:00Z',
     x25519_public_key_b64: null,
     kyber_public_key_b64: null,
@@ -154,7 +156,7 @@ describe('FriendsScreen', () => {
     });
   });
 
-  it('renders each contact email once loaded', async () => {
+  it('renders each contact username once loaded', async () => {
     mockedListContacts.mockResolvedValueOnce({
       contacts: [
         fullyKeyedContact({ user_id: 'u1', email: 'alice@example.com' }),
@@ -165,8 +167,8 @@ describe('FriendsScreen', () => {
     await renderFriendsScreen();
 
     await waitFor(() => {
-      expect(screen.getByText('alice@example.com')).toBeTruthy();
-      expect(screen.getByText('bob@example.com')).toBeTruthy();
+      expect(screen.getByText('alice')).toBeTruthy();
+      expect(screen.getByText('bob')).toBeTruthy();
     });
   });
 
@@ -196,7 +198,7 @@ describe('FriendsScreen', () => {
     await user.press(screen.getByRole('button', { name: 'Retry' }));
 
     await waitFor(() => {
-      expect(screen.getByText('alice@example.com')).toBeTruthy();
+      expect(screen.getByText('alice')).toBeTruthy();
     });
     expect(mockedListContacts).toHaveBeenCalledTimes(2);
   });
@@ -226,7 +228,7 @@ describe('FriendsScreen', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText('alice@example.com')).toBeTruthy();
+      expect(screen.getByText('alice')).toBeTruthy();
     });
     expect(mockedListContacts).toHaveBeenCalledTimes(2);
   });
@@ -269,21 +271,21 @@ describe('FriendsScreen', () => {
     expect(screen.getByText('No contacts yet').props.className).toContain('dark:text-gray-400');
   });
 
-  it('navigates to Chat with the contact userId and email when a fully-keyed row is tapped', async () => {
+  it('navigates to Chat with the contact userId and username when a fully-keyed row is tapped', async () => {
     mockedListContacts.mockResolvedValueOnce({
       contacts: [fullyKeyedContact({ user_id: 'u1', email: 'alice@example.com' })],
     });
     const { navigation, user } = await renderFriendsScreen();
 
     await waitFor(() => {
-      expect(screen.getByText('alice@example.com')).toBeTruthy();
+      expect(screen.getByText('alice')).toBeTruthy();
     });
 
-    await user.press(screen.getByText('alice@example.com'));
+    await user.press(screen.getByText('alice'));
 
     expect(navigation.navigate).toHaveBeenCalledWith('Chat', {
       userId: 'u1',
-      email: 'alice@example.com',
+      username: 'alice',
     });
   });
 
@@ -294,13 +296,13 @@ describe('FriendsScreen', () => {
     const { navigation, user } = await renderFriendsScreen();
 
     await waitFor(() => {
-      expect(screen.getByText('carol@example.com')).toBeTruthy();
+      expect(screen.getByText('carol')).toBeTruthy();
     });
 
-    expect(screen.getByText('Waiting for carol@example.com to finish setup')).toBeTruthy();
-    expect(screen.getByRole('button', { name: /carol@example.com/ })).toBeDisabled();
+    expect(screen.getByText('Waiting for carol to finish setup')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /carol/ })).toBeDisabled();
 
-    await user.press(screen.getByText('carol@example.com'));
+    await user.press(screen.getByText('carol'));
 
     expect(navigation.navigate).not.toHaveBeenCalled();
   });
@@ -317,18 +319,18 @@ describe('FriendsScreen', () => {
     const { navigation, user } = await renderFriendsScreen();
 
     await waitFor(() => {
-      expect(screen.getByText('dave@example.com')).toBeTruthy();
+      expect(screen.getByText('dave')).toBeTruthy();
     });
 
-    expect(screen.getByText('Waiting for dave@example.com to finish setup')).toBeTruthy();
+    expect(screen.getByText('Waiting for dave to finish setup')).toBeTruthy();
 
-    await user.press(screen.getByText('dave@example.com'));
+    await user.press(screen.getByText('dave'));
 
     expect(navigation.navigate).not.toHaveBeenCalled();
   });
 
   describe('Friends search filter (issue #104)', () => {
-    it('filters the Friends section by case-insensitive email substring', async () => {
+    it('filters the Friends section by case-insensitive username substring', async () => {
       mockedListContacts.mockResolvedValueOnce({
         contacts: [
           fullyKeyedContact({ user_id: 'u1', email: 'alice@example.com' }),
@@ -338,15 +340,29 @@ describe('FriendsScreen', () => {
       const { user } = await renderFriendsScreen();
 
       await waitFor(() => {
-        expect(screen.getByText('alice@example.com')).toBeTruthy();
-        expect(screen.getByText('bob@example.com')).toBeTruthy();
+        expect(screen.getByText('alice')).toBeTruthy();
+        expect(screen.getByText('bob')).toBeTruthy();
       });
 
       await user.type(screen.getByTestId('friends-search-input'), 'ALI');
 
       await waitFor(() => {
-        expect(screen.getByText('alice@example.com')).toBeTruthy();
-        expect(screen.queryByText('bob@example.com')).toBeNull();
+        expect(screen.getByText('alice')).toBeTruthy();
+        expect(screen.queryByText('bob')).toBeNull();
+      });
+    });
+
+    it('does not match a query that only matches the contact email', async () => {
+      mockedListContacts.mockResolvedValueOnce({
+        contacts: [fullyKeyedContact({ user_id: 'u1', email: 'alice@example.com' })],
+      });
+      const { user } = await renderFriendsScreen();
+      const input = await screen.findByTestId('friends-search-input');
+
+      await user.type(input, 'example.com');
+
+      await waitFor(() => {
+        expect(screen.getByText('No matching friends')).toBeTruthy();
       });
     });
 
@@ -362,14 +378,14 @@ describe('FriendsScreen', () => {
 
       await user.type(input, 'ali');
       await waitFor(() => {
-        expect(screen.queryByText('bob@example.com')).toBeNull();
+        expect(screen.queryByText('bob')).toBeNull();
       });
 
       await user.clear(input);
 
       await waitFor(() => {
-        expect(screen.getByText('alice@example.com')).toBeTruthy();
-        expect(screen.getByText('bob@example.com')).toBeTruthy();
+        expect(screen.getByText('alice')).toBeTruthy();
+        expect(screen.getByText('bob')).toBeTruthy();
       });
     });
 
@@ -384,7 +400,7 @@ describe('FriendsScreen', () => {
 
       await waitFor(() => {
         expect(screen.getByText('No matching friends')).toBeTruthy();
-        expect(screen.queryByText('alice@example.com')).toBeNull();
+        expect(screen.queryByText('alice')).toBeNull();
       });
     });
 
@@ -440,14 +456,14 @@ describe('FriendsScreen', () => {
       const { user } = await renderFriendsScreen();
 
       await waitFor(() => {
-        expect(screen.getByText('alice@example.com')).toBeTruthy();
+        expect(screen.getByText('alice')).toBeTruthy();
       });
 
-      await user.longPress(screen.getByText('alice@example.com'));
+      await user.longPress(screen.getByText('alice'));
 
       expect(mockedRemoveContact).toHaveBeenCalledWith('u1');
       await waitFor(() => {
-        expect(screen.queryByText('alice@example.com')).toBeNull();
+        expect(screen.queryByText('alice')).toBeNull();
       });
     });
 
@@ -461,15 +477,15 @@ describe('FriendsScreen', () => {
       const { user } = await renderFriendsScreen();
 
       await waitFor(() => {
-        expect(screen.getByText('alice@example.com')).toBeTruthy();
+        expect(screen.getByText('alice')).toBeTruthy();
       });
 
-      await user.longPress(screen.getByText('alice@example.com'));
+      await user.longPress(screen.getByText('alice'));
 
       await waitFor(() => {
         expect(screen.getByText('not_found')).toBeTruthy();
       });
-      expect(screen.getByText('alice@example.com')).toBeTruthy();
+      expect(screen.getByText('alice')).toBeTruthy();
     });
   });
 
@@ -556,7 +572,7 @@ describe('FriendsScreen', () => {
       await waitFor(() => {
         expect(screen.queryByTestId('requests-section')).toBeNull();
       });
-      expect(screen.getByText('alice@example.com')).toBeTruthy();
+      expect(screen.getByText('alice')).toBeTruthy();
       expect(screen.queryByText('No contacts yet')).toBeNull();
     });
 
