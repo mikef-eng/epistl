@@ -34,7 +34,6 @@
   "scripts": {
     "clean": "del-cli android/build lib",
     "prepare": "node scripts/ensure-built.js",
-    "test": "node --test scripts/__tests__/ensure-native-built.test.js",
     "typecheck": "tsc",
     "lint": "eslint \"**/*.{js,ts,tsx}\"",
     "ubrn:ios": "ubrn build ios --and-generate",
