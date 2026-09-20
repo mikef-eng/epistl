@@ -60,8 +60,10 @@ Non-TTY stdin implies `--yes` so agents and CI never hang on a prompt.
 **Core tools:** rustup/cargo/rustc, sccache, Node (reuse if it satisfies
 RN 0.86's engines range; otherwise fnm + Node 22), moon, Docker
 (`docker info` — daemon must be up). On Linux, Docker installs via
-get.docker.com + docker group; WSL reuses Docker Desktop's socket when
-present; macOS stays guide-only for Docker Desktop.
+get.docker.com + docker group; a fresh install in the same session may
+drive compose via `sg docker` until you log out/in (or `newgrp docker`).
+WSL reuses Docker Desktop's socket when present; macOS stays guide-only
+for Docker Desktop.
 
 **Mobile (unless `--skip-mobile`):** JDK 17, Android cmdline-tools +
 sdkmanager packages (platform 36, build-tools 36.0.0, NDK
