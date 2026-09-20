@@ -10,6 +10,7 @@ pub mod avatars;
 pub mod contacts;
 pub mod db;
 pub mod keys;
+pub mod messages;
 pub mod nats;
 pub mod push;
 pub mod push_tokens;
@@ -27,7 +28,8 @@ pub use auth::{AppState, AuthenticatedUser};
 
 /// Build the full application router: `/health` plus the auth routes from
 /// [`auth::router`], the contacts routes from [`contacts::router`], the
-/// key-storage routes from [`keys::router`], the account routes from
+/// key-storage routes from [`keys::router`], the queued-message peek route
+/// from [`messages::router`], the account routes from
 /// [`account::router`], the discover-search route from [`search::router`],
 /// the push-token registration route from [`push_tokens::router`], the
 /// avatar upload/serving routes from [`avatars::router`], the
@@ -39,6 +41,7 @@ pub fn app(state: AppState) -> Router {
         .merge(auth::router(state.clone()))
         .merge(contacts::router(state.clone()))
         .merge(keys::router(state.clone()))
+        .merge(messages::router(state.clone()))
         .merge(account::router(state.clone()))
         .merge(search::router(state.clone()))
         .merge(push_tokens::router(state.clone()))
