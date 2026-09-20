@@ -1,15 +1,19 @@
 import { Ionicons } from '@expo/vector-icons';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useColorScheme } from 'nativewind';
 import { useEffect } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { startAppSession, stopAppSession } from '../inbox/appSession';
+import { startPushRegistration } from '../notifications/pushRegistration';
+import { useNotificationTapNavigation } from '../notifications/useNotificationTapNavigation';
 import ConversationsScreen from '../screens/ConversationsScreen';
 import FriendsScreen from '../screens/FriendsScreen';
-import type { MainTabParamList } from './types';
+import type { MainTabParamList, RootStackParamList } from './types';
 
 const Tab = createBottomTabNavigator<MainTabParamList>();
 
@@ -111,10 +115,19 @@ function ThemedTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
  * of `ChatScreen.tsx`'s former per-screen `connect`/`close`.
  */
 export default function MainTabs() {
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  // Push notification taps (issue #169): resolved to `Chat` (or the
+  // Conversations tab as a fallback) from anywhere in the authenticated app.
+  useNotificationTapNavigation(navigation.navigate);
+
   useEffect(() => {
     startAppSession();
+    // Once per authenticated session (this mounts once per login): best-effort
+    // permission request + push token registration (issue #169).
+    const stopPushRegistration = startPushRegistration();
     return () => {
       stopAppSession();
+      stopPushRegistration();
     };
   }, []);
 

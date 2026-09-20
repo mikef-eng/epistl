@@ -7,6 +7,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { listContactRequests, listContacts } from '../src/api/client';
 import { startAppSession, stopAppSession } from '../src/inbox/appSession';
 import MainTabs from '../src/navigation/MainTabs';
+import { startPushRegistration } from '../src/notifications/pushRegistration';
 import { getConversationSummaries } from '../src/storage/messages';
 import type { RootStackParamList } from '../src/navigation/types';
 
@@ -63,11 +64,23 @@ jest.mock('../src/inbox/appSession', () => ({
   stopAppSession: jest.fn(),
 }));
 
+// Push registration + tap navigation (issue #169) wrap native
+// `expo-notifications`; covered directly by `src/notifications/__tests__`.
+jest.mock('../src/notifications/pushRegistration', () => ({
+  startPushRegistration: jest.fn(() => jest.fn()),
+}));
+jest.mock('../src/notifications/useNotificationTapNavigation', () => ({
+  useNotificationTapNavigation: jest.fn(),
+}));
+
 const mockedListContacts = listContacts as jest.Mock;
 const mockedListContactRequests = listContactRequests as jest.Mock;
 const mockedGetConversationSummaries = getConversationSummaries as jest.Mock;
 const mockedStartAppSession = startAppSession as jest.Mock;
 const mockedStopAppSession = stopAppSession as jest.Mock;
+
+const mockedStartPushRegistration = startPushRegistration as jest.Mock;
+const mockStopPush = jest.fn();
 
 jest.setTimeout(15000);
 
@@ -106,6 +119,7 @@ describe('Main tab navigator (issue #94)', () => {
     mockedListContacts.mockResolvedValue({ contacts: [] });
     mockedListContactRequests.mockResolvedValue({ incoming: [], outgoing: [] });
     mockedGetConversationSummaries.mockResolvedValue([]);
+    mockedStartPushRegistration.mockReturnValue(mockStopPush);
   });
 
   it('renders Main with the Conversations tab active and the Friends tab reachable', async () => {
@@ -210,5 +224,18 @@ describe('Main tab navigator (issue #94)', () => {
     await unmount();
 
     expect(mockedStopAppSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts push registration once on mount and cleans it up on unmount (issue #169)', async () => {
+    const { unmount } = await renderMainStack();
+
+    await waitFor(() => {
+      expect(mockedStartPushRegistration).toHaveBeenCalledTimes(1);
+    });
+    expect(mockStopPush).not.toHaveBeenCalled();
+
+    await unmount();
+
+    expect(mockStopPush).toHaveBeenCalledTimes(1);
   });
 });

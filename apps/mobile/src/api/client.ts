@@ -328,6 +328,25 @@ export async function registerKeys(
   }
 }
 
+/** Registers this device's Expo push token with the server (issue #169;
+ * `POST /api/push-tokens`, issue #166). */
+export async function registerPushToken(token: string): Promise<void> {
+  const authToken = await requireToken();
+
+  const response = await fetch(`${API_BASE_URL}/api/push-tokens`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${authToken}`,
+    },
+    body: JSON.stringify({ token }),
+  });
+
+  if (!response.ok) {
+    await throwApiError(response);
+  }
+}
+
 /** Lists the caller's pending contact requests, both directions (issue
  * #79's `GET /api/contacts/requests`). Backs `FriendsScreen`'s Requests
  * section. */

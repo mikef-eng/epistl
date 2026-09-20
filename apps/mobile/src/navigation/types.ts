@@ -1,3 +1,5 @@
+import type { NavigatorScreenParams } from "@react-navigation/native";
+
 /**
  * Shared param list for the app's root native stack navigator. Screens
  * added by later issues (AddContact, Chat) should extend their entries here
@@ -20,7 +22,7 @@ export type RootStackParamList = {
    * inside the tab navigator) so they're reachable as a normal stack push
    * from either tab (issue #94).
    */
-  Main: undefined;
+  Main: NavigatorScreenParams<MainTabParamList> | undefined;
   AddContact: undefined;
   Chat: { userId: string; email: string };
   /**
