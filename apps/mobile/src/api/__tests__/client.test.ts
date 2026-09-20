@@ -9,6 +9,7 @@ import {
   listContacts,
   sendContactRequest,
   registerKeys,
+  registerPushToken,
   removeContact,
   deleteAccount,
   listContactRequests,
@@ -473,6 +474,38 @@ describe('client', () => {
       expect(rejection).toBeInstanceOf(ApiError);
       expect(rejection).not.toBeInstanceOf(IncomingRequestExistsError);
       expect(rejection).toMatchObject({ code: 'incoming_request_exists', status: 409 });
+    });
+  });
+
+  describe('registerPushToken', () => {
+    it('throws no_session without a stored token', async () => {
+      mockSession.getToken.mockResolvedValueOnce(null);
+      await expect(registerPushToken('ExponentPushToken[x]')).rejects.toMatchObject({
+        code: 'no_session',
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('POSTs { token } to /api/push-tokens with the Authorization header', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-p');
+      fetchMock.mockResolvedValueOnce(jsonResponse(204, null));
+
+      await registerPushToken('ExponentPushToken[x]');
+
+      expect(fetchMock).toHaveBeenCalledWith('http://localhost:3000/api/push-tokens', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer tok-p' },
+        body: JSON.stringify({ token: 'ExponentPushToken[x]' }),
+      });
+    });
+
+    it('throws an ApiError on a non-2xx response', async () => {
+      mockSession.getToken.mockResolvedValueOnce('tok-p');
+      fetchMock.mockResolvedValueOnce(jsonResponse(400, { error: 'invalid_token' }));
+      await expect(registerPushToken('bad')).rejects.toMatchObject({
+        code: 'invalid_token',
+        status: 400,
+      });
     });
   });
 

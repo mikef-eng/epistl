@@ -1,7 +1,13 @@
 {
   "expo": {
     "name": "mobile",
-    "slug": "mobile",
+    "slug": "epistl",
+    "owner": "epistl",
+    "extra": {
+      "eas": {
+        "projectId": "8071b1c9-00f0-45d3-a884-e2a9c3d89042"
+      }
+    },
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -24,7 +30,8 @@
     },
     "plugins": [
       "expo-sqlite",
-      "expo-asset"
+      "expo-asset",
+      "expo-notifications"
     ]
   }
 }
