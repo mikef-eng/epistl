@@ -30,8 +30,8 @@ Replace the four-role sequential pipeline with **area lanes**:
 | Lane | Owns | Agent |
 | --- | --- | --- |
 | `api-dev` | `apps/api/**` | Implements + self-verifies one issue, opens PR |
-| `mobile-dev` | `apps/mobile/**` (excl. native module glue) | Same |
-| `native-dev` | `packages/quic-relay-client/**`, `packages/dev-setup/**`, `apps/mobile/modules/quic-relay-client/**` | Same |
+| `mobile-dev` | `apps/mobile/**` (excl. `modules/**`, native module glue) | Same |
+| `native-dev` | `packages/quic-relay-client/**`, `packages/dev-setup/**`, `apps/mobile/modules/**` (widened from `modules/quic-relay-client/**` when `session-store` was added) | Same |
 | `ui` | Presentation-layer styling only | Hot-reload edits; no PR/CI |
 | `ci-watch` | One blocking `gh run watch` | Never polls with `sleep` |
 | `merge-gate` | Diff vs AC coverage table, scope, docs, crypto gate | Squash-merges when green |

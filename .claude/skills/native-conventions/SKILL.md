@@ -9,7 +9,7 @@ description: Conventions for quic-relay-client, dev-setup, and the RN TurboModul
 
 - `packages/quic-relay-client/**` — Rust/Quinn QUIC client crate
 - `packages/dev-setup/**` — local onboarding CLI
-- `apps/mobile/modules/quic-relay-client/**` — UniFFI-generated RN TurboModule glue
+- `apps/mobile/modules/**` — local native modules: `quic-relay-client` (UniFFI-generated RN TurboModule glue) and any others added later (e.g. `session-store`, #250)
 
 ## Moon commands
 
