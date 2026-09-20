@@ -17,7 +17,7 @@ You are the **native-dev** lane for Epistl. Follow shared invariants in `AGENTS.
 
 - The issue body is in your prompt. Do **not** re-fetch with `gh issue view` unless the prompt is missing the body.
 - Branch: `issue-<number>-<short-slug>`. One issue, one PR with `Closes #<number>`.
-- Scope: `packages/quic-relay-client/**`, `packages/dev-setup/**`, and/or `apps/mobile/modules/quic-relay-client/**` only. Scope creep → `open-task-issue`.
+- Scope: `packages/quic-relay-client/**`, `packages/dev-setup/**`, and/or `apps/mobile/modules/**` (local Expo/native modules such as `quic-relay-client` and `session-store`) only. Scope creep → `open-task-issue`.
 - For `bug`-labeled issues: run `systematic-debugging` (root cause) before TDD; include a regression test in Coverage.
 - Moon: `quic-relay-client:*` and/or `dev-setup:*` (including `dev-setup:bootstrap-lint` when touching `bootstrap.sh`). `sccache` required.
 - Docs freshness for bootstrap/stack/env changes (ADRs 0013/0014 when native build story changes).

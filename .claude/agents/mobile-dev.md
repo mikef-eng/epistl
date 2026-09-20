@@ -21,7 +21,7 @@ You are the **mobile-dev** lane for Epistl. Follow shared invariants in `AGENTS.
 - For `bug`-labeled issues: run `systematic-debugging` (root cause) before TDD; include a regression test in Coverage.
 - **Bootstrap:** a fresh worktree has no `node_modules`. If `apps/mobile/node_modules` does not exist, run `npm ci` once in `apps/mobile` before any moon step.
 - Moon: `mobile:lint` / `mobile:typecheck` / `mobile:test`.
-- NativeWind `className` for styling. Do not touch `apps/mobile/modules/quic-relay-client/**` (that's `native-dev`).
+- NativeWind `className` for styling. Do not touch `apps/mobile/modules/**` (local native modules; that's `native-dev`).
 - If touching `apps/mobile/src/crypto/**`, follow `pqc-crypto-change` before opening the PR.
 - **Worktree shell guard:** you run in an isolated worktree, and the harness refuses any Bash command it cannot verify stays inside it (every refusal is a wasted call). Create and edit files with `Write` / `Edit`, never `cat <<EOF`, `echo >`, `tee` or `sed -i`. Keep each Bash call a single simple command with absolute paths inside your worktree: no `&&` / `;` chains, no heredocs, no `cd` prefixes. If a call is refused, split it and retry; do not retry it verbatim.
 - **Commit as you go** after each green moon step so an interruption leaves recoverable work. Push, open the PR, then **stop**. Do not wait on CI. Do not push polish commits after the PR is open.

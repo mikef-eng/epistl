@@ -14,8 +14,8 @@ Epistl uses a controlled SDLC harness so humans and AI agents work through small
 | Lane | Paths | Agent |
 | --- | --- | --- |
 | API | `apps/api/**` | `api-dev` |
-| Mobile | `apps/mobile/**` (excl. `modules/quic-relay-client`) | `mobile-dev` |
-| Native | `packages/quic-relay-client/**`, `packages/dev-setup/**`, `apps/mobile/modules/quic-relay-client/**` | `native-dev` |
+| Mobile | `apps/mobile/**` (excl. `modules/**`) | `mobile-dev` |
+| Native | `packages/quic-relay-client/**`, `packages/dev-setup/**`, `apps/mobile/modules/**` (local Expo/native modules) | `native-dev` |
 | UI | Presentation layer only (screens/nav chrome/NativeWind) | `ui` |
 | Chore | `.claude/**`, `.github/**`, `docs/**`, `*.md`, `.moon/**`, root config | orchestrator (direct PR) |
 | Gate | Whole diff vs coverage table, scope, docs; arms auto-merge | `merge-gate` (+ `crypto-reviewer` when needed) |
